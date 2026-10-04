@@ -1,0 +1,19 @@
+{
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^11.10.0",
+    "cors": "^2.8.6",
+    "express": "^4.21.2",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "undici": "^6.21.0"
+  },
+  "name": "soulchat-server",
+  "private": true,
+  "scripts": {
+    "check": "node scripts/check.js",
+    "start": "node src/index.js"
+  },
+  "type": "module",
+  "version": "1.2.0"
+}

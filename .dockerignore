@@ -1,0 +1,6 @@
+# Docker 构建时排除：依赖、本地数据、私有配置进不了镜像
+server/node_modules
+client/node_modules
+server/data
+server/.env
+**/.DS_Store
