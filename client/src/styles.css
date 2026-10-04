@@ -781,6 +781,43 @@ textarea {
   font-size: 17px;
 }
 
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.modal-head h3 {
+  margin: 0;
+}
+
+.modal-close {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--hover);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.modal-close:hover {
+  background: var(--pressed);
+  color: var(--text);
+}
+
+.modal-close:active {
+  transform: scale(0.92);
+}
+
 .modal label,
 .settings-body label {
   display: block;
@@ -1538,13 +1575,53 @@ textarea {
     left: 12px;
   }
 
-  /* 弹窗 */
+  /* 弹窗：移动端改为底部弹出式面板 */
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
   .modal {
-    width: calc(100vw - 48px);
-    max-width: 420px;
-    max-height: calc(100dvh - 48px);
+    width: 100%;
+    max-width: 100%;
+    max-height: 92dvh;
     overflow-y: auto;
-    padding: 20px;
+    padding: 8px 20px calc(20px + env(safe-area-inset-bottom));
+    border-radius: 20px 20px 0 0;
+    border-bottom: none;
+    animation: sheet-up 0.28s var(--ease);
+  }
+
+  @keyframes sheet-up {
+    from {
+      transform: translateY(48px);
+      opacity: 0.4;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+
+  /* 顶部小把手（视觉提示，可上滑感） */
+  .modal::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    margin: 4px auto 10px;
+  }
+
+  /* 标题栏吸顶：滚动时标题和关闭按钮始终可见 */
+  .modal-head {
+    position: sticky;
+    top: -8px;
+    z-index: 5;
+    margin: 0 -20px 12px;
+    padding: 10px 20px;
+    background: var(--bg-secondary);
   }
 
   /* Toast 居中，避免被刘海/圆角遮挡 */

@@ -42,7 +42,12 @@ export default function GroupSettingsModal({ group, onClose, onSaved, showToast 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>群聊设置</h3>
+        <div className="modal-head">
+          <h3>群聊设置</h3>
+          <button className="modal-close" title="关闭" onClick={onClose}>
+            ✕
+          </button>
+        </div>
         <label>
           群名
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="群聊名称" />

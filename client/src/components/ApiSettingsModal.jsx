@@ -158,7 +158,12 @@ export default function ApiSettingsModal({ onClose, showToast }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>API 设置</h3>
+        <div className="modal-head">
+          <h3>API 设置</h3>
+          <button className="modal-close" title="关闭" onClick={onClose}>
+            ✕
+          </button>
+        </div>
         {multiUser ? (
           <p className="key-desc">
             用户级配置，保存在<b>服务器</b>（Key 加密存储，永不回显），随账号走，换设备也生效。

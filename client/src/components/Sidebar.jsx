@@ -339,7 +339,12 @@ export default function Sidebar({
       {groupModalOpen && (
         <div className="modal-overlay" onClick={() => setGroupModalOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>新建群聊</h3>
+            <div className="modal-head">
+              <h3>新建群聊</h3>
+              <button className="modal-close" title="关闭" onClick={() => setGroupModalOpen(false)}>
+                ✕
+              </button>
+            </div>
             <label>
               群名
               <input
@@ -378,7 +383,12 @@ export default function Sidebar({
       {modalOpen && (
         <div className="modal-overlay" onClick={() => setModalOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>新建角色</h3>
+            <div className="modal-head">
+              <h3>新建角色</h3>
+              <button className="modal-close" title="关闭" onClick={() => setModalOpen(false)}>
+                ✕
+              </button>
+            </div>
             <label>
               名字 <span className="req">*</span>
               <input value={form.name} onChange={setField('name')} placeholder="例如：小狐狸阿璃" />
