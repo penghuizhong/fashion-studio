@@ -149,6 +149,9 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           } else if (ev === 'memory_updated') {
             const who = data && data.character_id ? (memberOf(data.character_id) || {}).name : null;
             showToast(who ? `${who} 记住了 ✨` : '已记住 ✨', 2500);
+          } else if (ev === 'points') {
+            // 积分扣费后余额变化：广播出去，API 设置弹窗（如开着）刷新余额
+            window.dispatchEvent(new CustomEvent('soulchat-points-changed', { detail: data || {} }));
           } else if (ev === 'done') {
             if (!isGroup) {
               const finalText = acc;

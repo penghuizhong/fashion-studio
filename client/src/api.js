@@ -220,4 +220,11 @@ export const api = {
   // 多用户模式：当前用户的 API 配置（key 存服务器加密，前端永远拿不到明文）
   getUserApiKey: () => get('/api/user/api-key'),
   saveUserApiKey: (data) => put('/api/user/api-key', data),
+
+  // 积分系统（多用户模式）
+  getPoints: () => get('/api/points'),
+  setBillingMode: (mode) => put('/api/points/mode', { mode }),
+  getPointsLedger: (limit = 20) => get(`/api/points/ledger?limit=${limit}`),
+  adminGrantPoints: (data) => post('/api/admin/points/grant', data),
+  adminListUsers: (q = '') => get(`/api/admin/users?q=${encodeURIComponent(q)}`),
 };
