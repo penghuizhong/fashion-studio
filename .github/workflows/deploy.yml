@@ -61,3 +61,19 @@ jobs:
             ghcr.io/penghuizhong/soulchat:latest
             ghcr.io/penghuizhong/soulchat:v${{ steps.version.outputs.version }}
             ghcr.io/penghuizhong/soulchat:${{ github.sha }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 43.130.1.94
+          port: 28989
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/soulchat
+            docker compose pull soulchat
+            docker compose up -d soulchat
