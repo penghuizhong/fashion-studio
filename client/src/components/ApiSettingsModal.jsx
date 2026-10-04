@@ -2,7 +2,7 @@
 // 单用户模式：配置只存本浏览器 localStorage，对所有角色生效；后端只透传、不存储。
 // 多用户模式：四个字段都存服务器（key 加密，永不回显明文），随账号走、换设备不丢；
 //   前端不发任何配置头，会话即身份。保存=合并（key 留空=保持原值），"清除"按钮=清空全部。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../auth.jsx';
 import {
   api,
@@ -15,6 +15,89 @@ import {
 
 const EMPTY_FORM = { baseUrl: '', key: '', model: '', workerModel: '' };
 
+// 自研模型下拉：原生 <datalist> 在 iOS Safari 上完全不支持，
+// 这里用自定义下拉实现，桌面+移动端行为一致，且支持输入过滤。
+function ModelPicker({ value, onChange, models, placeholder, openSignal }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  // 拉取成功后由父组件通过 openSignal 触发自动展开
+  useEffect(() => {
+    if (openSignal && models.length > 0) setOpen(true);
+  }, [openSignal, models.length]);
+
+  // 点击外部 / Esc 关闭
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open ]);
+
+  const q = value.trim().toLowerCase();
+  const filtered = q
+    ? models.filter(
+        (m) =>
+          m.id.toLowerCase().includes(q) ||
+          (m.name && m.name.toLowerCase().includes(q))
+      )
+    : models;
+  const shown = filtered.slice(0, 120);
+
+  return (
+    <div className="model-picker" ref={ref}>
+      <input
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          if (models.length > 0) setOpen(true);
+        }}
+        onFocus={() => {
+          if (models.length > 0) setOpen(true);
+        }}
+        placeholder={placeholder}
+        spellCheck={false}
+        autoComplete="off"
+      />
+      {open && shown.length > 0 && (
+        <ul className="model-dropdown">
+          {shown.map((m) => (
+            <li
+              key={m.id}
+              onMouseDown={(e) => {
+                e.preventDefault(); // 先于 blur 触发，避免下拉先关闭导致点选失效
+                onChange(m.id);
+                setOpen(false);
+              }}
+            >
+              <span className="model-id">{m.id}</span>
+              {m.name && m.name !== m.id && (
+                <span className="model-name">{m.name}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {open && models.length > 0 && shown.length === 0 && (
+        <ul className="model-dropdown">
+          <li className="model-empty" onMouseDown={(e) => e.preventDefault()}>
+            无匹配模型，可直接手动输入
+          </li>
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function ApiSettingsModal({ onClose, showToast }) {
   const { multiUser } = useAuth();
   const [form, setForm] = useState(EMPTY_FORM);
@@ -25,6 +108,8 @@ export default function ApiSettingsModal({ onClose, showToast }) {
   // 多用户模式：服务器端配置状态
   const [hasServerKey, setHasServerKey] = useState(false);
   const [serverLoading, setServerLoading] = useState(false);
+  // 拉取成功后自动展开模型下拉（每次拉取递增）
+  const [pullSeq, setPullSeq] = useState(0);
 
   useEffect(() => {
     api.getConfig().then((c) => setVersion((c && c.version) || '')).catch(() => {});
@@ -71,6 +156,7 @@ export default function ApiSettingsModal({ onClose, showToast }) {
       const base = multiUser ? form.baseUrl.trim() : form.baseUrl.trim() || DEFAULT_BASE_URL;
       const list = await fetchModels(base, key);
       setModels(list);
+      setPullSeq((s) => s + 1); // 拉取成功后自动展开下拉
       showToast(
         list.length ? `已拉取 ${list.length} 个可用模型` : '拉取成功，但列表为空（可手动输入模型名）',
         2200
@@ -214,38 +300,28 @@ export default function ApiSettingsModal({ onClose, showToast }) {
         <label>
           聊天模型
           <div className="key-input-row">
-            <input
-              list="soulchat-models"
+            <ModelPicker
               value={form.model}
-              onChange={setField('model')}
+              onChange={(v) => setForm((f) => ({ ...f, model: v }))}
+              models={models}
               placeholder="先拉取模型列表，或手动输入"
-              spellCheck={false}
-              autoComplete="off"
+              openSignal={pullSeq}
             />
             <button className="btn secondary" onClick={pullModels} disabled={loading}>
               {loading ? '拉取中…' : '拉取模型'}
             </button>
           </div>
-          <datalist id="soulchat-models">
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </datalist>
         </label>
         {models.length > 0 && (
           <p className="key-desc small">共 {models.length} 个可用模型，可在输入框中搜索选择。</p>
         )}
         <label>
           后台模型
-          <input
-            list="soulchat-models"
+          <ModelPicker
             value={form.workerModel || ''}
-            onChange={setField('workerModel')}
+            onChange={(v) => setForm((f) => ({ ...f, workerModel: v }))}
+            models={models}
             placeholder="留空用默认便宜模型"
-            spellCheck={false}
-            autoComplete="off"
           />
         </label>
         <p className="key-desc small">
