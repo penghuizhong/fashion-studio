@@ -52,7 +52,14 @@ Authorization: `Bearer ${key}`,
 'HTTP-Referer': 'https://soulchat.local',
 'X-Title': 'SoulChat MVP',
 },
-body: JSON.stringify({ model, messages, temperature, stream}),
+body: JSON.stringify({
+  model,
+  messages,
+  temperature,
+  stream,
+  // 流式时让 OpenRouter 在最后一个 chunk 返回真实用量（计费用）
+  ...(stream ? { stream_options: { include_usage: true } } : {}),
+}),
 ...(dispatcher ? { dispatcher } : {}),
 });
 if (!res.ok) {
@@ -62,16 +69,30 @@ throw new Error(`LLM 请求失败 HTTP ${res.status}: ${text.slice(0, 200)}`);
 return res;
 }
 
-// 流式聊天：每收到 delta 就调 onToken，最后返回完整文本
+// 非流式调用的便捷封装：返回 { json, usage }（usage 可能为 null）
+async function postJson(opts) {
+const res = await postCompletions({ ...opts, stream: false });
+const json = await res.json().catch(() => null);
+const usage = json && json.usage
+? { input: json.usage.prompt_tokens || 0, output: json.usage.completion_tokens || 0 }
+: null;
+if (opts.onUsage && usage) {
+try { opts.onUsage(usage); } catch { /* 计费回调异常不影响主流程 */ }
+}
+return { json, usage };
+}
+
+// 流式聊天：每收到 delta 就调 onToken；返回 { text, usage }（usage 为真实用量，可能为 null）
 export async function chatStream({ messages, model, temperature, onToken, apiKey, baseUrl }) {
 const cfg = getConfig();
-if (cfg.mockLlm) return mockChatStream({ messages, onToken});
+if (cfg.mockLlm) return { text: await mockChatStream({ messages, onToken }), usage: null };
 
 const res = await postCompletions({ model, messages, temperature, stream: true, onToken, apiKey, baseUrl });
 const reader = res.body.getReader();
 const decoder = new TextDecoder();
 let buf = '';
 let full = '';
+let usage = null;
 const handleLine = (line) => {
 const t = line.trim();
 if (!t.startsWith('data:')) return;
@@ -79,6 +100,13 @@ const data = t.slice(5).trim();
 if (!data || data === '[DONE]') return;
 try {
 const json = JSON.parse(data);
+// OpenRouter 在最后一个 chunk 返回用量（需 stream_options.include_usage）
+if (json.usage) {
+usage = {
+input: json.usage.prompt_tokens || 0,
+output: json.usage.completion_tokens || 0,
+};
+}
 const delta = json.choices && json.choices[0] && json.choices[0].delta && json.choices[0].delta.content;
 if (delta) {
 full += delta;
@@ -97,7 +125,7 @@ buf = lines.pop();
 for (const l of lines) handleLine(l);
 }
 if (buf.trim()) handleLine(buf);
-return full;
+return { text: full, usage };
 }
 
 async function mockChatStream({ messages, onToken}) {
@@ -121,7 +149,7 @@ const DIRECTOR_SYSTEM = `你是群聊导演。根据群成员人设和最近对�
 4. 只返回 JSON，不要其他文字`;
 
 // 群聊导演：决定发言顺序（角色 id 数组）。失败返回 null，调用方用确定性 fallback
-export async function decideSpeakers({ members, history, model, apiKey, baseUrl, lastSpeakerId }) {
+export async function decideSpeakers({ members, history, model, apiKey, baseUrl, lastSpeakerId, onUsage }) {
 const cfg = getConfig();
 if (cfg.mockLlm) {
 // mock：轮换，避免每次固定
@@ -138,18 +166,17 @@ return `- ${m.name}（id:${m.id}）${tag}：${String(m.soul_md || '').slice(0, 1
 .join('\n');
 const histText = history.map((h) => `${h.speaker}: ${h.content}`).join('\n').slice(-3000);
 try {
-const res = await postCompletions({
+const { json } = await postJson({
 model: model || cfg.extractModel,
 temperature: 0.5,
-stream: false,
 apiKey,
 baseUrl,
+onUsage,
 messages: [
 { role: 'system', content: DIRECTOR_SYSTEM },
 { role: 'user', content: `群成员：\n${memberDesc}\n\n最近对话：\n${histText}\n\n谁接下来发言？` },
 ],
 });
-const json = await res.json();
 const text = (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
 const arr = JSON.parse(stripFences(text));
 if (!Array.isArray(arr)) return null;
@@ -169,7 +196,7 @@ return String(text)
 }
 
 // 记忆提取：返回 {user_md, memory_md} 全文；失败返回 null
-export async function extractJson({ userMd, memoryMd, rounds, model, apiKey, baseUrl }) {
+export async function extractJson({ userMd, memoryMd, rounds, model, apiKey, baseUrl, onUsage }) {
 const cfg = getConfig();
 const today = new Date().toISOString().slice(0, 10);
 if (cfg.mockLlm) {
@@ -179,12 +206,12 @@ memory_md: `${memoryMd || ''}\n- [mock 提取] 对话事件测试 ${today}`,
 };
 }
 const roundText = rounds.map((m) => `${m.role}: ${m.content}`).join('\n');
-const res = await postCompletions({
+const { json } = await postJson({
 model,
 temperature: 0.2,
-stream: false,
 apiKey,
 baseUrl,
+onUsage,
 messages: [
 { role: 'system', content: EXTRACT_SYSTEM.replace('{today}', today)},
 {
@@ -193,7 +220,6 @@ content: `\n${userMd || ''}\n\n\n${memoryMd || ''}\n\n\n${roundText}`,
 },
 ],
 });
-const json = await res.json();
 const text = (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
 try {
 const parsed = JSON.parse(stripFences(text));
@@ -205,20 +231,19 @@ return null;
 }
 
 // 对话摘要：返回摘要字符串
-export async function summarizeText({ text, model, apiKey, baseUrl }) {
+export async function summarizeText({ text, model, apiKey, baseUrl, onUsage }) {
 const cfg = getConfig();
 if (cfg.mockLlm) return '摘要（mock）：' + String(text).slice(0, 40);
-const res = await postCompletions({
+const { json } = await postJson({
 model,
 temperature: 0.3,
-stream: false,
 apiKey,
 baseUrl,
+onUsage,
 messages: [
 { role: 'system', content: '用 100 字以内中文总结这段对话的关键事实，只输出摘要正文，不要多余文字。'},
 { role: 'user', content: text},
 ],
 });
-const json = await res.json();
 return (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content || '').trim();
 }

@@ -185,6 +185,7 @@ text,
 model: opts.model || cfg.extractModel,
 apiKey: opts.apiKey,
 baseUrl: opts.baseUrl,
+onUsage: opts.onUsage,
 });
 if (!summary) return false;
 db.prepare(
@@ -209,6 +210,7 @@ rounds,
 model: opts.model || cfg.extractModel,
 apiKey: opts.apiKey,
 baseUrl: opts.baseUrl,
+onUsage: opts.onUsage,
 });
 if (!result) return [];
 const changed = [];
