@@ -1,0 +1,115 @@
+# SoulChat 更新日志
+
+## v0.3.0（2026-10-03）
+
+- 群聊功能：侧边栏「👥 新建群聊」（选 2~8 个角色），群聊独立分区
+- 导演决策：用户发言后由便宜模型决定谁回应（最多 3 位），串行流式输出，
+  后发言的角色能看到先发言者的回复，角色之间会互动
+- `@名字` 点名：被点到的角色必回，可跳过导演
+- 导演失败时 fallback：最久没说话的角色先回
+- 每个角色独立记忆：群内共同事件各按自己视角记入 memory.md，按角色独立计数触发提取
+- 群聊消息带说话人标签，上下文按 token 预算裁剪；会话级摘要群聊复用
+- 群设置：改群名、增删成员；删角色自动清群成员关系
+
+## v0.2.1（2026-10-03）
+
+- 移除角色级模型配置：新建角色、角色设置中的「模型」字段已删除，
+  聊天 / 摘要 / 记忆提取统一使用用户级 API 设置中的模型
+- 模型优先级更新为：用户全局配置（API 设置）> 服务器 `.env` 默认
+
+## v0.2.0（2026-10-03）
+
+- 用户级 API 设置：侧边栏底部 🔌 入口，可配 API 地址 / Key / 模型，对所有角色生效
+- 模型选择支持点「拉取模型」，用 Key 经后端 `GET /api/models` 动态获取可用模型
+- API 地址、Key、模型经请求头透传，后端不存储、不记日志
+- 模型优先级：角色单独配置 > 用户全局配置 > 服务器 `.env` 默认
+- 纯黑 / 纯白双主题 + 侧边栏底部主题切换按钮（localStorage 记忆）
+- 全站去蓝：单色按钮、灰色悬停/选中/按压反馈
+- 新建角色按钮改为半透明幽灵按钮
+- 角色徽标显示对话数；侧边栏顶部「＋ 新建角色」大按钮
+- 后端支持 `HTTPS_PROXY` / `HTTP_PROXY`（undici ProxyAgent）
+
+## v0.1.1（2026-10-03）
+
+- 后端支持代理：`llm.js` 使用 undici `ProxyAgent` 读取 `HTTPS_PROXY` 环境变量，
+  解决中国大陆直连 OpenRouter 被区域拦截（HTTP 403）的问题
+
+## v0.1.0（2026-10-03）
+
+- MVP 首版：角色管理、每个角色多对话、soul.md / user.md / memory.md 三文件记忆、
+  每 5 轮自动记忆提取、token 预算裁剪、旧对话摘要、SSE 流式回复
+
+## v0.3.1（2026-10-03）
+
+- 空白页引导语补上群聊入口
+
+## v0.4.0（2026-10-03）
+
+- 群聊回复策略优化：导演 prompt 内成员顺序打乱（去位置偏好），传入上轮先发言者并指示轮换；
+  mock 导演也改为随机轮换，不再固定前两个
+- token 统计：SSE `done` 事件带 `usage{input,output}`（估算值），输入框下方显示本轮 / 累计消耗
+
+## v0.5.0（2026-10-03）
+
+- 后台模型独立配置：群聊导演调度、记忆提取、对话摘要改走独立的后台模型，
+  不再跟随用户配置的聊天模型（贵模型只用于角色回复，省 token 钱）
+- API 设置新增「后台模型」字段（可选，留空用服务器默认的便宜模型），经 X-Worker-Model 透传
+
+## v1.0.0（2026-10-03）—— 公开版：多用户
+
+Breaking：新增多用户模式（`MULTI_USER=true`），单用户本地模式默认保持不变。
+
+- 登录系统：POST /api/auth/register|login|logout、GET /api/auth/me；bcryptjs 密码哈希；
+  服务端 sessions 表（sha256 token，30 天过期），HttpOnly + SameSite=Lax cookie（trust proxy 下自动 Secure）
+- 数据隔离：characters / conversations / summaries 加 user_id 列（自动迁移）；
+  首个注册用户自动认领老数据；所有业务查询强制按 user_id 过滤；多用户下未登录调业务接口一律 401
+- Key 托管：user_api_keys 表，AES-256-GCM（MASTER_KEY）加密存储；
+  PUT /api/user/api-key 保存，GET 只返回 {hasKey, baseUrl, chatModel, workerModel} 永不回显明文；
+  多用户聊天忽略 X-OpenRouter-Key 请求头（会话即身份）；baseUrl/模型优先级：请求头 > 用户存储 > 服务器默认
+- 限流：注册/登录按 IP 10 次/15 分钟；聊天 SSE 按用户 30 次/分钟；/api/models 10 次/分钟；超限 429 JSON
+- 安全：helmet 安全头；trust proxy=1；GET /api/config 新增 multi_user 字段
+- 前端：AuthContext + 登录/注册页（黑白双主题）；multi_user 且未登录显示登录页；
+  多用户下 API 设置的 Key 改存后端（只显示"已保存 ●"）；侧边栏显示用户名 + 退出
+- 新增 DEPLOY.md（Caddy + PM2 公网部署指南）
+- 回归：单用户 20/20 + 多用户 13/13 全过
+
+## v1.0.1（2026-10-03）
+
+- 修复 Safari 本地白屏：helmet 默认的 `upgrade-insecure-requests` 会让浏览器把 http 子资源
+  升级成 https 请求，本地无 TLS 直接卡死。改为仅当 `BEHIND_HTTPS=true`（生产经 Caddy 真 HTTPS）
+  时启用完整安全头（含 HSTS），本地 http 开发默认去掉这两个指令
+- 修复 `/api/config` 版本号恒为 `0.0.0`（`config.js` 读 package.json 路径多了一级）
+- `.env.example` 与 DEPLOY.md 补充 `BEHIND_HTTPS` 说明，生产部署需设为 true
+
+## v1.0.2（2026-10-04）
+
+- 修复多用户 API 设置数据丢失：PUT /api/user/api-key 改合并语义（字段缺席=保持原值，
+  空串=清除），之前"保存"时 key 留空会悄悄清空已托管的 Key
+- 修复"保存了但没生效"：多用户模式前端不再透传 X-Api-Base-Url/X-Chat-Model/X-Worker-Model，
+  服务器保存的配置是唯一真相源，杜绝 localStorage 陈旧值覆盖
+- 多用户"拉取模型"：允许用本次输入（未保存）的 key 预览，只读不存储
+- 体验：弹窗字段"模型"改名"聊天模型"；多用户模式新增"清除"按钮（二次确认后清空服务器配置）；
+  初始化不再闪现 localStorage 旧数据；Key 状态以服务器返回为准
+
+## v1.0.3（2026-10-04）
+
+- 与 v1.0.2 内容一致，仅升级版本号（避免同名包被缓存导致下载到旧文件）
+
+## v1.1.0（2026-10-04）
+
+- 新增 Docker Compose 部署：发版包内带 `Dockerfile`、`docker-compose.yml`、`.dockerignore`
+ （Node 22-slim 基础镜像，SQLite 数据走 `./data` 卷持久化，反向代理仍指向 127.0.0.1:3001）；
+  DEPLOY.md 新增 Docker 章节（含 PM2 迁移步骤）；更新/回滚/日志/备份均为单条 compose 命令
+
+## v1.1.1（2026-10-04）
+
+- 修复 Docker 镜像前端 404（Cannot GET /）：Dockerfile 还原 server/ 与 client/ 同级的
+  目录结构，后端按 src/../../client/dist 能正确定位到前端静态文件
+
+## v1.2.0（2026-10-04）
+
+- 移动端优化：≤768px 时侧边栏变为左侧抽屉（带遮罩，点击外部/选中对话自动收起）；
+  聊天/设置/空状态页头部增加汉堡按钮；输入框适配安全区（100dvh + safe-area）；
+  弹窗、气泡、Toast 等按小屏调整
+- 侧边栏隐藏/显示：桌面端侧边栏头部新增收起按钮（‹），收起后左上角浮动按钮（›）
+  可重新展开，偏好记入 localStorage
