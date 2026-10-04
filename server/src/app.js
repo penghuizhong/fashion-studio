@@ -26,6 +26,13 @@ import {
   summarizeOld,
   extractMemory,
 } from './memory.js';
+import {
+  POINTS_MODELS,
+  POINTS_WORKER_MODEL,
+  getPointsModel,
+  calcPoints,
+  deductPoints,
+} from './points.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
 const FILE_FIELDS = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
@@ -119,6 +126,49 @@ export function createApp() {
     return typeof h === 'string' ? h.trim() : '';
   }
 
+  // ---------- 积分计费（多用户模式） ----------
+  // 解析用户计费方式，返回 { usePoints, userId, balance, chatModel, workerModel, llmOpts }；
+  // 积分不足或平台未开通时返回 { error }（调用方直接 402，不落库用户消息）。
+  function resolveBilling(req, cfg, creds) {
+    const base = {
+      usePoints: false,
+      chatModel: creds.chatModel,
+      workerModel: creds.workerModel,
+      llmOpts: { apiKey: creds.apiKey, baseUrl: creds.baseUrl },
+    };
+    const uid = uidOf(req);
+    if (!cfg.multiUser || !uid) return base;
+    const u = db.prepare('SELECT billing_mode, points_balance FROM users WHERE id = ?').get(uid);
+    if (!u || (u.billing_mode || 'points') !== 'points') return base;
+    // 积分模式：模型必须在白名单（服务端强制，前端传什么都没用），后台固定最便宜
+    const chatModel = getPointsModel(creds.chatModel) ? creds.chatModel : POINTS_MODELS[0].id;
+    if (!cfg.apiKey && !cfg.mockLlm) return { error: '平台模型服务暂未开通，请联系管理员' };
+    const balance = u.points_balance || 0;
+    if (balance < 1 && !cfg.mockLlm)
+      return { error: '积分不足：请联系管理员充值，或在「API 设置」中切换为自带 Key 模式' };
+    return {
+      usePoints: true,
+      userId: uid,
+      balance,
+      chatModel,
+      workerModel: POINTS_WORKER_MODEL,
+      llmOpts: { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl }, // 平台 Key，绝不暴露给前端
+    };
+  }
+
+  // 积分模式后台用量计费回调工厂（记忆/摘要/导演）；onBalance 用于同步最新余额
+  function bgBill(bill, cfg, reason, model, onBalance) {
+    return (usage) => {
+      if (!bill.usePoints || cfg.mockLlm || !usage) return;
+      try {
+        const pts = calcPoints(model, usage);
+        if (pts > 0) onBalance(deductPoints(bill.userId, pts, reason));
+      } catch (e) {
+        console.warn('[points] 后台扣费失败:', e.message);
+      }
+    };
+  }
+
   // ---------- config（绝不泄露 key） ----------
   app.get('/api/config', (req, res) => {
     const cfg = getConfig();
@@ -128,6 +178,10 @@ export function createApp() {
       has_key: !!cfg.apiKey,
       chat_model: cfg.chatModel,
       extract_model: cfg.extractModel,
+      // 积分系统：多用户模式可用；platform_ready 表示站长已配置平台 Key
+      points_enabled: !!cfg.multiUser,
+      platform_ready: !!cfg.apiKey,
+      points_models: cfg.multiUser ? POINTS_MODELS : [],
     });
   });
 
@@ -502,9 +556,17 @@ export function createApp() {
   // ---------- 群聊消息 SSE：导演决策 → 按角色串行流式 ----------
   async function handleGroupMessage(req, res, conv, cfg) {
     // 凭证：多用户模式用用户托管 key（忽略请求头），单用户模式保持请求头优先
-    const { apiKey, baseUrl, chatModel, workerModel } = llmCreds(req, cfg, requestApiKey);
-    if (!apiKey && !cfg.mockLlm) return res.status(401).json({ error: NO_KEY_MESSAGE });
-    const llmOpts = { apiKey, baseUrl };
+    const creds = llmCreds(req, cfg, requestApiKey);
+    if (!creds.apiKey && !cfg.mockLlm) return res.status(401).json({ error: NO_KEY_MESSAGE });
+    // 积分模式：平台 Key + 白名单模型；余额不足 402（不落库用户消息）
+    const bill = resolveBilling(req, cfg, creds);
+    if (bill.error) return res.status(402).json({ error: bill.error });
+    const { chatModel, workerModel, llmOpts } = bill;
+    const usePoints = bill.usePoints;
+    let pointsBalance = bill.balance;
+    const updBal = (b) => {
+      pointsBalance = b;
+    };
 
     const content = String((req.body && req.body.content) ?? '').trim();
     if (!content) return res.status(400).json({ error: 'content 不能为空' });
@@ -555,6 +617,7 @@ export function createApp() {
           model: workerModel,
           lastSpeakerId,
           ...llmOpts,
+          onUsage: bgBill(bill, cfg, 'director', workerModel, updBal),
         });
         if (decided && decided.length) {
           speakerIds = decided.filter((id) => memberIds.has(id)).slice(0, 3);
@@ -592,8 +655,9 @@ export function createApp() {
         usageInput += usedTokens;
         send('turn_start', { character_id: ch.id, character_name: ch.name, character_avatar: ch.avatar });
         let full = '';
+        let turnUsage = null;
         try {
-          await chatStream({
+          const r = await chatStream({
             messages: apiMessages,
             model: chatModel,
             temperature: ch.temperature ?? 0.8,
@@ -603,12 +667,24 @@ export function createApp() {
               send('token', { character_id: ch.id, text: delta });
             },
           });
+          turnUsage = r.usage;
         } catch (e) {
           send('error', { character_id: ch.id, message: `${ch.name} 回复失败：${String((e && e.message) || e)}` });
           continue;
         }
         const outTokens = estimateTokens(full);
         usageOutput += outTokens;
+        // 积分扣费（按发言轮次）
+        if (usePoints && !cfg.mockLlm) {
+          const pts = calcPoints(chatModel, turnUsage || { input: usedTokens, output: outTokens });
+          if (pts > 0) {
+            try {
+              pointsBalance = deductPoints(bill.userId, pts, 'group_chat', 'conversation', conv.id);
+            } catch (e) {
+              console.warn('[points] 扣费失败:', e.message);
+            }
+          }
+        }
         const row = db
           .prepare(
             'INSERT INTO messages(conversation_id, role, content, tokens, character_id, created_at) VALUES(?,?,?,?,?,?)'
@@ -628,17 +704,26 @@ export function createApp() {
       }
 
       // 3. 会话级摘要 + 触发到的角色记忆提取（并行）
-      await summarizeOld(members[0], conv.id, { ...llmOpts, model: workerModel });
+      await summarizeOld(members[0], conv.id, {
+        ...llmOpts,
+        model: workerModel,
+        onUsage: bgBill(bill, cfg, 'summary', workerModel, updBal),
+      });
       const memResults = await Promise.all(
         extractTargets.map(async (ch) => ({
           ch,
-          changed: await extractMemory(ch, conv.id, { ...llmOpts, model: workerModel }),
+          changed: await extractMemory(ch, conv.id, {
+            ...llmOpts,
+            model: workerModel,
+            onUsage: bgBill(bill, cfg, 'memory', workerModel, updBal),
+          }),
         }))
       );
       for (const { ch, changed } of memResults) {
         if (changed.length) send('memory_updated', { character_id: ch.id, files: changed });
       }
 
+      if (usePoints) send('points', { balance: pointsBalance });
       send('done', { title: conv.title, usage: { input: usageInput, output: usageOutput } });
     } catch (e) {
       send('error', { message: String((e && e.message) || e) });
@@ -659,9 +744,17 @@ export function createApp() {
 
     // 凭证：多用户模式用用户托管 key（忽略请求头），单用户模式保持请求头优先；
     // 都没有且非 mock 直接 401（不落库用户消息）
-    const { apiKey, baseUrl, chatModel, workerModel } = llmCreds(req, cfg, requestApiKey);
-    if (!apiKey && !cfg.mockLlm) return res.status(401).json({ error: NO_KEY_MESSAGE });
-    const llmOpts = { apiKey, baseUrl };
+    const creds = llmCreds(req, cfg, requestApiKey);
+    if (!creds.apiKey && !cfg.mockLlm) return res.status(401).json({ error: NO_KEY_MESSAGE });
+    // 积分模式：平台 Key + 白名单模型；余额不足 402（不落库用户消息）
+    const bill = resolveBilling(req, cfg, creds);
+    if (bill.error) return res.status(402).json({ error: bill.error });
+    const { chatModel, workerModel, llmOpts } = bill;
+    const usePoints = bill.usePoints;
+    let pointsBalance = bill.balance;
+    const updBal = (b) => {
+      pointsBalance = b;
+    };
 
     const t = now();
     db.prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)').run(
@@ -692,12 +785,11 @@ export function createApp() {
       const { apiMessages, usedTokens, budget } = buildContext(char, conv.id);
       send('context', { used: usedTokens, budget });
       let full = '';
-      await chatStream({
+      const { usage } = await chatStream({
         messages: apiMessages,
         model: chatModel,
         temperature: char.temperature ?? 0.8,
-        apiKey,
-        baseUrl,
+        ...llmOpts,
         onToken: (delta) => {
           full += delta;
           send('token', { text: delta });
@@ -706,15 +798,35 @@ export function createApp() {
       const asst = db
         .prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)')
         .run(conv.id, 'assistant', full, estimateTokens(full), now());
-      await summarizeOld(char, conv.id, { ...llmOpts, model: workerModel });
+      const outTokens = estimateTokens(full);
+      // 积分扣费（主聊天；无真实用量时回退到估算值）
+      if (usePoints && !cfg.mockLlm) {
+        const pts = calcPoints(chatModel, usage || { input: usedTokens, output: outTokens });
+        if (pts > 0) {
+          try {
+            pointsBalance = deductPoints(bill.userId, pts, 'chat', 'conversation', conv.id);
+          } catch (e) {
+            console.warn('[points] 扣费失败:', e.message);
+          }
+        }
+      }
+      await summarizeOld(char, conv.id, {
+        ...llmOpts,
+        model: workerModel,
+        onUsage: bgBill(bill, cfg, 'summary', workerModel, updBal),
+      });
       const asstCount = db
         .prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'assistant'")
         .get(conv.id).n;
       if (asstCount % cfg.extractEveryN === 0) {
-        const changed = await extractMemory(char, conv.id, { ...llmOpts, model: workerModel });
+        const changed = await extractMemory(char, conv.id, {
+          ...llmOpts,
+          model: workerModel,
+          onUsage: bgBill(bill, cfg, 'memory', workerModel, updBal),
+        });
         if (changed.length) send('memory_updated', { files: changed });
       }
-      const outTokens = estimateTokens(full);
+      if (usePoints) send('points', { balance: pointsBalance });
       send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens } });
     } catch (e) {
       send('error', { message: String((e && e.message) || e) });

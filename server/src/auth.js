@@ -4,6 +4,14 @@ import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { getDb } from './db.js';
 import { getConfig } from './config.js';
+import {
+  SIGNUP_BONUS,
+  POINTS_MODELS,
+  REASON_LABELS,
+  getBalance,
+  getLedger,
+  grantPoints,
+} from './points.js';
 
 const COOKIE_NAME = 'soulchat_session';
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000; // 30 天
@@ -208,11 +216,17 @@ export function mountAuthRoutes(app, authLimiter) {
     const id = randomUUID();
     const hash = await bcrypt.hash(password, 10);
     const t = new Date().toISOString();
+    const isFirst = db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0;
     db.transaction(() => {
-      db.prepare('INSERT INTO users(id, username, password_hash, created_at) VALUES(?,?,?,?)').run(id, username, hash, t);
+      db.prepare(
+        'INSERT INTO users(id, username, password_hash, created_at, points_balance, billing_mode, is_admin) VALUES(?,?,?,?,?,?,?)'
+      ).run(id, username, hash, t, SIGNUP_BONUS, 'points', isFirst ? 1 : 0);
+      // 注册赠送积分（写流水）
+      db.prepare(
+        'INSERT INTO points_ledger(user_id, delta, balance_after, reason, created_at) VALUES(?,?,?,?,?)'
+      ).run(id, SIGNUP_BONUS, SIGNUP_BONUS, 'signup_bonus', t);
       // 首个注册用户：认领全库 user_id IS NULL 的老数据（只执行一次）
-      const n = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
-      if (n === 1) {
+      if (isFirst) {
         db.prepare('UPDATE characters SET user_id = ? WHERE user_id IS NULL').run(id);
         db.prepare('UPDATE conversations SET user_id = ? WHERE user_id IS NULL').run(id);
         db.prepare('UPDATE conversation_summaries SET user_id = ? WHERE user_id IS NULL').run(id);
@@ -272,5 +286,78 @@ export function mountAuthRoutes(app, authLimiter) {
     if (!uid) return res.status(401).json({ error: '未登录' });
     const s = getUserApiKeys(uid);
     res.json({ hasKey: !!s.key, baseUrl: s.baseUrl, chatModel: s.chatModel, workerModel: s.workerModel });
+  });
+
+  // ---------- 积分系统 ----------
+  const needLogin = (req, res, next) => {
+    const uid = currentUserId(req);
+    if (!uid) return res.status(401).json({ error: '未登录' });
+    req.uid = uid;
+    next();
+  };
+  const needAdmin = (req, res, next) => {
+    const row = getDb().prepare('SELECT is_admin FROM users WHERE id = ?').get(req.uid);
+    if (!row || !row.is_admin) return res.status(403).json({ error: '需要管理员权限' });
+    next();
+  };
+
+  // GET /api/points：余额 / 计费方式 / 白名单模型 / 是否管理员
+  app.get('/api/points', needMulti, needLogin, (req, res) => {
+    const cfg = getConfig();
+    const u = getDb().prepare('SELECT billing_mode, is_admin FROM users WHERE id = ?').get(req.uid);
+    res.json({
+      balance: getBalance(req.uid),
+      billing_mode: (u && u.billing_mode) || 'points',
+      is_admin: !!(u && u.is_admin),
+      signup_bonus: SIGNUP_BONUS,
+      platform_ready: !!cfg.apiKey,
+      models: POINTS_MODELS,
+    });
+  });
+
+  // PUT /api/points/mode：切换计费方式 { mode: 'byok' | 'points' }
+  app.put('/api/points/mode', needMulti, needLogin, (req, res) => {
+    const mode = String((req.body && req.body.mode) || '').trim();
+    if (mode !== 'byok' && mode !== 'points') return res.status(400).json({ error: 'mode 只能是 byok 或 points' });
+    getDb().prepare('UPDATE users SET billing_mode = ? WHERE id = ?').run(mode, req.uid);
+    res.json({ ok: true, billing_mode: mode });
+  });
+
+  // GET /api/points/ledger：消费明细
+  app.get('/api/points/ledger', needMulti, needLogin, (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit || '20', 10) || 20, 100);
+    res.json(
+      getLedger(req.uid, limit).map((r) => ({ ...r, reason_label: REASON_LABELS[r.reason] || r.reason }))
+    );
+  });
+
+  // POST /api/admin/points/grant：管理员发放积分 { username, points }
+  app.post('/api/admin/points/grant', needMulti, needLogin, needAdmin, (req, res) => {
+    const username = String((req.body && req.body.username) || '').trim();
+    const points = Math.floor(Number((req.body && req.body.points) || 0));
+    if (!username) return res.status(400).json({ error: '用户名不能为空' });
+    if (!points || points <= 0 || points > 1000000)
+      return res.status(400).json({ error: '发放数量需在 1~1000000 之间' });
+    const target = getDb().prepare('SELECT id, username FROM users WHERE username = ?').get(username);
+    if (!target) return res.status(404).json({ error: '用户不存在' });
+    const balance = grantPoints(target.id, points, 'admin_grant');
+    res.json({ ok: true, username: target.username, granted: points, balance });
+  });
+
+  // GET /api/admin/users：管理员查看用户列表（q 可选，按用户名模糊搜）
+  app.get('/api/admin/users', needMulti, needLogin, needAdmin, (req, res) => {
+    const q = String(req.query.q || '').trim();
+    const rows = q
+      ? getDb()
+          .prepare(
+            'SELECT id, username, points_balance, billing_mode, created_at FROM users WHERE username LIKE ? ORDER BY created_at DESC LIMIT 50'
+          )
+          .all(`%${q}%`)
+      : getDb()
+          .prepare(
+            'SELECT id, username, points_balance, billing_mode, created_at FROM users ORDER BY created_at DESC LIMIT 50'
+          )
+          .all();
+    res.json(rows);
   });
 }
