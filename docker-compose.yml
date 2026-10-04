@@ -1,0 +1,35 @@
+# SoulChat docker-compose 部署模板
+# 部署目录结构（以 /opt/soulchat 为例）：
+#   /opt/soulchat/
+#     docker-compose.yml   <- 本文件（从发版包里复制出来，按需改版本号）
+#     .env                 <- 生产环境变量（MASTER_KEY / SESSION_SECRET / MULTI_USER=true / BEHIND_HTTPS=true …）
+#     data/                <- SQLite 数据目录（soulchat.db 在这里，容器外持久化；已有数据直接沿用）
+#     soul-chat-vX.Y.Z/    <- 解压后的发版包（构建上下文）
+#
+# 首次部署：docker compose up -d --build
+# 更新版本：解压新包 → 把下面 build 改成新目录 → docker compose up -d --build
+# 查看日志：docker compose logs -f soulchat
+# 备份数据：直接拷 ./data/soulchat.db
+
+services:
+  soulchat:
+    build: ./soul-chat-v1.1.0
+    image: soulchat:1.1.0
+    container_name: soulchat
+    restart: unless-stopped
+    # 只绑本地回环，反向代理（1Panel OpenResty / Caddy）走 127.0.0.1:3001
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - ./data:/data
+    env_file:
+      - .env
+    environment:
+      - PORT=3001
+      - DATA_DIR=/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
