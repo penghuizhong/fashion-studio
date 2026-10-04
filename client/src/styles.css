@@ -1251,6 +1251,133 @@ textarea {
   cursor: default;
 }
 
+/* ---- 积分系统 ---- */
+.billing-toggle {
+  display: flex;
+  background: var(--hover);
+  border-radius: 12px;
+  padding: 3px;
+  margin-bottom: 16px;
+}
+
+.billing-toggle button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  padding: 8px 0;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.billing-toggle button.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  font-weight: 600;
+}
+
+.points-balance-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--hover);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.points-balance-num {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.points-balance-num span {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 4px 0;
+  margin: 4px 0 8px;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--text);
+}
+
+.ledger-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.ledger-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ledger-list li:last-child {
+  border-bottom: none;
+}
+
+.ledger-reason {
+  flex: 1;
+  color: var(--text);
+}
+
+.ledger-neg {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger-pos {
+  color: #2f9e44;
+  font-variant-numeric: tabular-nums;
+}
+
+.ledger-time {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.admin-box {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+}
+
+.admin-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.admin-box .key-input-row input {
+  margin-top: 0;
+}
+
 .version-item {
   display: flex;
   align-items: center;
