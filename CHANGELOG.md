@@ -117,3 +117,7 @@ Breaking：新增多用户模式（`MULTI_USER=true`），单用户本地模式�
 ## v1.2.1（2026-10-04）
 
 - CI/CD 链路验证版本，无功能变化
+
+## v1.2.2（2026-10-04）
+
+- CI/CD 切换为 SSH 直连部署（Actions 构建后直接 SSH 上 VPS pull + 重启），移除 Watchtower

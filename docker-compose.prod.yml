@@ -1,5 +1,5 @@
 # SoulChat 生产部署（VPS 用）：镜像来自 GHCR，由 GitHub Actions 自动构建推送，
-# Watchtower 每 5 分钟检查一次，有新镜像自动拉取重启。
+# 构建完成后 Actions 直接 SSH 上来执行 pull + 重启。
 # 用法：放到 /opt/soulchat/docker-compose.yml（替换原来的 build 版），然后 docker compose up -d
 name: soulchat
 
@@ -17,19 +17,9 @@ services:
       - DATA_DIR=/data
     volumes:
       - ./data:/data
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
-
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 300 --cleanup --label-enable
