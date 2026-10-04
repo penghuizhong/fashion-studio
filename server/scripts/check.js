@@ -598,6 +598,75 @@ async function runMulti() {
       JSON.stringify(r.json)
     );
   }
+
+  // M14. 积分：注册赠送 500，默认 points 模式，白名单 3 模型
+  {
+    const p = await req('GET', '/api/points', undefined, { jar: jarB });
+    ok(
+      'M14. GET /api/points → balance 500 / billing_mode=points / 3 个白名单模型',
+      p.status === 200 && p.json && p.json.balance === 500 &&
+        p.json.billing_mode === 'points' &&
+        Array.isArray(p.json.models) && p.json.models.length === 3,
+      JSON.stringify(p.json)
+    );
+  }
+
+  // M15. 积分：切换计费方式
+  {
+    const bad = await req('PUT', '/api/points/mode', { mode: 'xxx' }, { jar: jarB });
+    const toByok = await req('PUT', '/api/points/mode', { mode: 'byok' }, { jar: jarB });
+    const back = await req('PUT', '/api/points/mode', { mode: 'points' }, { jar: jarB });
+    const p = await req('GET', '/api/points', undefined, { jar: jarB });
+    ok(
+      'M15. PUT /api/points/mode：非法值 → 400；byok → 200；切回 points 生效',
+      bad.status === 400 && toByok.status === 200 && back.status === 200 &&
+        p.json && p.json.billing_mode === 'points',
+      `bad=${bad.status} toByok=${toByok.status} back=${back.status} mode=${p.json && p.json.billing_mode}`
+    );
+  }
+
+  // M16. 积分：管理员发放（testuserA 是首个用户=管理员）；非管理员 → 403
+  {
+    const jarAdmin = makeJar();
+    const login = await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarAdmin });
+    const g = await req('POST', '/api/admin/points/grant', { username: 'testuserB', points: 100 }, { jar: jarAdmin });
+    const forbidden = await req('POST', '/api/admin/points/grant', { username: 'testuserB', points: 100 }, { jar: jarB });
+    const notFound = await req('POST', '/api/admin/points/grant', { username: 'nobody999', points: 100 }, { jar: jarAdmin });
+    const p = await req('GET', '/api/points', undefined, { jar: jarB });
+    ok(
+      'M16. 管理员发放 100 → B 余额 600；非管理员 → 403；不存在的用户 → 404',
+      login.status === 200 && g.status === 200 && g.json && g.json.balance === 600 &&
+        forbidden.status === 403 && notFound.status === 404 &&
+        p.json && p.json.balance === 600,
+      `grant=${g.status}(${JSON.stringify(g.json)}) forbidden=${forbidden.status} notFound=${notFound.status} balance=${p.json && p.json.balance}`
+    );
+  }
+
+  // M17. 积分：消费明细有注册赠送 + 发放两条
+  {
+    const l = await req('GET', '/api/points/ledger?limit=20', undefined, { jar: jarB });
+    const reasons = Array.isArray(l.json) ? l.json.map((r) => r.reason) : [];
+    ok(
+      'M17. GET /api/points/ledger → 含 signup_bonus + admin_grant，带中文 reason_label',
+      l.status === 200 && reasons.includes('signup_bonus') && reasons.includes('admin_grant') &&
+        l.json.every((r) => typeof r.reason_label === 'string' && r.reason_label),
+      `reasons=${reasons.join(',')}`
+    );
+  }
+
+  // M18. 积分模式聊天（mock）：200 + done；未登录 → 401
+  {
+    const rc = await req('POST', `/api/characters/${charB}/conversations`, { title: '积分聊天' }, { jar: jarB });
+    const convP = rc.json && rc.json.id;
+    const { status, events } = await postSSE(`/api/conversations/${convP}/messages`, { content: '积分模式 hello' }, { jar: jarB });
+    const done = events.find((e) => e.event === 'done');
+    const noAuth = await postSSE(`/api/conversations/${convP}/messages`, { content: 'x' });
+    ok(
+      'M18. 积分模式聊天 → 200 且 done；未登录 → 401',
+      status === 200 && !!done && noAuth.status === 401,
+      `status=${status} events=${events.map((e) => e.event).join(',')} noAuth=${noAuth.status}`
+    );
+  }
 }
 
 try {
