@@ -32,6 +32,7 @@ import {
   getPointsModel,
   calcPoints,
   deductPoints,
+  maybeInviteReward,
 } from './points.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
@@ -162,11 +163,28 @@ export function createApp() {
       if (!bill.usePoints || cfg.mockLlm || !usage) return;
       try {
         const pts = calcPoints(model, usage);
-        if (pts > 0) onBalance(deductPoints(bill.userId, pts, reason));
+        if (pts > 0)
+          onBalance(
+            deductPoints(bill.userId, pts, reason, null, null, {
+              tokensInput: usage.input,
+              tokensOutput: usage.output,
+              model,
+            })
+          );
       } catch (e) {
         console.warn('[points] 后台扣费失败:', e.message);
       }
     };
+  }
+
+  // 邀请奖励：聊天成功后检查被邀请人是否聊满 N 条，达标则给邀请人发奖励（幂等）
+  function checkInviteReward(userId) {
+    if (!userId) return;
+    try {
+      maybeInviteReward(userId);
+    } catch (e) {
+      console.warn('[points] 邀请奖励检查失败:', e.message);
+    }
   }
 
   // ---------- config（绝不泄露 key） ----------
@@ -676,10 +694,15 @@ export function createApp() {
         usageOutput += outTokens;
         // 积分扣费（按发言轮次）
         if (usePoints && !cfg.mockLlm) {
-          const pts = calcPoints(chatModel, turnUsage || { input: usedTokens, output: outTokens });
+          const u = turnUsage || { input: usedTokens, output: outTokens };
+          const pts = calcPoints(chatModel, u);
           if (pts > 0) {
             try {
-              pointsBalance = deductPoints(bill.userId, pts, 'group_chat', 'conversation', conv.id);
+              pointsBalance = deductPoints(bill.userId, pts, 'group_chat', 'conversation', conv.id, {
+                tokensInput: u.input,
+                tokensOutput: u.output,
+                model: chatModel,
+              });
             } catch (e) {
               console.warn('[points] 扣费失败:', e.message);
             }
@@ -724,6 +747,7 @@ export function createApp() {
       }
 
       if (usePoints) send('points', { balance: pointsBalance });
+      if (bill.userId) checkInviteReward(bill.userId);
       send('done', { title: conv.title, usage: { input: usageInput, output: usageOutput } });
     } catch (e) {
       send('error', { message: String((e && e.message) || e) });
@@ -801,10 +825,15 @@ export function createApp() {
       const outTokens = estimateTokens(full);
       // 积分扣费（主聊天；无真实用量时回退到估算值）
       if (usePoints && !cfg.mockLlm) {
-        const pts = calcPoints(chatModel, usage || { input: usedTokens, output: outTokens });
+        const u = usage || { input: usedTokens, output: outTokens };
+        const pts = calcPoints(chatModel, u);
         if (pts > 0) {
           try {
-            pointsBalance = deductPoints(bill.userId, pts, 'chat', 'conversation', conv.id);
+            pointsBalance = deductPoints(bill.userId, pts, 'chat', 'conversation', conv.id, {
+              tokensInput: u.input,
+              tokensOutput: u.output,
+              model: chatModel,
+            });
           } catch (e) {
             console.warn('[points] 扣费失败:', e.message);
           }
@@ -827,6 +856,7 @@ export function createApp() {
         if (changed.length) send('memory_updated', { files: changed });
       }
       if (usePoints) send('points', { balance: pointsBalance });
+      if (bill.userId) checkInviteReward(bill.userId);
       send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens } });
     } catch (e) {
       send('error', { message: String((e && e.message) || e) });
