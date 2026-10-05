@@ -2597,14 +2597,14 @@ textarea {
   padding: 20px 16px 80px;
   position: relative;
 }
-.discover-menu-btn {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  z-index: 5;
+.discover-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
 }
-.discover-head h2 {
-  margin: 0 0 4px;
+.discover-header h2 {
+  margin: 0;
   font-size: 22px;
 }
 .discover-sub {

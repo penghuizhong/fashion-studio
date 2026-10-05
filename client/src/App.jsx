@@ -252,15 +252,13 @@ export default function App() {
           ›
         </button>
         <main className="main">
-          <button className="menu-btn icon-btn discover-menu-btn" title="打开侧边栏" onClick={() => setSidebarOpen(true)}>
-            ☰
-          </button>
           <DiscoverView
             user={null}
             config={config}
             onAdopted={() => {}}
             onRequireLogin={handleRequireLogin}
             onExit={null}
+            onOpenSidebar={() => setSidebarOpen(true)}
             showToast={showToast}
           />
         </main>
@@ -333,6 +331,7 @@ export default function App() {
             onAdopted={handleAdopted}
             onRequireLogin={handleRequireLogin}
             onExit={() => setView({ type: 'empty' })}
+            onOpenSidebar={() => setSidebarOpen(true)}
             showToast={showToast}
           />
         )}

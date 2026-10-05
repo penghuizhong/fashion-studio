@@ -20,6 +20,7 @@ export default function DiscoverView({
   onAdopted,
   onRequireLogin,
   onExit,
+  onOpenSidebar,
   showToast,
 }) {
   const loggedIn = !isMultiUserMode() || !!user;
@@ -130,8 +131,15 @@ export default function DiscoverView({
   // 年龄门未过：占位页
   if (!ageOk) {
     return (
-      <div className="discover discover-gate">
-        <div className="gate-card">
+      <div className="discover discover-gate-wrap">
+        <header className="discover-header">
+          <button className="menu-btn icon-btn" title="打开侧边栏" onClick={onOpenSidebar}>
+            ☰
+          </button>
+          <h2>发现角色</h2>
+        </header>
+        <div className="discover-gate">
+          <div className="gate-card">
           <div className="gate-emoji">🧭</div>
           <h2>发现角色</h2>
           <p>这里有官方预设的角色卡和 AI 生成器，开始前请确认：</p>
@@ -163,16 +171,20 @@ export default function DiscoverView({
             </div>
           </div>
         )}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="discover">
-      <div className="discover-head">
+      <header className="discover-header">
+        <button className="menu-btn icon-btn" title="打开侧边栏" onClick={onOpenSidebar}>
+          ☰
+        </button>
         <h2>发现角色</h2>
-        <p className="discover-sub">官方预设，一键领养即聊；也可以让 AI 为你定制一张</p>
-      </div>
+      </header>
+      <p className="discover-sub">官方预设，一键领养即聊；也可以让 AI 为你定制一张</p>
 
       <div className="discover-search">
         <input
