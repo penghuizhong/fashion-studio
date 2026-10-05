@@ -14,6 +14,7 @@ const MODE = process.env.CHECK_MODE === 'multi' ? 'multi' : 'single';
 
 process.env.MOCK_LLM = 'true';
 process.env.AUTH_LIMIT_MAX = '100'; // 回归测试内多次注册/登录，不触发限流
+process.env.WRITE_LIMIT_MAX = '1000'; // 回归测试内写请求多，不触发写限流
 if (MODE === 'multi') {
   process.env.MULTI_USER = 'true';
   if (!process.env.MASTER_KEY) process.env.MASTER_KEY = crypto.randomBytes(32).toString('hex');
@@ -344,6 +345,40 @@ async function runSingle() {
       '10g. SUPERSEDE：旧 fact 被标记，检索只返回新 fact',
       visible.length === 1 && !hidden && rel.every((f) => !f.fact.includes('北京')),
       `visible=${visible.length} hidden=${!hidden} relHasBeijing=${rel.some((f) => f.fact.includes('北京'))}`
+    );
+  }
+
+  // 10h. v1.11 事实列表接口：GET 返回条目（含 importance/时间字段）
+  {
+    const db = getDb();
+    const ins = db.prepare('INSERT INTO memory_facts(character_id, fact, importance, created_at, source) VALUES(?,?,?,?,?)').run(
+      charId, 'v1.11 测试事实：用户周五晚上有空', 5, new Date().toISOString(), 'test'
+    );
+    const fid = Number(ins.lastInsertRowid);
+    const r = await req('GET', `/api/characters/${charId}/facts`);
+    const item = (Array.isArray(r.json) ? r.json : []).find((f) => f.id === fid);
+    ok(
+      '10h. GET /api/characters/:id/facts → 200，包含刚写入的 fact（含 importance/created_at）',
+      r.status === 200 && !!item && item.fact.includes('周五') && item.importance === 5 && !!item.created_at,
+      `status=${r.status} found=${!!item} imp=${item && item.importance}`
+    );
+    // ?all=1 也能拿到；被替代的不在默认列表里
+    const rAll = await req('GET', `/api/characters/${charId}/facts?all=1`);
+    ok(
+      '10i. GET facts?all=1 → 200，返回数组',
+      rAll.status === 200 && Array.isArray(rAll.json),
+      `status=${rAll.status} len=${rAll.json && rAll.json.length}`
+    );
+    // 删除
+    const del1 = await req('DELETE', `/api/facts/${fid}`);
+    const r2 = await req('GET', `/api/characters/${charId}/facts`);
+    const gone = !(Array.isArray(r2.json) ? r2.json : []).some((f) => f.id === fid);
+    const del2 = await req('DELETE', `/api/facts/${fid}`);
+    const delBad = await req('DELETE', '/api/facts/999999');
+    ok(
+      '10j. DELETE /api/facts/:id → 200 且列表不再包含；重复删/删不存在 → 404',
+      del1.status === 200 && gone && del2.status === 404 && delBad.status === 404,
+      `del1=${del1.status} gone=${gone} del2=${del2.status} delBad=${delBad.status}`
     );
   }
 
@@ -1212,6 +1247,30 @@ async function runMulti() {
       `review=${noReason.status} status=${mine && mine.status} reason=${mine && mine.reject_reason}`
     );
     await req('DELETE', `/api/characters/${ch.json.id}`, undefined, { jar: jarC });
+  }
+
+  // M36. v1.11 记忆事实：B 看不到/删不掉 A 的 fact
+  {
+    const db = getDb();
+    const ins = db.prepare('INSERT INTO memory_facts(character_id, fact, importance, created_at, source) VALUES(?,?,?,?,?)').run(
+      charA, 'M36 隔离测试事实', 3, new Date().toISOString(), 'test'
+    );
+    const fid = Number(ins.lastInsertRowid);
+    // jarA 在 M12 已登出、testuserB 在 M23 改过密码，这里用新会话登录
+    const jarA36 = makeJar();
+    const jarB36 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarA36 });
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB36 });
+    const bList = await req('GET', `/api/characters/${charA}/facts`, undefined, { jar: jarB36 });
+    const bDel = await req('DELETE', `/api/facts/${fid}`, undefined, { jar: jarB36 });
+    const aList = await req('GET', `/api/characters/${charA}/facts`, undefined, { jar: jarA36 });
+    const aHas = (Array.isArray(aList.json) ? aList.json : []).some((f) => f.id === fid);
+    const aDel = await req('DELETE', `/api/facts/${fid}`, undefined, { jar: jarA36 });
+    ok(
+      'M36. B 读 A 的 facts → 404；B 删 A 的 fact → 404；A 自己可读可删',
+      bList.status === 404 && bDel.status === 404 && aList.status === 200 && aHas && aDel.status === 200,
+      `bList=${bList.status} bDel=${bDel.status} aHas=${aHas} aDel=${aDel.status}`
+    );
   }
 }
 

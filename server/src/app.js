@@ -112,10 +112,12 @@ export function createApp() {
   });
   // 写操作通用限流：POST/PUT/DELETE/PATCH 按用户（或 IP）60 次/分钟，防灌爆 SQLite；
   // 已有更严限流的路由（如聊天 30/分钟）不受影响——限流器叠加，取最严者
+  // WRITE_LIMIT_MAX 仅供回归测试调高配额（默认 60，生产不动）
+  const writeMax = parseInt(process.env.WRITE_LIMIT_MAX || '60', 10) || 60;
   const writeLimiter = rateLimit({
     ...limiterOpts,
     windowMs: 60 * 1000,
-    max: 60,
+    max: writeMax,
     keyGenerator: (req) => req.userId || ipKeyGenerator(req.ip),
   });
   app.use('/api', (req, res, next) => {
@@ -913,6 +915,31 @@ export function createApp() {
     const c = getChar(s.character_id, req);
     if (!c) return char404(res);
     db.prepare("UPDATE intent_suggestions SET status = 'dismissed' WHERE id = ?").run(s.id);
+    res.json({ ok: true });
+  });
+
+  // ---------- v1.11 记忆事实列表 ----------
+  // 事实列表（默认只返回未被替代的，按 id 倒序）
+  app.get('/api/characters/:id/facts', (req, res) => {
+    const c = getChar(req.params.id, req);
+    if (!c) return char404(res);
+    const all = req.query.all === '1';
+    const rows = db
+      .prepare(
+        all
+          ? `SELECT id, fact, importance, created_at, superseded_by, source FROM memory_facts WHERE character_id = ? ORDER BY id DESC LIMIT 200`
+          : `SELECT id, fact, importance, created_at, superseded_by, source FROM memory_facts WHERE character_id = ? AND superseded_by IS NULL ORDER BY id DESC LIMIT 200`
+      )
+      .all(c.id);
+    res.json(rows);
+  });
+  // 删除一条事实（硬删除，FTS 触发器自动清理索引）
+  app.delete('/api/facts/:id', (req, res) => {
+    const f = db.prepare('SELECT * FROM memory_facts WHERE id = ?').get(req.params.id);
+    if (!f) return res.status(404).json({ error: '记忆不存在' });
+    const c = getChar(f.character_id, req);
+    if (!c) return char404(res);
+    db.prepare('DELETE FROM memory_facts WHERE id = ?').run(f.id);
     res.json({ ok: true });
   });
 
