@@ -153,6 +153,9 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [grantUser, setGrantUser] = useState('');
   const [grantAmount, setGrantAmount] = useState('');
   const [granting, setGranting] = useState(false);
+  // 密码重置码
+  const [recoveryCode, setRecoveryCode] = useState('');
+  const [regenBusy, setRegenBusy] = useState(false);
   // 积分模型管理
   const [pmModels, setPmModels] = useState([]);
   const [pmForm, setPmForm] = useState({ model_id: '', name: '', description: '', input_per_1m: '', output_per_1m: '' });
@@ -200,6 +203,8 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         }
         if (inv) setInvite(inv);
         setLedger((await api.getPointsLedger(30).catch(() => [])) || []);
+        const rc = await api.getRecoveryCode().catch(() => null);
+        if (!cancelled && rc && rc.recovery_code) setRecoveryCode(rc.recovery_code);
       } catch {
         showToast('读取配置失败，请检查网络后重试', 2600);
       }
@@ -261,9 +266,26 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
 
   const refreshPoints = async () => {
     try {
-      setPointsInfo(await api.getPoints());
+      const p = await api.getPoints();
+      setPointsInfo(p);
+      const rc = await api.getRecoveryCode().catch(() => null);
+      if (rc && rc.recovery_code) setRecoveryCode(rc.recovery_code);
     } catch (e) {
       showToast((e && e.message) || '刷新失败', 2000);
+    }
+  };
+
+  const regenRecovery = async () => {
+    if (!window.confirm('确定重新生成密码重置码吗？旧码将立即失效。')) return;
+    setRegenBusy(true);
+    try {
+      const rc = await api.regenerateRecoveryCode();
+      setRecoveryCode((rc && rc.recovery_code) || '');
+      showToast('已重新生成，请保存新码', 2200);
+    } catch (e) {
+      showToast((e && e.message) || '生成失败', 2200);
+    } finally {
+      setRegenBusy(false);
     }
   };
 
@@ -530,6 +552,12 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   )}
                   <div className="card-title" style={{ marginTop: 4 }}>充值</div>
                   <p className="key-desc small">目前为手动充值：微信 / 支付宝转账给站长后，管理员会在后台为你发放积分。</p>
+                  <div className="card-title" style={{ marginTop: 4 }}>账户安全</div>
+                  <div className="key-input-row">
+                    <input value={recoveryCode} readOnly placeholder="加载中…" spellCheck={false} autoComplete="off" style={{ fontFamily: 'ui-monospace, monospace', letterSpacing: 2 }} />
+                    <button className="btn secondary" onClick={regenRecovery} disabled={regenBusy}>{regenBusy ? '生成中…' : '重新生成'}</button>
+                  </div>
+                  <p className="key-desc small">密码重置码：忘记密码时凭它自助找回，请妥善保存。重新生成后旧码立即失效。</p>
                 </>
               ) : (
                 <p className="key-desc small">自带 Key 模式请到「API」tab 配置你的 OpenRouter Key。</p>

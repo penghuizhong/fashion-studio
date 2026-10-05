@@ -2522,3 +2522,70 @@ textarea {
 .pm-edit {
   width: 100%;
 }
+
+/* v1.7.0：密码小眼睛 + 重置码展示 */
+.pwd-wrap {
+  position: relative;
+  display: block;
+  margin-top: 6px;
+}
+
+.pwd-wrap .pwd-input {
+  display: block;
+  width: 100%;
+  margin-top: 0;
+  padding: 10px 42px 10px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-sizing: border-box;
+}
+
+.pwd-wrap .pwd-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--selected);
+}
+
+.pwd-eye {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.pwd-eye:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.recovery-show {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 18px 0 6px;
+}
+
+.recovery-show code {
+  font-family: ui-monospace, monospace;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  padding: 12px 18px;
+  background: var(--hover);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
