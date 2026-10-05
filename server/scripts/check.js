@@ -382,6 +382,38 @@ async function runSingle() {
     );
   }
 
+  // 10k. v1.12 记忆事件：流水线有写入 → memory_events 落库
+  {
+    const before = getDb().prepare('SELECT COUNT(*) AS n FROM memory_events WHERE conversation_id = ?').get(convId).n;
+    await runMemoryPipeline(
+      { id: charId, name: '小灵', soul_md: '', user_md: '' },
+      convId,
+      '记住：v1.12 测试事件',
+      { model: 'mock', userId: null }
+    );
+    const after = getDb().prepare('SELECT COUNT(*) AS n FROM memory_events WHERE conversation_id = ?').get(convId).n;
+    ok(
+      '10k. 流水线有写入 → memory_events 新增 1 条',
+      after === before + 1,
+      `before=${before} after=${after}`
+    );
+  }
+
+  // 10l. v1.12 记忆事件接口：since 过滤 + 带角色名
+  {
+    const since = new Date(Date.now() - 60000).toISOString();
+    const r = await req('GET', `/api/conversations/${convId}/memory-events?since=${encodeURIComponent(since)}`);
+    const items = Array.isArray(r.json) ? r.json : [];
+    const rOld = await req('GET', `/api/conversations/${convId}/memory-events?since=${encodeURIComponent(new Date().toISOString())}`);
+    const bad = await req('GET', '/api/conversations/nope/memory-events');
+    ok(
+      '10l. GET memory-events → 200 且含角色名；since=未来 → 空；不存在的对话 → 404',
+      r.status === 200 && items.length >= 1 && !!items[0].character_name &&
+        Array.isArray(rOld.json) && rOld.json.length === 0 && bad.status === 404,
+      `status=${r.status} n=${items.length} name=${items[0] && items[0].character_name} future=${rOld.json && rOld.json.length} bad=${bad.status}`
+    );
+  }
+
   // 11. estimateTokens 单测
   {
     const a = estimateTokens('hello');
@@ -1270,6 +1302,47 @@ async function runMulti() {
       'M36. B 读 A 的 facts → 404；B 删 A 的 fact → 404；A 自己可读可删',
       bList.status === 404 && bDel.status === 404 && aList.status === 200 && aHas && aDel.status === 200,
       `bList=${bList.status} bDel=${bDel.status} aHas=${aHas} aDel=${aDel.status}`
+    );
+  }
+
+  // M37. v1.12 管理员模型配置：读写 + 校验 + 非管理员 403
+  {
+    const jarA37 = makeJar();
+    const jarB37 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarA37 });
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB37 });
+    const g0 = await req('GET', '/api/admin/settings', undefined, { jar: jarA37 });
+    const badModel = await req('PUT', '/api/admin/settings', { worker_model: 'no-such-model' }, { jar: jarA37 });
+    const forbidden = await req('PUT', '/api/admin/settings', { worker_model: 'qwen3.8-flash' }, { jar: jarB37 });
+    const set1 = await req('PUT', '/api/admin/settings', { worker_model: 'qwen3.8-flash', chat_default_model: '' }, { jar: jarA37 });
+    const g1 = await req('GET', '/api/admin/settings', undefined, { jar: jarA37 });
+    // getWorkerModel 应返回管理员配置的模型
+    const { getWorkerModel } = await import('../src/points.js');
+    const wm = getWorkerModel();
+    // 清理：恢复自动
+    await req('PUT', '/api/admin/settings', { worker_model: '', chat_default_model: '' }, { jar: jarA37 });
+    ok(
+      'M37. 管理员读写模型配置；非法模型 → 400；非管理员 → 403；getWorkerModel 生效',
+      g0.status === 200 && 'worker_model' in (g0.json || {}) &&
+        badModel.status === 400 && forbidden.status === 403 &&
+        set1.status === 200 && g1.json.worker_model === 'qwen3.8-flash' && wm === 'qwen3.8-flash',
+      `get=${g0.status} bad=${badModel.status} forbid=${forbidden.status} set=${set1.status} wm=${wm}`
+    );
+  }
+
+  // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
+  {
+    const db = getDb();
+    db.prepare('INSERT INTO memory_events(conversation_id, character_id, created_at, facts_added, user_md_changed) VALUES(?,?,?,?,?)').run(
+      convA, charA, new Date().toISOString(), 1, 0
+    );
+    const jarB38 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB38 });
+    const bEv = await req('GET', `/api/conversations/${convA}/memory-events`, undefined, { jar: jarB38 });
+    ok(
+      'M38. B 读 A 的 memory-events → 404',
+      bEv.status === 404,
+      `status=${bEv.status}`
     );
   }
 }
