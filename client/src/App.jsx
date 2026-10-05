@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import ChatView from './components/ChatView.jsx';
+import DiscoverView from './components/DiscoverView.jsx';
 import CharacterSettingsModal from './components/CharacterSettingsModal.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import AuthPage from './components/AuthPage.jsx';
 import { useAuth } from './auth.jsx';
 import { api } from './api.js';
 
-// view = { type: 'empty' } | { type: 'chat', characterId, conversationId }
+// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'discover' }
 
 export default function App() {
   const { multiUser, user, authReady, logout } = useAuth();
@@ -83,6 +84,13 @@ export default function App() {
     refreshCharacters().catch(() => {});
   }, [canEnter, refreshCharacters]);
 
+  // 登出后回到游客发现页（而非直接登录页）
+  const lastUserRef = useRef(user);
+  useEffect(() => {
+    if (lastUserRef.current && !user) setForceAuth(false);
+    lastUserRef.current = user;
+  }, [user]);
+
   // 退出登录后清理，避免残留上一个用户的数据
   useEffect(() => {
     if (authReady && multiUser && !user) {
@@ -123,6 +131,20 @@ export default function App() {
     // 移动端抽屉：选中对话后自动收起
     if (window.innerWidth <= 768) setSidebarOpen(false);
   }, []);
+
+  const handleOpenDiscover = useCallback(() => {
+    setView({ type: 'discover' });
+    if (window.innerWidth <= 768) setSidebarOpen(false);
+  }, []);
+
+  const handleAdopted = useCallback(
+    (characterId, conversationId) => {
+      refreshCharacters().catch(() => {});
+      handleSelectConversation(characterId, conversationId);
+      bumpConversations();
+    },
+    [refreshCharacters, handleSelectConversation, bumpConversations]
+  );
 
   const handleOpenSettings = useCallback((characterId) => {
     setCharSettingsModal({ open: true, characterId });
@@ -167,7 +189,25 @@ export default function App() {
     []
   );
 
-  // 多用户模式：启动检查完成前显示中性加载页；未登录则全屏登录/注册页。
+  // 游客模式：多用户未登录时可浏览发现页，领养/聊天时再引导登录
+  const [forceAuth, setForceAuth] = useState(false);
+  const [afterLoginDiscover, setAfterLoginDiscover] = useState(false);
+  const guestMode = authReady && multiUser && !user;
+
+  // 游客去登录并回来后，自动打开发现页
+  useEffect(() => {
+    if (user && afterLoginDiscover) {
+      setAfterLoginDiscover(false);
+      setView({ type: 'discover' });
+    }
+  }, [user, afterLoginDiscover]);
+
+  const handleRequireLogin = useCallback(() => {
+    setAfterLoginDiscover(true);
+    setForceAuth(true);
+  }, []);
+
+  // 多用户模式：启动检查完成前显示中性加载页；未登录且未点登录则进游客发现页。
   // 单用户模式直接渲染主界面（一个字都不变）。
   if (!authReady && multiUser) {
     return (
@@ -176,8 +216,61 @@ export default function App() {
       </div>
     );
   }
-  if (authReady && multiUser && !user) {
+  if (guestMode && forceAuth) {
     return <AuthPage theme={theme} onToggleTheme={toggleTheme} />;
+  }
+  if (guestMode) {
+    return (
+      <div className={`app guest${sidebarOpen ? ' sidebar-open' : ''}`}>
+        <Sidebar
+          guest
+          characters={[]}
+          config={config}
+          view={{ type: 'discover' }}
+          convRefresh={0}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onOpenDiscover={() => {
+            if (window.innerWidth <= 768) setSidebarOpen(false);
+          }}
+          onLogin={handleRequireLogin}
+          onSelectConversation={() => {}}
+          onOpenSettings={() => {}}
+          onCharacterCreated={() => {}}
+          onConversationDeleted={() => {}}
+          onConversationsChanged={() => {}}
+          onOpenSettingsModal={() => {}}
+          onToggleSidebar={toggleSidebar}
+          showToast={showToast}
+        />
+        <div className="backdrop" onClick={() => setSidebarOpen(false)} />
+        <button
+          className="sidebar-expand-btn"
+          title="展开侧边栏"
+          onClick={toggleSidebar}
+        >
+          ›
+        </button>
+        <main className="main">
+          <button className="menu-btn icon-btn discover-menu-btn" title="打开侧边栏" onClick={() => setSidebarOpen(true)}>
+            ☰
+          </button>
+          <DiscoverView
+            user={null}
+            config={config}
+            onAdopted={() => {}}
+            onRequireLogin={handleRequireLogin}
+            onExit={null}
+            showToast={showToast}
+          />
+        </main>
+        {toast && (
+          <div className="toast" key={toast.id}>
+            {toast.text}
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -198,6 +291,8 @@ export default function App() {
         onCharacterCreated={handleCharacterCreated}
         onConversationDeleted={handleConversationDeleted}
         onConversationsChanged={bumpConversations}
+        onOpenDiscover={handleOpenDiscover}
+        onLogin={() => {}}
         onToggleSidebar={toggleSidebar}
         showToast={showToast}
       />
@@ -231,6 +326,16 @@ export default function App() {
           showToast={showToast}
         />
       )}
+        {view.type === 'discover' && (
+          <DiscoverView
+            user={user}
+            config={config}
+            onAdopted={handleAdopted}
+            onRequireLogin={handleRequireLogin}
+            onExit={() => setView({ type: 'empty' })}
+            showToast={showToast}
+          />
+        )}
         {view.type === 'empty' && (
           <div className="empty-state">
             <button className="menu-btn icon-btn" title="打开侧边栏" onClick={() => setSidebarOpen(true)}>
@@ -238,7 +343,10 @@ export default function App() {
             </button>
             <div className="empty-logo">💬</div>
             <h2>SoulChat</h2>
-            <p>从左侧选择角色或群聊开始，也可以新建角色、发起群聊。</p>
+            <p>从左侧选择角色或群聊开始，也可以去发现页领养官方角色。</p>
+            <button className="btn-ghost" onClick={handleOpenDiscover}>
+              🧭 去发现角色
+            </button>
           </div>
         )}
       </main>

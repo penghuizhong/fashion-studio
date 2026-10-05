@@ -10,6 +10,7 @@ export default function Sidebar({
   view,
   convRefresh,
   theme,
+  guest,
   onToggleTheme,
   onSelectConversation,
   onOpenSettings,
@@ -17,6 +18,8 @@ export default function Sidebar({
   onConversationDeleted,
   onConversationsChanged,
   onOpenSettingsModal,
+  onOpenDiscover,
+  onLogin,
   onToggleSidebar,
   showToast,
 }) {
@@ -217,13 +220,29 @@ export default function Sidebar({
         </button>
       </div>
 
-      <button className="nav-row" onClick={() => setModalOpen(true)}>
-        <Icon name="plus" size={18} /> 新建角色
-      </button>
-      <button className="nav-row" onClick={() => setGroupModalOpen(true)}>
-        <Icon name="users" size={18} /> 新建群聊
+      {!guest && (
+        <>
+          <button className="nav-row" onClick={() => setModalOpen(true)}>
+            <Icon name="plus" size={18} /> 新建角色
+          </button>
+          <button className="nav-row" onClick={() => setGroupModalOpen(true)}>
+            <Icon name="users" size={18} /> 新建群聊
+          </button>
+        </>
+      )}
+      <button
+        className={`nav-row${view.type === 'discover' ? ' active' : ''}`}
+        onClick={onOpenDiscover}
+      >
+        <Icon name="compass" size={18} /> 发现角色
       </button>
 
+      {guest ? (
+        <div className="char-list">
+          <div className="sidebar-hint">登录后开始聊天，领养你喜欢的角色吧。</div>
+        </div>
+      ) : (
+      <>
       <div className="char-list">
         {characters.length === 0 && (
           <div className="sidebar-hint">还没有角色，点击上方「新建角色」创建第一个角色吧。</div>
@@ -310,9 +329,15 @@ export default function Sidebar({
           ))}
         </div>
       )}
+      </>
+      )}
 
       <div className="sidebar-footer">
-      {multiUser && user ? (
+      {guest ? (
+        <button className="btn primary block" onClick={onLogin}>
+          登录 / 注册
+        </button>
+      ) : multiUser && user ? (
         <div className="user-card-wrap" ref={menuRef}>
           <button className="user-row" onClick={() => setMenuOpen((o) => !o)} title="账户">
             <span className="profile-avatar sm">{(user.username || '?').slice(0, 1).toUpperCase()}</span>
