@@ -267,6 +267,103 @@ return String(text)
 .trim();
 }
 
+// v1.10 意图识别 + 是否值得记忆：单次轻量调用
+// 返回 { soul_update: {proposed, confidence} | null, worth: bool }；失败返回 null
+const CLASSIFY_SYSTEM = `你是意图识别助手。只看用户的最新一句话，判断两件事：
+1. soul_update：用户是否想修改角色的设定/人设（性格、外貌、背景、说话方式、喜好、能力等）。是则给出整理后的一句话设定描述 proposed 和置信度 confidence(0-1)。
+   注意区分：用户让角色"记住某件事"（如"我明天要开会"）是记事实，不是改设定 → soul_update 为 null。
+2. worth：这句话及上下文是否有值得长期记住的新信息（关于用户的稳定事实、重要事件、约定、偏好变化）。闲聊、打招呼、重复已有信息 → false。
+只返回 JSON：{"soul_update": {"proposed": "...", "confidence": 0.85} 或 null, "worth": true/false}，不要输出其他文字。`;
+export async function classifyTurn({ userText, prevAsstText, model, apiKey, baseUrl, onUsage, signal }) {
+const cfg = getConfig();
+if (cfg.mockLlm) {
+const t = String(userText || '');
+const m = t.match(/设定[：:]\s*(.+)|让她(.+)|记住设定[：:]\s*(.+)/);
+if (m) return { soul_update: { proposed: (m[1] || m[2] || m[3] || '').trim(), confidence: 0.9 }, worth: true };
+if (/记住|别忘/.test(t)) return { soul_update: null, worth: true };
+return { soul_update: null, worth: false };
+}
+const { json } = await postJson({
+model,
+temperature: 0.1,
+apiKey,
+baseUrl,
+signal,
+onUsage,
+messages: [
+{ role: 'system', content: CLASSIFY_SYSTEM },
+{ role: 'user', content: `上一句AI：${String(prevAsstText || '').slice(0, 300)}\n用户最新：${String(userText || '').slice(0, 500)}` },
+],
+});
+const text = (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
+try {
+const parsed = JSON.parse(stripFences(text));
+if (typeof parsed.worth !== 'boolean') return null;
+let su = null;
+if (parsed.soul_update && typeof parsed.soul_update.proposed === 'string' && parsed.soul_update.proposed.trim()) {
+su = { proposed: parsed.soul_update.proposed.trim().slice(0, 200), confidence: Number(parsed.soul_update.confidence) || 0 };
+}
+return { soul_update: su, worth: parsed.worth };
+} catch {
+return null;
+}
+}
+
+// v1.10 条目级记忆提取：返回 { user_md: 全文或null(无变化), facts: [{op, text, importance, supersedes_id}] }
+// existingFacts: [{id, fact}] 已有相关事实，供 LLM 做 ADD/SUPERSEDE/NOOP 判断
+const FACTS_SYSTEM = `你是记忆整理助手。根据当前 user_md、已有相关记忆事实和最近对话，输出 JSON。
+只返回 JSON：{"user_md": "全文（无变化则为 null）", "facts": [{"op": "ADD/SUPERSEDE/NOOP", "text": "事实描述", "importance": 1-5, "supersedes_id": 数字或null}]}，不要输出其他文字。
+要求：
+1. user_md：关于用户的稳定事实（称呼、偏好、重要事项），条列简洁；无新信息时返回 null，不要重写。
+2. facts：本轮新出现的、值得长期记住的事实，每条一句话，可带日期（今天是 {today}）。importance：1=闲聊细节 3=普通事实 5=关键约定/重要事件。
+3. 对照已有事实去重：语义重复 → NOOP；新事实推翻旧事实 → SUPERSEDE 并给出 supersedes_id（旧事实 id）；否则 ADD。
+4. 没有值得记的新事实时 facts 为空数组。`;
+export async function extractFacts({ userMd, existingFacts, rounds, model, apiKey, baseUrl, onUsage, signal }) {
+const cfg = getConfig();
+const today = new Date().toISOString().slice(0, 10);
+if (cfg.mockLlm) {
+const hasDup = (existingFacts || []).length > 0;
+return {
+user_md: `${userMd || ''}\n- [mock] 用户偏好 ${today}`,
+facts: hasDup
+? [{ op: 'NOOP', text: (existingFacts[0] && existingFacts[0].fact) || '', importance: 3, supersedes_id: null }]
+: [{ op: 'ADD', text: `[mock] 对话事实 ${today}`, importance: 3, supersedes_id: null }],
+};
+}
+const roundText = rounds.map((m) => `${m.role}: ${m.content}`).join('\n');
+const existText = (existingFacts || []).map((f) => `[id:${f.id}] ${f.fact}`).join('\n') || '（无）';
+const { json } = await postJson({
+model,
+temperature: 0.2,
+apiKey,
+baseUrl,
+signal,
+onUsage,
+messages: [
+{ role: 'system', content: FACTS_SYSTEM.replace('{today}', today) },
+{ role: 'user', content: `当前 user_md：\n${userMd || ''}\n\n已有相关记忆事实：\n${existText}\n\n最近对话：\n${roundText}` },
+],
+});
+const text = (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
+try {
+const parsed = JSON.parse(stripFences(text));
+if (!Array.isArray(parsed.facts)) return null;
+const facts = parsed.facts
+.filter((f) => f && typeof f.text === 'string' && f.text.trim())
+.slice(0, 10)
+.map((f) => ({
+op: ['ADD', 'SUPERSEDE', 'NOOP'].includes(f.op) ? f.op : 'ADD',
+text: f.text.trim().slice(0, 300),
+importance: Math.min(5, Math.max(1, parseInt(f.importance, 10) || 3)),
+supersedes_id: f.supersedes_id != null ? parseInt(f.supersedes_id, 10) : null,
+}));
+const user_md = typeof parsed.user_md === 'string' && parsed.user_md.trim() ? parsed.user_md.trim().slice(0, 4000) : null;
+return { user_md, facts };
+} catch {
+return null;
+}
+}
+
 // 记忆提取：返回 {user_md, memory_md} 全文；失败返回 null
 export async function extractJson({ userMd, memoryMd, rounds, model, apiKey, baseUrl, onUsage, signal }) {
 const cfg = getConfig();

@@ -139,6 +139,39 @@ CREATE TABLE IF NOT EXISTS user_collection(
   adopted_at TEXT,
   PRIMARY KEY(user_id, card_key)
 );
+-- ---- 记忆事实条目（v1.10：替代 memory_md 大文本，按需检索注入） ----
+CREATE TABLE IF NOT EXISTS memory_facts(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  character_id TEXT NOT NULL,
+  fact TEXT NOT NULL,
+  importance INTEGER DEFAULT 3,
+  created_at TEXT,
+  superseded_by INTEGER DEFAULT NULL,
+  source TEXT DEFAULT 'chat'
+);
+CREATE INDEX IF NOT EXISTS idx_facts_char ON memory_facts(character_id, id);
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(fact, content='memory_facts', content_rowid='id', tokenize='trigram');
+CREATE TRIGGER IF NOT EXISTS trg_facts_ai AFTER INSERT ON memory_facts BEGIN
+  INSERT INTO memory_facts_fts(rowid, fact) VALUES (new.id, new.fact);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_facts_ad AFTER DELETE ON memory_facts BEGIN
+  INSERT INTO memory_facts_fts(memory_facts_fts, rowid, fact) VALUES('delete', old.id, old.fact);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_facts_au AFTER UPDATE ON memory_facts BEGIN
+  INSERT INTO memory_facts_fts(memory_facts_fts, rowid, fact) VALUES('delete', old.id, old.fact);
+  INSERT INTO memory_facts_fts(rowid, fact) VALUES (new.id, new.fact);
+END;
+-- ---- 意图识别：待确认的灵魂修改建议 ----
+CREATE TABLE IF NOT EXISTS intent_suggestions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  character_id TEXT NOT NULL,
+  conversation_id TEXT,
+  user_id TEXT,
+  proposed TEXT NOT NULL,
+  status TEXT DEFAULT 'pending',
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sugg_char ON intent_suggestions(character_id, status, id);
 `;
 
 let _db = null;
@@ -255,6 +288,33 @@ export function getDb() {
         }
       });
       grant(needBonus);
+    }
+    // v1.10 一次性迁移：memory_md 条目 → memory_facts（只迁还没有 facts 的角色）
+    const migChars = _db
+      .prepare(
+        `SELECT id, memory_md FROM characters
+         WHERE memory_md IS NOT NULL AND TRIM(memory_md) != ''
+         AND NOT EXISTS (SELECT 1 FROM memory_facts WHERE memory_facts.character_id = characters.id)`
+      )
+      .all();
+    if (migChars.length) {
+      const nowMig = new Date().toISOString();
+      const insFact = _db.prepare(
+        'INSERT INTO memory_facts(character_id, fact, importance, created_at, source) VALUES(?,?,?,?,?)'
+      );
+      _db.transaction((rows) => {
+        for (const c of rows) {
+          const lines = String(c.memory_md)
+            .split('\n')
+            .map((s) => s.trim())
+            .filter((s) => s && !s.startsWith('#'));
+          for (const ln of lines) {
+            const fact = ln.replace(/^[-*•\d.]\s*/, '').trim();
+            if (fact) insFact.run(c.id, fact, 3, nowMig, 'migrate');
+          }
+        }
+      })(migChars);
+      console.log(`[db] 记忆迁移：${migChars.length} 个角色的 memory_md 已拆为 facts 条目`);
     }
   } catch (e) {
     console.warn('[db] 迁移失败:', e.message);
