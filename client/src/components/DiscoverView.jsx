@@ -52,6 +52,23 @@ export default function DiscoverView({
   const [genModel, setGenModel] = useState('');
   const [generating, setGenerating] = useState(false);
   const [genResult, setGenResult] = useState(null);
+  // v1.13: 收藏的 AI 生成卡
+  const [savedCards, setSavedCards] = useState(null);
+  const [savedDetail, setSavedDetail] = useState(null);
+
+  const loadSavedCards = async () => {
+    if (!loggedIn) return;
+    try {
+      const r = await api.getSavedCards();
+      setSavedCards((r && r.cards) || []);
+    } catch {
+      setSavedCards([]);
+    }
+  };
+  useEffect(() => {
+    if (section === 'saved') loadSavedCards();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section]);
 
   useEffect(() => {
     api
@@ -84,7 +101,7 @@ export default function DiscoverView({
   };
 
   // 领养：预设卡 / AI 生成卡
-  const adopt = async (card, presetId) => {
+  const adopt = async (card, presetId, savedId) => {
     if (!loggedIn) {
       onRequireLogin();
       return;
@@ -92,8 +109,10 @@ export default function DiscoverView({
     if (adopting) return;
     setAdopting(true);
     try {
-      const r = await api.adoptCharacterCard(presetId ? { preset_id: presetId } : { card });
-      afterAdopt(r);
+      const r = await api.adoptCharacterCard(
+        presetId ? { preset_id: presetId } : { card, saved_id: savedId || undefined }
+      );
+      afterAdopt(r, savedId);
     } catch (e) {
       showToast((e && e.message) || '领养失败');
     } finally {
@@ -101,12 +120,14 @@ export default function DiscoverView({
     }
   };
 
-  const afterAdopt = (r) => {
+  const afterAdopt = (r, savedId) => {
     showToast(`已领养 ${r.character.name} 🎉`);
     if (r.collection_reward > 0) showToast(`🎉 集齐官方角色卡！+${r.collection_reward} 积分`, 3500);
     setDetail(null);
     setGenResult(null);
     setGenOpen(false);
+    setSavedDetail(null);
+    if (savedId) loadSavedCards();
     onAdopted(r.character.id, r.conversation.id);
   };
 
@@ -126,8 +147,8 @@ export default function DiscoverView({
     try {
       const r = await api.generateCharacterCard({ prompt: desc, model: genModel || undefined });
       setGenResult(r);
-      if (r.cost) showToast(`生成成功，消耗 ${r.cost.points} 积分`);
-      else showToast('生成成功');
+      if (r.cost) showToast(`生成成功，已保存到「我的收藏」，消耗 ${r.cost.points} 积分`);
+      else showToast('生成成功，已保存到「我的收藏」');
     } catch (e) {
       showToast((e && e.message) || '生成失败');
     } finally {
@@ -136,6 +157,18 @@ export default function DiscoverView({
   };
 
   const models = (config && config.points_models) || [];
+
+  const deleteSaved = async (id) => {
+    if (!window.confirm('确定删除这张收藏的角色卡吗？')) return;
+    try {
+      await api.deleteSavedCard(id);
+      showToast('已删除');
+      setSavedDetail(null);
+      loadSavedCards();
+    } catch (e) {
+      showToast((e && e.message) || '删除失败');
+    }
+  };
 
   // 年龄门未过：占位页
   if (!ageOk) {
@@ -190,6 +223,7 @@ export default function DiscoverView({
   }
 
   return (
+    <>
     <div className="discover">
       <header className="discover-header">
         <div className="discover-header-inner">
@@ -209,6 +243,9 @@ export default function DiscoverView({
         </button>
         <button className={section === 'dex' ? 'section-tab active' : 'section-tab'} onClick={() => setSection('dex')}>
           集卡图鉴
+        </button>
+        <button className={section === 'saved' ? 'section-tab active' : 'section-tab'} onClick={() => setSection('saved')}>
+          我的收藏
         </button>
       </div>
 
@@ -271,7 +308,7 @@ export default function DiscoverView({
                   <button
                     className="btn primary"
                     disabled={adopting}
-                    onClick={() => adopt(genResult.card, null)}
+                    onClick={() => adopt(genResult.card, null, genResult.saved_id)}
                   >
                     {adopting ? '领养中…' : '领养这个角色'}
                   </button>
@@ -353,8 +390,50 @@ export default function DiscoverView({
           onGoPresets={() => setSection('presets')}
         />
       )}
+
+      {section === 'saved' && (
+        <>
+          <p className="discover-sub">AI 生成的角色卡会自动保存在这里，满意就领养开聊</p>
+          {!loggedIn ? (
+            <p className="key-desc">登录后查看收藏</p>
+          ) : savedCards === null ? (
+            <p className="key-desc">加载中…</p>
+          ) : savedCards.length === 0 ? (
+            <div className="dex-empty">
+              <p className="key-desc">还没有收藏，去「官方预设」用 AI 生成一张吧 ✨</p>
+              <button className="btn secondary" onClick={() => setSection('presets')}>去生成</button>
+            </div>
+          ) : (
+            <div className="card-grid">
+              {savedCards.map((s) => (
+                s.card && (
+                  <div key={s.id} className="preset-card" onClick={() => setSavedDetail(s)}>
+                    <CardFace card={s.card} categories={categories} />
+                    {s.adopted && <span className="preset-badge">已领养</span>}
+                  </div>
+                )
+              ))}
+            </div>
+          )}
+        </>
+      )}
       </div>
     </div>
+    {savedDetail && savedDetail.card && (
+      <CardDetailModal
+        card={savedDetail.card}
+        categories={categories}
+        onClose={() => setSavedDetail(null)}
+        onAdopt={savedDetail.adopted ? null : () => adopt(savedDetail.card, null, savedDetail.id)}
+        adopting={adopting}
+        extraActions={
+          <button className="btn danger secondary" onClick={() => deleteSaved(savedDetail.id)}>
+            删除
+          </button>
+        }
+      />
+    )}
+  </>
   );
 }
 
@@ -405,9 +484,13 @@ function CardDetailModal({ card, categories, onClose, onAdopt, adopting, extraAc
         </div>
         <div className="modal-actions">
           {extraActions}
-          <button className="btn primary" disabled={adopting} onClick={onAdopt}>
-            {adopting ? '领养中…' : '领养并开始聊天'}
-          </button>
+          {onAdopt ? (
+            <button className="btn primary" disabled={adopting} onClick={onAdopt}>
+              {adopting ? '领养中…' : '领养并开始聊天'}
+            </button>
+          ) : (
+            <span className="key-desc small">已领养，可在侧边栏找到它</span>
+          )}
         </div>
       </div>
     </div>
@@ -932,6 +1015,29 @@ function DexSection({ categories, showToast, onGoPresets }) {
                   <span className="shared-nums">🔥{s.adopt_count} 人领养</span>
                   <span className="tag-badge">已领养</span>
                 </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      {data.my_grown && data.my_grown.length > 0 && (
+        <>
+          <div className="greeting-label" style={{ marginTop: 12 }}>
+            我的养成（{data.my_grown.filter((g) => g.in_dex).length}/{data.my_grown.length} 进图鉴 · {data.dex_threshold || 5} 条记忆准入）
+          </div>
+          <p className="discover-sub">和角色多聊天、产生 {data.dex_threshold || 5} 条记忆后即可进图鉴</p>
+          <div className="dex-grid">
+            {data.my_grown.map((g) => (
+              <div
+                key={`grown-${g.id}`}
+                className={`dex-item${g.in_dex ? '' : ' locked'}`}
+                title={g.in_dex ? (g.tagline || g.name) : `养成中：${g.fact_count}/${data.dex_threshold || 5} 条记忆`}
+              >
+                <span className="dex-avatar">{g.in_dex ? g.avatar || '🤖' : '🌱'}</span>
+                <span className="dex-name">{g.name}</span>
+                <span className="dex-cat">
+                  {g.in_dex ? '已收录' : `${g.fact_count}/${data.dex_threshold || 5} 记忆`}
+                </span>
               </div>
             ))}
           </div>

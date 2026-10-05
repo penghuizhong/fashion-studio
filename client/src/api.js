@@ -281,6 +281,8 @@ export const api = {
   getPresetCards: () => get('/api/character-cards/presets'),
   adoptCharacterCard: (data) => post('/api/character-cards/adopt', data),
   generateCharacterCard: (data) => post('/api/character-cards/generate', data),
+  getSavedCards: () => get('/api/saved-cards'),
+  deleteSavedCard: (id) => del(`/api/saved-cards/${id}`),
   // 角色广场 UGC
   listSharedCards: (params = {}) => get(`/api/character-cards/shared?${new URLSearchParams(params)}`),
   publishCharacterCard: (data) => post('/api/character-cards/publish', data),

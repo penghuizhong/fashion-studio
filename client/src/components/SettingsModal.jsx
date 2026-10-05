@@ -1,6 +1,6 @@
 // 设置弹窗（ChatGPT 式）：横向滑动二级导航 + 内容区
 // tab: points(积分) / api(API) / invite(邀请) / stats(用量统计·管理员)
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api, fetchModels, DEFAULT_BASE_URL } from '../api.js';
 import Icon from './icons.jsx';
 
@@ -8,10 +8,12 @@ import Icon from './icons.jsx';
 function ModelPicker({ value, onChange, models, placeholder, openSignal }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const safeModels = Array.isArray(models) ? models : [];
+  const safeValue = value == null ? '' : String(value);
 
   useEffect(() => {
-    if (openSignal && models.length > 0) setOpen(true);
-  }, [openSignal, models.length]);
+    if (openSignal && safeModels.length > 0) setOpen(true);
+  }, [openSignal, safeModels.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -29,24 +31,24 @@ function ModelPicker({ value, onChange, models, placeholder, openSignal }) {
     };
   }, [open ]);
 
-  const q = value.trim().toLowerCase();
+  const q = safeValue.trim().toLowerCase();
   const filtered = q
-    ? models.filter(
-        (m) => m.id.toLowerCase().includes(q) || (m.name && m.name.toLowerCase().includes(q))
+    ? safeModels.filter(
+        (m) => m && String(m.id || '').toLowerCase().includes(q) || (m && m.name && String(m.name).toLowerCase().includes(q))
       )
-    : models;
+    : safeModels;
   const shown = filtered.slice(0, 120);
 
   return (
     <div className="model-picker" ref={ref}>
       <input
-        value={value}
+        value={safeValue}
         onChange={(e) => {
           onChange(e.target.value);
-          if (models.length > 0) setOpen(true);
+          if (safeModels.length > 0) setOpen(true);
         }}
         onFocus={() => {
-          if (models.length > 0) setOpen(true);
+          if (safeModels.length > 0) setOpen(true);
         }}
         placeholder={placeholder}
         spellCheck={false}
@@ -69,7 +71,7 @@ function ModelPicker({ value, onChange, models, placeholder, openSignal }) {
           ))}
         </ul>
       )}
-      {open && models.length > 0 && shown.length === 0 && (
+      {open && safeModels.length > 0 && shown.length === 0 && (
         <ul className="model-dropdown">
           <li className="model-empty" onMouseDown={(e) => e.preventDefault()}>
             无匹配模型，可直接手动输入
@@ -78,6 +80,53 @@ function ModelPicker({ value, onChange, models, placeholder, openSignal }) {
       )}
     </div>
   );
+}
+
+// 错误边界：渲染崩溃时显示错误信息而不是黑屏
+class SettingsErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    try {
+      console.error('[SettingsModal] render crash:', error, info);
+    } catch {}
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="modal-overlay settings-overlay">
+          <div className="settings-modal" role="dialog" aria-label="设置">
+            <div className="settings-head">
+              <h3>设置</h3>
+              <button className="icon-btn" onClick={this.props.onClose}>
+                <Icon name="x" size={20} />
+              </button>
+            </div>
+            <div className="settings-body">
+              <p className="key-desc">页面加载出错了，请重试。</p>
+              <p className="key-desc small" style={{ opacity: 0.7 }}>
+                {String((this.state.error && this.state.error.message) || this.state.error)}
+              </p>
+              <div className="save-row">
+                <button
+                  className="btn primary"
+                  onClick={() => this.setState({ error: null })}
+                >
+                  重试
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function TrendChart({ data }) {
@@ -536,6 +585,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const maxModelPts = stats ? Math.max(1, ...stats.mo.map((m) => m.points)) : 1;
 
   return (
+    <SettingsErrorBoundary onClose={onClose}>
     <div className="modal-overlay settings-overlay" onClick={onClose}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="设置">
         <div className="settings-head">
@@ -907,5 +957,6 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         {version && <div className="settings-foot">SoulChat v{version}</div>}
       </div>
     </div>
+    </SettingsErrorBoundary>
   );
 }
