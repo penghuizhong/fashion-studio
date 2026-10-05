@@ -430,12 +430,84 @@ async function runSingle() {
     const empty = await req('POST', '/api/character-cards/generate', { prompt: '' });
     ok('25b. generate 空 prompt → 400', empty.status === 400, `status=${empty.status}`);
   }
+
+  // 26. 广场发布（单用户模式直接上架）：建角色 → 发布 → my-published；空卖点/敏感词 → 400
+  let sharedId = null;
+  {
+    const c = await req('POST', '/api/characters', { name: '投稿测试角' });
+    const charId = c.json.id;
+    const pub = await req('POST', '/api/character-cards/publish', {
+      character_id: charId,
+      tagline: '一只爱讲冷笑话的测试角色',
+      description: '这是一张回归测试用的投稿卡片，简介六十字以上凑字数凑字数凑字数凑字数。',
+      greeting: '（测试开场白）你好，我是投稿测试角，很高兴认识你！',
+      category: 'comedy',
+      tags: ['测试'],
+    });
+    sharedId = pub.json && pub.json.id;
+    const my = await req('GET', '/api/character-cards/my-published');
+    const bad1 = await req('POST', '/api/character-cards/publish', { character_id: charId, tagline: '', description: '简介' });
+    const bad2 = await req('POST', '/api/character-cards/publish', { character_id: charId, tagline: '约炮神器', description: '简介六十字以上凑字数凑字数凑字数凑字数凑字数。', greeting: '开场白凑字数凑字数凑字数凑字数凑字数凑字数凑字数。' });
+    const bad3 = await req('POST', '/api/character-cards/publish', { character_id: 'nope', tagline: 'x', description: '简介六十字以上凑字数凑字数凑字数凑字数凑字数。' });
+    ok(
+      '26. publish → 201 且单用户直接上架；my-published 有 1 条；空卖点/敏感词/不存在的角色 → 400/400/404',
+      pub.status === 201 && pub.json.status === 'approved' && sharedId &&
+        Array.isArray(my.json) && my.json.length === 1 && my.json[0].status === 'approved' &&
+        bad1.status === 400 && bad2.status === 400 && bad3.status === 404,
+      `pub=${pub.status}(${pub.json && pub.json.status}) my=${my.json && my.json.length} bad=${bad1.status},${bad2.status},${bad3.status}`
+    );
+  }
+
+  // 27. 广场互动：列表可见 → 领养（adopt_count+1）→ 点赞/取消 → 举报 5 次自动下架
+  {
+    const list0 = await req('GET', '/api/character-cards/shared');
+    const ad = await req('POST', `/api/character-cards/shared/${sharedId}/adopt`);
+    const like1 = await req('POST', `/api/character-cards/shared/${sharedId}/like`);
+    const like2 = await req('POST', `/api/character-cards/shared/${sharedId}/like`);
+    for (let i = 0; i < 5; i++) await req('POST', `/api/character-cards/shared/${sharedId}/report`, { reason: '测试举报' });
+    const list1 = await req('GET', '/api/character-cards/shared');
+    const adChar = ad.json && ad.json.character;
+    ok(
+      '27. shared 列表可见 → 领养 201（角色已建）→ 点赞开/关 → 举报 5 次后列表消失（回 pending）',
+      Array.isArray(list0.json) && list0.json.length === 1 && list0.json[0].adopt_count === 0 &&
+        ad.status === 201 && adChar && adChar.name === '投稿测试角' &&
+        like1.json.liked === true && like1.json.like_count === 1 &&
+        like2.json.liked === false && like2.json.like_count === 0 &&
+        Array.isArray(list1.json) && list1.json.length === 0,
+      `list0=${list0.json && list0.json.length} ad=${ad.status} like=${like1.json.liked}/${like2.json.liked} list1=${list1.json && list1.json.length}`
+    );
+    if (adChar) await req('DELETE', `/api/characters/${adChar.id}`);
+  }
+
+  // 28. 图鉴：领养 2 张预设 → adopted_count 2；单用户无账本不报错
+  {
+    const a1 = await req('POST', '/api/character-cards/adopt', { preset_id: 'luchen' });
+    const a2 = await req('POST', '/api/character-cards/adopt', { preset_id: 'taoyao' });
+    const col = await req('GET', '/api/character-cards/collection');
+    ok(
+      '28. 领养 2 张预设 → 图鉴 adopted_count=2/18，未领养标记正确',
+      a1.status === 201 && a2.status === 201 &&
+        col.json && col.json.adopted_count === 2 && col.json.total === 18 &&
+        col.json.presets.filter((p) => p.adopted).length === 2,
+      `a=${a1.status},${a2.status} adopted=${col.json && col.json.adopted_count}`
+    );
+    for (const a of [a1, a2]) {
+      const ch = a.json && a.json.character;
+      if (ch) await req('DELETE', `/api/characters/${ch.id}`);
+    }
+    // 清理投稿角色
+    const chars = await req('GET', '/api/characters');
+    for (const c of (chars.json || []).filter((x) => x.name === '投稿测试角')) {
+      await req('DELETE', `/api/characters/${c.id}`);
+    }
+  }
 }
 
 // ================= 多用户套件（13 项） =================
 async function runMulti() {
   const jarA = makeJar(); // 用户 A
   let jarAdminM = null; // 管理员会话（M16 登录，M20/M21 复用）
+  let jarB2b = null; // testuserB 重登录会话（M32 起复用，M23 的 jarB2 块级已失效）
   const jarB = makeJar(); // 用户 B
   const anon = makeJar(); // 未登录
   let userA = null;
@@ -920,6 +992,134 @@ async function runMulti() {
         Array.isArray(card.example_dialogues) && g.json.cost === null && g2.status === 400,
       `gen=${g.status} name=${card && card.name} cost=${JSON.stringify(g.json && g.json.cost)} empty=${g2.status}`
     );
+  }
+
+  // M31. 广场发布（多用户先审后发）：publish → pending；未登录列表不可见；admin 通过 → 可见；非 admin 审核 → 403
+  let mSharedId = null;
+  {
+    const ch = await req('POST', '/api/characters', { name: '广场投稿角' }, { jar: jarC });
+    const charId = ch.json.id;
+    const pub = await req('POST', '/api/character-cards/publish', {
+      character_id: charId,
+      tagline: '多用户测试投稿',
+      description: '回归测试用投稿卡片，简介凑字数凑字数凑字数凑字数凑字数凑字数。',
+      greeting: '多用户测试开场白，你好呀！',
+    }, { jar: jarC });
+    mSharedId = pub.json && pub.json.id;
+    const pubListAnon = await req('GET', '/api/character-cards/shared');
+    const forbidden = await req('POST', `/api/admin/shared-cards/${mSharedId}/review`, { approve: true }, { jar: jarC });
+    const pendList = await req('GET', '/api/admin/shared-cards?status=pending', undefined, { jar: jarAdminM });
+    const approve = await req('POST', `/api/admin/shared-cards/${mSharedId}/review`, { approve: true }, { jar: jarAdminM });
+    const pubListAfter = await req('GET', '/api/character-cards/shared');
+    ok(
+      'M31. publish → pending；未登录列表无；非 admin 审核 → 403；admin 待审列表有；通过后列表可见',
+      pub.status === 201 && pub.json.status === 'pending' && mSharedId &&
+        Array.isArray(pubListAnon.json) && pubListAnon.json.length === 0 &&
+        forbidden.status === 403 &&
+        Array.isArray(pendList.json) && pendList.json.some((x) => x.id === mSharedId) &&
+        approve.status === 200 &&
+        pubListAfter.json.some((x) => x.id === mSharedId),
+      `pub=${pub.status} anon=${pubListAnon.json && pubListAnon.json.length} forbidden=${forbidden.status} approve=${approve.status} after=${pubListAfter.json && pubListAfter.json.length}`
+    );
+  }
+
+  // M32. 领养广场卡 → 201 且 adopt_count+1；我的投稿可见；作者可删除
+  {
+    jarB2b = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB2b });
+    const ad = await req('POST', `/api/character-cards/shared/${mSharedId}/adopt`, {}, { jar: jarB2b });
+    const my = await req('GET', '/api/character-cards/my-published', undefined, { jar: jarC });
+    const like = await req('POST', `/api/character-cards/shared/${mSharedId}/like`, {}, { jar: jarB2b });
+    const delOther = await req('DELETE', `/api/character-cards/shared/${mSharedId}`, undefined, { jar: jarB2b });
+    const del = await req('DELETE', `/api/character-cards/shared/${mSharedId}`, undefined, { jar: jarC });
+    const after = await req('GET', '/api/character-cards/shared');
+    ok(
+      'M32. 他人领养 → 201；作者我的投稿有 1 条；点赞 ok；非作者删 → 404；作者删 → 200；列表空',
+      ad.status === 201 && ad.json.character && ad.json.character.name === '广场投稿角' &&
+        Array.isArray(my.json) && my.json.length === 1 && my.json[0].adopt_count === 1 &&
+        like.json.liked === true &&
+        delOther.status === 404 && del.status === 200 &&
+        Array.isArray(after.json) && after.json.length === 0,
+      `ad=${ad.status} my=${my.json && my.json.length} like=${like.json && like.json.liked} del=${delOther.status},${del.status}`
+    );
+    const ch = ad.json && ad.json.character;
+    if (ch) await req('DELETE', `/api/characters/${ch.id}`, undefined, { jar: jarB2b });
+  }
+
+  // M33. 敏感词投稿 → 400；举报 5 次自动下架回 pending
+  {
+    const ch = await req('POST', '/api/characters', { name: '敏感词角' }, { jar: jarC });
+    const bad = await req('POST', '/api/character-cards/publish', {
+      character_id: ch.json.id,
+      tagline: '约炮神器来了',
+      description: '简介凑字数凑字数凑字数凑字数凑字数凑字数凑字数。',
+      greeting: '开场白凑字数凑字数凑字数。',
+    }, { jar: jarC });
+    const pub = await req('POST', '/api/character-cards/publish', {
+      character_id: ch.json.id,
+      tagline: '正常投稿卡',
+      description: '简介凑字数凑字数凑字数凑字数凑字数凑字数凑字数。',
+      greeting: '正常开场白，你好呀！',
+    }, { jar: jarC });
+    const sid = pub.json.id;
+    await req('POST', `/api/admin/shared-cards/${sid}/review`, { approve: true }, { jar: jarAdminM });
+    for (let i = 0; i < 5; i++) await req('POST', `/api/character-cards/shared/${sid}/report`, { reason: '测试' }, { jar: jarB2b });
+    const list = await req('GET', '/api/character-cards/shared');
+    const pend = await req('GET', '/api/admin/shared-cards?status=pending', undefined, { jar: jarAdminM });
+    ok(
+      'M33. 敏感词投稿 → 400；举报 5 次 → 广场列表消失且回待审队列',
+      bad.status === 400 && /敏感词/.test(bad.json.error || '') &&
+        pub.status === 201 &&
+        Array.isArray(list.json) && !list.json.some((x) => x.id === sid) &&
+        pend.json.some((x) => x.id === sid),
+      `bad=${bad.status} list=${list.json && list.json.length} backToPending=${pend.json.some((x) => x.id === sid)}`
+    );
+    await req('DELETE', `/api/characters/${ch.json.id}`, undefined, { jar: jarC });
+  }
+
+  // M34. 集卡奖励：领养全部 18 张预设 → 账本 collection_reward +200（幂等，不重复发）
+  {
+    const presets = await req('GET', '/api/character-cards/presets');
+    const ids = presets.json.cards.map((c) => c.id);
+    for (const pid of ids) {
+      await req('POST', '/api/character-cards/adopt', { preset_id: pid }, { jar: jarB2b });
+    }
+    const ledger = await req('GET', '/api/points/ledger?limit=100', undefined, { jar: jarB2b });
+    const rewards = (Array.isArray(ledger.json) ? ledger.json : []).filter((x) => x.reason === 'collection_reward');
+    const col = await req('GET', '/api/character-cards/collection', undefined, { jar: jarB2b });
+    // 再领养一次已有点亮的卡，不重复发奖
+    await req('POST', '/api/character-cards/adopt', { preset_id: ids[0] }, { jar: jarB2b });
+    const ledger2 = await req('GET', '/api/points/ledger?limit=100', undefined, { jar: jarB2b });
+    const rewards2 = (Array.isArray(ledger2.json) ? ledger2.json : []).filter((x) => x.reason === 'collection_reward');
+    ok(
+      'M34. 集齐 18 张预设 → collection_reward +200（仅一次）；图鉴 18/18 且 reward_claimed',
+      rewards.length === 1 && rewards[0].delta === 200 && rewards[0].reason_label === '集卡奖励' &&
+        col.json && col.json.adopted_count === 18 && col.json.reward_claimed === true &&
+        rewards2.length === 1,
+      `rewards=${rewards.length} delta=${rewards[0] && rewards[0].delta} adopted=${col.json && col.json.adopted_count} again=${rewards2.length}`
+    );
+  }
+
+  // M35. 管理员打回：填理由 → 我的投稿显示 rejected + 理由
+  {
+    const ch = await req('POST', '/api/characters', { name: '打回测试角' }, { jar: jarC });
+    const pub = await req('POST', '/api/character-cards/publish', {
+      character_id: ch.json.id,
+      tagline: '待打回的投稿',
+      description: '简介凑字数凑字数凑字数凑字数凑字数凑字数凑字数。',
+      greeting: '打回测试开场白，你好呀！',
+    }, { jar: jarC });
+    const sid = pub.json.id;
+    const noReason = await req('POST', `/api/admin/shared-cards/${sid}/review`, { approve: false }, { jar: jarAdminM });
+    // 前端会拦，但接口层 reason 缺省给默认文案，不断言 400
+    const my = await req('GET', '/api/character-cards/my-published', undefined, { jar: jarC });
+    const mine = (Array.isArray(my.json) ? my.json : []).find((x) => x.id === sid);
+    ok(
+      'M35. 管理员打回 → 我的投稿显示 rejected 且有理由',
+      noReason.status === 200 && mine && mine.status === 'rejected' && !!mine.reject_reason,
+      `review=${noReason.status} status=${mine && mine.status} reason=${mine && mine.reject_reason}`
+    );
+    await req('DELETE', `/api/characters/${ch.json.id}`, undefined, { jar: jarC });
   }
 }
 
