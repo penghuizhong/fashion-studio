@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { getDb } from './db.js';
 import { getConfig } from './config.js';
+import { assertPublicHttpsUrl } from './llm.js';
+import { ah } from './asyncHandler.js';
 import {
   SIGNUP_BONUS,
   listPointsModels,
@@ -14,6 +16,7 @@ import {
   INVITE_REWARD_INVITEE,
   INVITE_CHAT_THRESHOLD,
   genInviteCode,
+  genRecoveryCode,
   getPointsModel,
   getBalance,
   getLedger,
@@ -190,7 +193,9 @@ export function llmCreds(req, cfg, requestApiKey) {
   const stored = cfg.multiUser && uid ? getUserApiKeys(uid) : { key: '', baseUrl: '', chatModel: '', workerModel: '' };
   const header = (n) => String((req.headers && req.headers[n]) || '').trim();
   const apiKey = cfg.multiUser ? stored.key || cfg.apiKey : requestApiKey(req) || cfg.apiKey;
-  const baseUrl = header('x-api-base-url').replace(/\/+$/, '') || stored.baseUrl || cfg.baseUrl;
+  // 用户自填地址（请求头 / 已存储）必须过 SSRF 校验；服务器 .env 默认地址由管理员可信配置，不校验
+  const userBase = header('x-api-base-url').replace(/\/+$/, '') || stored.baseUrl;
+  const baseUrl = userBase ? assertPublicHttpsUrl(userBase) : cfg.baseUrl;
   const chatModel = header('x-chat-model') || stored.chatModel || cfg.chatModel;
   const workerModel = header('x-worker-model') || stored.workerModel || cfg.extractModel;
   return { apiKey, baseUrl, chatModel, workerModel };
@@ -207,7 +212,7 @@ export function mountAuthRoutes(app, authLimiter) {
   };
 
   // POST /api/auth/register
-  app.post('/api/auth/register', needMulti, authLimiter, async (req, res) => {
+  app.post('/api/auth/register', needMulti, authLimiter, ah(async (req, res) => {
     const username = String((req.body && req.body.username) || '').trim();
     const password = (req.body && req.body.password) || '';
     if (!USERNAME_RE.test(username)) {
@@ -216,12 +221,16 @@ export function mountAuthRoutes(app, authLimiter) {
     if (typeof password !== 'string' || password.length < 8) {
       return res.status(400).json({ error: '密码至少 8 位' });
     }
+    // bcrypt 最多取 72 字节，超长会被静默截断（前 72 字节相同即视为同一密码），直接拒绝
+    if (Buffer.byteLength(password, 'utf8') > 72) {
+      return res.status(400).json({ error: '密码太长，最多 72 个字节（中文约 24 个字）' });
+    }
     const db = getDb();
     if (db.prepare('SELECT id FROM users WHERE username = ?').get(username)) {
       return res.status(409).json({ error: '用户名已存在' });
     }
     const id = randomUUID();
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, 12);
     const t = new Date().toISOString();
     const isFirst = db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0;
     // 邀请码：注册时可带 inviteCode；同时生成自己的唯一邀请码
@@ -233,19 +242,13 @@ export function mountAuthRoutes(app, authLimiter) {
     let myCode = genInviteCode();
     while (db.prepare('SELECT id FROM users WHERE invite_code = ?').get(myCode)) myCode = genInviteCode();
     // 密码重置码：与邀请码独立，注册时发放一次，用于自助找回密码
-    let recoveryCode = genInviteCode();
-    while (db.prepare('SELECT id FROM users WHERE recovery_code = ?').get(recoveryCode)) recoveryCode = genInviteCode();
-    const bonus = SIGNUP_BONUS + (inviter ? INVITE_REWARD_INVITEE : 0);
+    let recoveryCode = genRecoveryCode();
+    while (db.prepare('SELECT id FROM users WHERE recovery_code = ?').get(recoveryCode)) recoveryCode = genRecoveryCode();
+    // 注册奖励改为首次聊天成功后发放（防刷号）：这里只建账，不发积分
     db.transaction(() => {
       db.prepare(
         'INSERT INTO users(id, username, password_hash, created_at, points_balance, billing_mode, is_admin, invite_code, invited_by, recovery_code) VALUES(?,?,?,?,?,?,?,?,?,?)'
-      ).run(id, username, hash, t, bonus, 'points', isFirst ? 1 : 0, myCode, inviter ? inviter.id : null, recoveryCode);
-      // 注册赠送积分（写流水）
-      const ins = db.prepare(
-        'INSERT INTO points_ledger(user_id, delta, balance_after, reason, ref_id, created_at) VALUES(?,?,?,?,?,?)'
-      );
-      ins.run(id, SIGNUP_BONUS, SIGNUP_BONUS, 'signup_bonus', null, t);
-      if (inviter) ins.run(id, INVITE_REWARD_INVITEE, bonus, 'invite_bonus', inviter.id, t);
+      ).run(id, username, hash, t, 0, 'points', isFirst ? 1 : 0, myCode, inviter ? inviter.id : null, recoveryCode);
       // 首个注册用户：认领全库 user_id IS NULL 的老数据（只执行一次）
       if (isFirst) {
         db.prepare('UPDATE characters SET user_id = ? WHERE user_id IS NULL').run(id);
@@ -256,10 +259,10 @@ export function mountAuthRoutes(app, authLimiter) {
     db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now()); // 顺手清过期会话
     createSession(req, res, id);
     res.status(201).json({ user: { id, username, inviteCode: myCode, recoveryCode } });
-  });
+  }));
 
   // POST /api/auth/login
-  app.post('/api/auth/login', needMulti, authLimiter, async (req, res) => {
+  app.post('/api/auth/login', needMulti, authLimiter, ah(async (req, res) => {
     const username = String((req.body && req.body.username) || '').trim();
     const password = (req.body && req.body.password) || '';
     const row = getDb().prepare('SELECT * FROM users WHERE username = ?').get(username);
@@ -269,7 +272,7 @@ export function mountAuthRoutes(app, authLimiter) {
     getDb().prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
     createSession(req, res, row.id);
     res.json({ user: { id: row.id, username: row.username } });
-  });
+  }));
 
   // POST /api/auth/logout
   app.post('/api/auth/logout', needMulti, (req, res) => {
@@ -278,12 +281,15 @@ export function mountAuthRoutes(app, authLimiter) {
   });
 
   // POST /api/auth/reset-password：凭用户名 + 密码重置码自助重置密码（限流同登录）
-  app.post('/api/auth/reset-password', needMulti, authLimiter, async (req, res) => {
+  app.post('/api/auth/reset-password', needMulti, authLimiter, ah(async (req, res) => {
     const username = String((req.body && req.body.username) || '').trim();
     const recoveryCode = String((req.body && req.body.recovery_code) || '').trim().toUpperCase();
     const newPassword = (req.body && req.body.new_password) || '';
     if (typeof newPassword !== 'string' || newPassword.length < 8) {
       return res.status(400).json({ error: '新密码至少 8 位' });
+    }
+    if (Buffer.byteLength(newPassword, 'utf8') > 72) {
+      return res.status(400).json({ error: '新密码太长，最多 72 个字节（中文约 24 个字）' });
     }
     const db = getDb();
     const row = db.prepare('SELECT id, recovery_code FROM users WHERE username = ?').get(username);
@@ -291,14 +297,17 @@ export function mountAuthRoutes(app, authLimiter) {
     if (!row || !row.recovery_code || row.recovery_code !== recoveryCode) {
       return res.status(401).json({ error: '用户名或重置码错误' });
     }
-    const hash = await bcrypt.hash(newPassword, 10);
+    const hash = await bcrypt.hash(newPassword, 12);
+    // 重置成功后旧重置码作废，换发新码（防泄露过的旧码被复用）
+    let newCode = genRecoveryCode();
+    while (db.prepare('SELECT id FROM users WHERE recovery_code = ?').get(newCode)) newCode = genRecoveryCode();
     db.transaction(() => {
-      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, row.id);
+      db.prepare('UPDATE users SET password_hash = ?, recovery_code = ? WHERE id = ?').run(hash, newCode, row.id);
       // 重置后所有会话失效，需重新登录
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.id);
     })();
-    res.json({ ok: true });
-  });
+    res.json({ ok: true, recovery_code: newCode });
+  }));
 
   // GET /api/auth/me
   app.get('/api/auth/me', needMulti, (req, res) => {
@@ -314,6 +323,14 @@ export function mountAuthRoutes(app, authLimiter) {
     const uid = currentUserId(req);
     if (!uid) return res.status(401).json({ error: '未登录' });
     const b = req.body || {};
+    // 自填 API 地址入库前先过 SSRF 校验（非法直接 400，不存储）
+    if (typeof b.baseUrl === 'string' && b.baseUrl.trim()) {
+      try {
+        assertPublicHttpsUrl(b.baseUrl);
+      } catch (e) {
+        return res.status(e.statusCode || 400).json({ error: e.message });
+      }
+    }
     setUserApiKeys(uid, {
       key: b.key,
       baseUrl: b.baseUrl,
@@ -349,8 +366,8 @@ export function mountAuthRoutes(app, authLimiter) {
   // POST /api/auth/recovery-code/regenerate：重新生成重置码（登录态）
   app.post('/api/auth/recovery-code/regenerate', needMulti, needLogin, (req, res) => {
     const db = getDb();
-    let code = genInviteCode();
-    while (db.prepare('SELECT id FROM users WHERE recovery_code = ?').get(code)) code = genInviteCode();
+    let code = genRecoveryCode();
+    while (db.prepare('SELECT id FROM users WHERE recovery_code = ?').get(code)) code = genRecoveryCode();
     db.prepare('UPDATE users SET recovery_code = ? WHERE id = ?').run(code, req.uid);
     res.json({ ok: true, recovery_code: code });
   });

@@ -1,5 +1,71 @@
 import { getConfig} from './config.js';
 import { ProxyAgent } from 'undici';
+import { isIP } from 'node:net';
+
+// 校验用户自填的 API 地址：仅允许 https 公网地址，防 SSRF（内网探测 / 云元数据）。
+// 管理员 .env 中的服务器默认地址不受此限（管理员可信）。
+export function assertPublicHttpsUrl(url) {
+  const bad = (msg) => {
+    const e = new Error(msg);
+    e.statusCode = 400;
+    throw e;
+  };
+  let u;
+  try {
+    u = new URL(String(url || '').trim());
+  } catch {
+    bad('API 地址格式不正确');
+  }
+  if (u.protocol !== 'https:') bad('API 地址必须使用 https');
+  if (u.username || u.password) bad('API 地址不能携带用户名或密码');
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost')) bad('API 地址不能指向内网地址');
+  if (isIP(host)) {
+    if (isPrivateIp(host)) bad('API 地址不能指向内网地址');
+  } else if (/(^|\.)(internal|intranet|local|lan|corp|home)$/.test(host)) {
+    bad('API 地址不能指向内网地址');
+  }
+  return (u.origin + u.pathname).replace(/\/+$/, '');
+}
+
+function isPrivateIp(host) {
+  // IPv4 映射的 IPv6（如 ::ffff:127.0.0.1，会被 URL 规范化为 ::ffff:7f00:1）：先还原成 v4 再判断
+  if (host.startsWith('::ffff:')) {
+    const tail = host.slice('::ffff:'.length);
+    const v4 = tail.includes('.') ? tail : mappedHexToV4(tail);
+    if (v4) return isPrivateIp(v4);
+  }
+  // IPv4 私有 / 回环 / 链路本地 / 保留段
+  const v4 = host.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [, a, b] = v4.map(Number);
+    return (
+      a === 10 || a === 127 || a === 0 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254) ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      a >= 224
+    );
+  }
+  // IPv6：回环 / 链路本地 / 唯一本地 / 未指定（hostname 可能带 [] 括号）
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '');
+  return (
+    h === '::1' || h === '::' ||
+    h.startsWith('fe80:') || h.startsWith('fec0:') ||
+    h.startsWith('fc') || h.startsWith('fd')
+  );
+}
+
+// ::ffff:7f00:1 这类 hex 形式还原成点分十进制 IPv4
+function mappedHexToV4(tail) {
+  const parts = tail.split(':').filter(Boolean);
+  if (parts.length < 2) return null;
+  const last = parts.slice(-2).map((p) => parseInt(p, 16));
+  if (last.some((n) => Number.isNaN(n) || n < 0 || n > 0xffff)) return null;
+  const n = (last[0] << 16) | last[1];
+  return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+}
 
 // 代理支持：Node 的 fetch 默认不走系统代理（如 Clash 的系统代理模式），
 // 中国大陆用户如需让 LLM 请求走代理，在 .env 里设置：
@@ -37,14 +103,18 @@ const EXTRACT_SYSTEM = `你是记忆整理助手。根据当前 user.md、memory
 // 无可用 Key 时的统一提示（app.js 做上游 401 拦截时复用）
 export const NO_KEY_MESSAGE = '未配置 API Key：请在侧边栏底部「API 设置」中填写你的 Key（或由管理员在服务器 .env 中配置 OPENROUTER_API_KEY）';
 
-async function postCompletions({ model, messages, temperature, stream, onToken, apiKey, baseUrl }) {
+async function postCompletions({ model, messages, temperature, stream, onToken, apiKey, baseUrl, signal }) {
 const cfg = getConfig();
 // BYOK：优先用调用方传入的个人 Key（请求头 X-OpenRouter-Key），否则用服务器 .env
 const key = (apiKey || '').trim() || cfg.apiKey;
 // API 地址：用户自定（请求头 X-Api-Base-Url）> 服务器 .env
 const base = (baseUrl || '').trim().replace(/\/+$/, '') || cfg.baseUrl;
 if (!key && !cfg.mockLlm) throw new Error(NO_KEY_MESSAGE);
+// 上游请求最多 120s；调用方传了 signal（客户端断开）时一起联动取消
+const timeoutSignal = AbortSignal.timeout(120000);
+const combined = signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal;
 const res = await fetch(`${base}/chat/completions`, {
+signal: combined,
 method: 'POST',
 headers: {
 Authorization: `Bearer ${key}`,
@@ -83,11 +153,11 @@ return { json, usage };
 }
 
 // 流式聊天：每收到 delta 就调 onToken；返回 { text, usage }（usage 为真实用量，可能为 null）
-export async function chatStream({ messages, model, temperature, onToken, apiKey, baseUrl }) {
+export async function chatStream({ messages, model, temperature, onToken, apiKey, baseUrl, signal }) {
 const cfg = getConfig();
 if (cfg.mockLlm) return { text: await mockChatStream({ messages, onToken }), usage: null };
 
-const res = await postCompletions({ model, messages, temperature, stream: true, onToken, apiKey, baseUrl });
+const res = await postCompletions({ model, messages, temperature, stream: true, onToken, apiKey, baseUrl, signal });
 const reader = res.body.getReader();
 const decoder = new TextDecoder();
 let buf = '';
@@ -117,6 +187,7 @@ onToken(delta);
 }
 };
 for (;;) {
+if (signal && signal.aborted) { reader.cancel().catch(() => {}); break; }
 const { done, value} = await reader.read();
 if (done) break;
 buf += decoder.decode(value, { stream: true});
@@ -149,7 +220,7 @@ const DIRECTOR_SYSTEM = `你是群聊导演。根据群成员人设和最近对�
 4. 只返回 JSON，不要其他文字`;
 
 // 群聊导演：决定发言顺序（角色 id 数组）。失败返回 null，调用方用确定性 fallback
-export async function decideSpeakers({ members, history, model, apiKey, baseUrl, lastSpeakerId, onUsage }) {
+export async function decideSpeakers({ members, history, model, apiKey, baseUrl, lastSpeakerId, onUsage, signal }) {
 const cfg = getConfig();
 if (cfg.mockLlm) {
 // mock：轮换，避免每次固定
@@ -171,6 +242,7 @@ model: model || cfg.extractModel,
 temperature: 0.5,
 apiKey,
 baseUrl,
+signal,
 onUsage,
 messages: [
 { role: 'system', content: DIRECTOR_SYSTEM },
@@ -196,7 +268,7 @@ return String(text)
 }
 
 // 记忆提取：返回 {user_md, memory_md} 全文；失败返回 null
-export async function extractJson({ userMd, memoryMd, rounds, model, apiKey, baseUrl, onUsage }) {
+export async function extractJson({ userMd, memoryMd, rounds, model, apiKey, baseUrl, onUsage, signal }) {
 const cfg = getConfig();
 const today = new Date().toISOString().slice(0, 10);
 if (cfg.mockLlm) {
@@ -211,6 +283,7 @@ model,
 temperature: 0.2,
 apiKey,
 baseUrl,
+signal,
 onUsage,
 messages: [
 { role: 'system', content: EXTRACT_SYSTEM.replace('{today}', today)},
@@ -231,7 +304,7 @@ return null;
 }
 
 // 对话摘要：返回摘要字符串
-export async function summarizeText({ text, model, apiKey, baseUrl, onUsage }) {
+export async function summarizeText({ text, model, apiKey, baseUrl, onUsage, signal }) {
 const cfg = getConfig();
 if (cfg.mockLlm) return '摘要（mock）：' + String(text).slice(0, 40);
 const { json } = await postJson({
@@ -239,6 +312,7 @@ model,
 temperature: 0.3,
 apiKey,
 baseUrl,
+signal,
 onUsage,
 messages: [
 { role: 'system', content: '用 100 字以内中文总结这段对话的关键事实，只输出摘要正文，不要多余文字。'},
