@@ -85,7 +85,6 @@ export default function App() {
     if (authReady && multiUser && !user) {
       setCharacters([]);
       setView({ type: 'empty' });
-      setApiSettingsOpen(false);
     }
   }, [authReady, multiUser, user]);
 
