@@ -315,12 +315,17 @@ const FACTS_SYSTEM = `你是记忆整理助手。根据当前 user_md、已有�
 只返回 JSON：{"user_md": "全文（无变化则为 null）", "facts": [{"op": "ADD/SUPERSEDE/NOOP", "text": "事实描述", "importance": 1-5, "supersedes_id": 数字或null}]}，不要输出其他文字。
 要求：
 1. user_md：关于用户的稳定事实（称呼、偏好、重要事项），条列简洁；无新信息时返回 null，不要重写。
-2. facts：本轮新出现的、值得长期记住的事实，每条一句话，可带日期（今天是 {today}）。importance：1=闲聊细节 3=普通事实 5=关键约定/重要事件。
+2. facts：本轮新出现的、值得长期记住的事实，每条一句话。事件/约定类带日期时间（现在是 {now}，格式如 10月5日 19:30）；偏好类事实不需要时间。
 3. 对照已有事实去重：语义重复 → NOOP；新事实推翻旧事实 → SUPERSEDE 并给出 supersedes_id（旧事实 id）；否则 ADD。
 4. 没有值得记的新事实时 facts 为空数组。`;
 export async function extractFacts({ userMd, existingFacts, rounds, model, apiKey, baseUrl, onUsage, signal }) {
 const cfg = getConfig();
 const today = new Date().toISOString().slice(0, 10);
+// 北京时间 "10月5日 19:30" 格式，供 prompt 里的时间标注
+const nowStr = new Intl.DateTimeFormat('zh-CN', {
+timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric',
+hour: '2-digit', minute: '2-digit', hour12: false,
+}).format(new Date()).replace(/\//g, '月').replace(' ', '日 ') + '';
 if (cfg.mockLlm) {
 const hasDup = (existingFacts || []).length > 0;
 return {
@@ -340,7 +345,7 @@ baseUrl,
 signal,
 onUsage,
 messages: [
-{ role: 'system', content: FACTS_SYSTEM.replace('{today}', today) },
+{ role: 'system', content: FACTS_SYSTEM.replace('{now}', nowStr) },
 { role: 'user', content: `当前 user_md：\n${userMd || ''}\n\n已有相关记忆事实：\n${existText}\n\n最近对话：\n${roundText}` },
 ],
 });
