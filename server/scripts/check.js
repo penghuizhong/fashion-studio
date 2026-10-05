@@ -24,7 +24,7 @@ process.env.DATA_DIR = fs.mkdtempSync(
 );
 
 const { createApp } = await import('../src/app.js');
-const { estimateTokens, summarizeOld } = await import('../src/memory.js');
+const { estimateTokens, summarizeOld, runMemoryPipeline, retrieveFacts } = await import('../src/memory.js');
 const { getDb } = await import('../src/db.js');
 const { llmCreds, encryptSecret, decryptSecret } = await import('../src/auth.js');
 const { getConfig } = await import('../src/config.js');
@@ -234,7 +234,7 @@ async function runSingle() {
     );
   }
 
-  // 10. 再发 4 轮（凑满 5 条 assistant）：第 5 轮 done 先回（记忆提取已改后台），稍后 memory_md 被后台更新
+  // 10. v1.10：4 轮闲聊 → done 先回；事件驱动 gate 跳过无价值轮，memory_facts 为空（不再全文重写）
   {
     const texts = ['今天天气真不错', '你喜欢什么颜色', '讲个简短的笑话', '好的再见'];
     let fifthEvents = null;
@@ -244,14 +244,106 @@ async function runSingle() {
     }
     const hasDone = fifthEvents.some((e) => e.event === 'done');
     const noMemEv = !fifthEvents.some((e) => e.event === 'memory_updated');
-    // 等后台任务（setImmediate + mock）完成
-    await new Promise((r) => setTimeout(r, 800));
-    const f = await req('GET', `/api/characters/${charId}/files`);
+    // 等后台流水线（setImmediate + mock）完成
+    await new Promise((r) => setTimeout(r, 1000));
+    const db = getDb();
+    const factCount = db.prepare('SELECT COUNT(*) AS n FROM memory_facts WHERE character_id = ?').get(charId).n;
+    const suggCount = db.prepare("SELECT COUNT(*) AS n FROM intent_suggestions WHERE character_id = ? AND status = 'pending'").get(charId).n;
     ok(
-      '10. 第 5 轮 done 先回（无 memory_updated 事件）；后台记忆提取后 memory_md 含 "mock 提取"',
-      hasDone && noMemEv &&
-        f.status === 200 && typeof f.json.memory_md === 'string' && f.json.memory_md.includes('mock 提取'),
-      `events=${fifthEvents.map((e) => e.event).join(',')} memory_md=${JSON.stringify(f.json && f.json.memory_md).slice(0, 120)}`
+      '10. v1.10：闲聊轮 done 先回；gate 跳过 → facts 为空、无建议（零无效重写）',
+      hasDone && noMemEv && factCount === 0 && suggCount === 0,
+      `events=${fifthEvents.map((e) => e.event).join(',')} facts=${factCount} suggestions=${suggCount}`
+    );
+  }
+
+  // 10b. v1.10 意图识别：用户说"设定：让她怕黑" → 生成待确认的灵魂修改建议（不自动改 soul）
+  {
+    const before = await req('GET', `/api/characters/${charId}/files`);
+    const soulBefore = before.json.soul_md;
+    const changes = await runMemoryPipeline(
+      { id: charId, name: '小灵', soul_md: soulBefore, user_md: before.json.user_md },
+      convId,
+      '设定：让她怕黑',
+      { model: 'mock', userId: null }
+    );
+    const sg = await req('GET', `/api/characters/${charId}/suggestions`);
+    const after = await req('GET', `/api/characters/${charId}/files`);
+    ok(
+      '10b. 意图识别：soul_update 意图 → 建议 pending；soul_md 未被自动修改',
+      changes.suggestion && changes.suggestion.proposed.includes('怕黑') &&
+        Array.isArray(sg.json) && sg.json.length === 1 && sg.json[0].proposed.includes('怕黑') &&
+        after.json.soul_md === soulBefore,
+      `suggestion=${JSON.stringify(changes.suggestion)} list=${sg.json.length} soulUnchanged=${after.json.soul_md === soulBefore}`
+    );
+    // 一键写入灵魂
+    const sid = sg.json[0].id;
+    const ap = await req('POST', `/api/suggestions/${sid}/apply`);
+    const files2 = await req('GET', `/api/characters/${charId}/files`);
+    const sg2 = await req('GET', `/api/characters/${charId}/suggestions`);
+    ok(
+      '10c. 一键写入灵魂：soul_md 追加"对话补充设定"小节；建议变 applied；列表清空',
+      ap.status === 200 &&
+        files2.json.soul_md.includes('## 对话补充设定') && files2.json.soul_md.includes('怕黑') &&
+        Array.isArray(sg2.json) && sg2.json.length === 0,
+      `apply=${ap.status} hasSection=${files2.json.soul_md.includes('## 对话补充设定')} pending=${sg2.json.length}`
+    );
+    // dismiss 不存在的 → 404
+    const badDismiss = await req('POST', '/api/suggestions/999999/dismiss');
+    ok('10d. dismiss 不存在的建议 → 404', badDismiss.status === 404, `status=${badDismiss.status}`);
+  }
+
+  // 10e. v1.10 事件驱动提取："记住" → worth=true → user_md 更新 + fact 落库（ADD）
+  {
+    const changes = await runMemoryPipeline(
+      { id: charId, name: '小灵', soul_md: '', user_md: '' },
+      convId,
+      '记住：我喜欢打篮球',
+      { model: 'mock', userId: null }
+    );
+    const db = getDb();
+    const facts = db.prepare('SELECT fact FROM memory_facts WHERE character_id = ? AND superseded_by IS NULL').all(charId);
+    ok(
+      '10e. "记住"触发提取：user_md 变化 + 1 条 fact 落库',
+      changes.userMdChanged === true && changes.factsAdded === 1 && facts.length >= 1,
+      `userMdChanged=${changes.userMdChanged} factsAdded=${changes.factsAdded} rows=${facts.length}`
+    );
+  }
+
+  // 10f. v1.10 检索：相关进、无关不进
+  {
+    const db = getDb();
+    db.prepare('INSERT INTO memory_facts(character_id, fact, importance, created_at, source) VALUES(?,?,?,?,?)').run(
+      charId, '小灵最爱吃的是牛肉拉面', 4, new Date().toISOString(), 'test'
+    );
+    const rel = retrieveFacts(charId, convId, '拉面好吃吗', 8);
+    const irr = retrieveFacts(charId, convId, '今天天气不错', 8);
+    ok(
+      '10f. 检索：相关 fact 命中；无关查询返回空（治上下文污染）',
+      rel.length >= 1 && rel.some((f) => f.fact.includes('拉面')) && irr.length === 0,
+      `rel=${rel.length} irr=${irr.length}`
+    );
+  }
+
+  // 10g. v1.10 矛盾替代：SUPERSEDE 标记旧 fact
+  {
+    const db = getDb();
+    const old = db.prepare('INSERT INTO memory_facts(character_id, fact, importance, created_at, source) VALUES(?,?,?,?,?)').run(
+      charId, '用户住在北京', 3, new Date().toISOString(), 'test'
+    );
+    const oldId = Number(old.lastInsertRowid);
+    // 模拟 LLM 返回 SUPERSEDE
+    const now = new Date().toISOString();
+    const ins = db.prepare('INSERT INTO memory_facts(character_id, fact, importance, created_at, source) VALUES(?,?,?,?,?)').run(
+      charId, '用户搬到了上海', 4, now, 'chat'
+    );
+    db.prepare('UPDATE memory_facts SET superseded_by = ? WHERE id = ?').run(Number(ins.lastInsertRowid), oldId);
+    const visible = db.prepare('SELECT fact FROM memory_facts WHERE character_id = ? AND superseded_by IS NULL AND fact LIKE ?').all(charId, '%上海%');
+    const hidden = db.prepare('SELECT fact FROM memory_facts WHERE id = ? AND superseded_by IS NULL').get(oldId);
+    const rel = retrieveFacts(charId, convId, '用户住在哪里', 8);
+    ok(
+      '10g. SUPERSEDE：旧 fact 被标记，检索只返回新 fact',
+      visible.length === 1 && !hidden && rel.every((f) => !f.fact.includes('北京')),
+      `visible=${visible.length} hidden=${!hidden} relHasBeijing=${rel.some((f) => f.fact.includes('北京'))}`
     );
   }
 
