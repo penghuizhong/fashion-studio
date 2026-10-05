@@ -168,7 +168,7 @@ v1.0.0 新增多用户模式：注册/登录、数据按用户隔离、Key 后�
 ```env
 MULTI_USER=true
 MASTER_KEY=<openssl rand -hex 32 生成，64 位 hex，严格保密>
-SESSION_SECRET=<openssl rand -hex 32 生成>
+# SESSION_SECRET 已废弃（v1.7.1+ 不再需要）
 # OPENROUTER_API_KEY 留空（用户各自 BYOK；填了则作为没配 key 用户的 fallback）
 ```
 

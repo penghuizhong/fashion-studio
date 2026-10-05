@@ -12,7 +12,7 @@ mkdir -p /opt/soulchat/data && cd /opt/soulchat
 unzip -q ~/soul-chat-vX.Y.Z.zip          # 解压出 soul-chat-vX.Y.Z/
 cp soul-chat-vX.Y.Z/docker-compose.yml . # 模板复制出来
 # 把模板里的 build: ./soul-chat-v1.1.0 改成实际版本号
-nano .env                                 # 填 MASTER_KEY / SESSION_SECRET / MULTI_USER=true / BEHIND_HTTPS=true …
+nano .env                                 # 填 MASTER_KEY / MULTI_USER=true / BEHIND_HTTPS=true …
 
 # 2. 构建并启动
 docker compose up -d --build
@@ -58,7 +58,7 @@ cp server/.env.example server/.env
 #   MULTI_USER=true
 BEHIND_HTTPS=true
 #   MASTER_KEY=<openssl rand -hex 32 生成，64 位 hex，严格保密>
-#   SESSION_SECRET=<openssl rand -hex 32 生成>
+#   SESSION_SECRET 已废弃（v1.7.1+ 不再需要）
 #   PORT=3001
 #   OPENROUTER_API_KEY 留空（用户各自 BYOK；填了则作为无 key 用户的 fallback）
 #   如服务器在国内需代理访问 OpenRouter：HTTPS_PROXY=http://127.0.0.1:7890
@@ -97,7 +97,7 @@ Cloudflare 用户建议：DNS 先用"灰云"（仅 DNS）验证 HTTPS 正常，�
 ## 4. 安全检查清单
 
 - [ ] `MULTI_USER=true`、`BEHIND_HTTPS=true` 已开（`/api/config` 返回 `multi_user: true`）
-- [ ] `MASTER_KEY` / `SESSION_SECRET` 为随机值且未提交到任何仓库
+- [ ] `MASTER_KEY` 为随机值且未提交到任何仓库（SESSION_SECRET 已废弃）
 - [ ] 全站 HTTPS 可访问（http 自动跳 https）
 - [ ] 注册一个账号，确认 A 用户看不到 B 用户的数据
 - [ ] `server/data/` 定期备份（sqlite 文件直接拷贝即可，建议每天一次）

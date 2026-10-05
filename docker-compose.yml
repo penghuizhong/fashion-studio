@@ -2,11 +2,12 @@
 # 部署目录结构（以 /opt/soulchat 为例）：
 #   /opt/soulchat/
 #     docker-compose.yml   <- 本文件（从发版包里复制出来，按需改版本号）
-#     .env                 <- 生产环境变量（MASTER_KEY / SESSION_SECRET / MULTI_USER=true / BEHIND_HTTPS=true …）
+#     .env                 <- 生产环境变量（含 MASTER_KEY 等密钥，须 chmod 600 .env）
+#     data/ 目录须 chown 给 1000:1000（镜像以 node 用户运行）：chown -R 1000:1000 ./data
 #     data/                <- SQLite 数据目录（soulchat.db 在这里，容器外持久化；已有数据直接沿用）
 #     soul-chat-vX.Y.Z/    <- 解压后的发版包（构建上下文）
 #
-# 首次部署：docker compose up -d --build
+# 首次部署：chmod 600 .env && chown -R 1000:1000 ./data && docker compose up -d --build
 # 更新版本：解压新包 → 把下面 build 改成新目录 → docker compose up -d --build
 # 查看日志：docker compose logs -f soulchat
 # 备份数据：直接拷 ./data/soulchat.db
