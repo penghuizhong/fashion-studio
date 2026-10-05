@@ -2102,3 +2102,327 @@ textarea {
     bottom: calc(12px + env(safe-area-inset-bottom));
   }
 }
+
+/* ============ v1.5.0：ChatGPT 式无框 UI ============ */
+.icon {
+  flex-shrink: 0;
+  vertical-align: -3px;
+}
+
+/* 无框导航行 */
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  margin: 0 0 2px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.nav-row:hover {
+  background: var(--hover);
+}
+
+.nav-row .icon {
+  color: var(--text-secondary);
+}
+
+/* 无框用户行 */
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.user-row:hover {
+  background: var(--hover);
+}
+
+/* 头像圆 */
+.profile-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #5b8def;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.profile-avatar.sm {
+  width: 30px;
+  height: 30px;
+  font-size: 14px;
+}
+
+/* 用户浮层卡片 */
+.profile-panel {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  padding: 8px;
+  z-index: 70;
+}
+
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 12px;
+}
+
+.profile-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.profile-name {
+  font-weight: 700;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-sub {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.profile-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 8px;
+}
+
+.profile-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 12px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+  min-height: 44px;
+}
+
+.profile-item:hover {
+  background: var(--hover);
+}
+
+.profile-item .icon {
+  color: var(--text-secondary);
+}
+
+.profile-item.danger {
+  color: var(--danger, #e5484d);
+}
+
+.profile-item.danger .icon {
+  color: var(--danger, #e5484d);
+}
+
+/* 设置弹窗 */
+.settings-overlay {
+  z-index: 100;
+}
+
+.settings-modal {
+  width: min(680px, calc(100vw - 32px));
+  max-height: 86vh;
+  max-height: 86dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 0;
+  flex-shrink: 0;
+}
+
+.settings-head h3 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+/* 横向滑动二级导航 */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 14px 16px 12px;
+  overflow-x: auto;
+  flex-shrink: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  scroll-snap-align: center;
+  transition: background 0.15s ease, color 0.15s ease;
+  min-height: 40px;
+}
+
+.settings-tab:hover {
+  color: var(--text);
+}
+
+.settings-tab.active {
+  background: var(--selected);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.settings-foot {
+  padding: 10px 20px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* 通用 icon 按钮 */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.icon-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+@media (max-width: 768px) {
+  /* 设置弹窗 → 底部上滑面板 */
+  .settings-modal {
+    width: 100%;
+    max-height: 92vh;
+    max-height: 92dvh;
+    border-radius: 20px 20px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+  }
+
+  .settings-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .settings-overlay::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    margin: 8px auto 0;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1;
+  }
+
+  .settings-head {
+    padding-top: 22px;
+  }
+
+  /* 用户浮层卡片 → 底部面板 */
+  .profile-panel {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  /* 移动端 tab 更大触控区 */
+  .settings-tab {
+    min-height: 44px;
+    padding: 10px 18px;
+  }
+}
+
+/* v1.5.0: ChatGPT-style borderless UI */
