@@ -2426,3 +2426,45 @@ textarea {
 }
 
 /* v1.5.0: ChatGPT-style borderless UI */
+
+/* v1.5.1：角色设置弹窗 */
+.settings-head {
+  margin-bottom: 0;
+}
+
+.char-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.char-modal-title h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.char-modal-avatar {
+  font-size: 28px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.settings-modal .md-editor {
+  min-height: 180px;
+  max-height: 38dvh;
+}
+
+/* 弹窗内复用旧页面样式时的收紧 */
+.settings-modal .danger-zone {
+  margin-top: 8px;
+  padding-top: 16px;
+}
+
+.settings-modal .versions-title {
+  margin: 8px 0 10px;
+}

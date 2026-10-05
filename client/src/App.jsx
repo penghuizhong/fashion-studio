@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import ChatView from './components/ChatView.jsx';
-import SettingsView from './components/SettingsView.jsx';
+import CharacterSettingsModal from './components/CharacterSettingsModal.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import AuthPage from './components/AuthPage.jsx';
 import { useAuth } from './auth.jsx';
 import { api } from './api.js';
 
-// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'settings', characterId }
+// view = { type: 'empty' } | { type: 'chat', characterId, conversationId }
 
 export default function App() {
   const { multiUser, user, authReady } = useAuth();
@@ -18,6 +18,8 @@ export default function App() {
   const [convRefresh, setConvRefresh] = useState(0);
   // 设置弹窗：{ open, tab }
   const [settingsModal, setSettingsModal] = useState({ open: false, tab: 'points' });
+  // 角色设置弹窗：{ open, characterId }
+  const [charSettingsModal, setCharSettingsModal] = useState({ open: false, characterId: null });
   const toastTimer = useRef(null);
 
   // 侧边栏显隐：桌面端默认展开并记忆偏好；移动端默认收起为抽屉
@@ -104,13 +106,14 @@ export default function App() {
   }, []);
 
   const handleOpenSettings = useCallback((characterId) => {
-    setView({ type: 'settings', characterId });
+    setCharSettingsModal({ open: true, characterId });
+    if (window.innerWidth <= 768) setSidebarOpen(false);
   }, []);
 
   const handleCharacterCreated = useCallback(
     async (char) => {
       await refreshCharacters();
-      setView({ type: 'settings', characterId: char.id });
+      setCharSettingsModal({ open: true, characterId: char.id });
       showToast('角色已创建 🎉');
     },
     [refreshCharacters, showToast]
@@ -120,6 +123,7 @@ export default function App() {
     async (characterId) => {
       await refreshCharacters();
       bumpConversations();
+      setCharSettingsModal({ open: false, characterId: null });
       setView({ type: 'empty' });
       showToast('角色已删除');
     },
@@ -198,16 +202,16 @@ export default function App() {
             showToast={showToast}
           />
         )}
-        {view.type === 'settings' && (
-          <SettingsView
-            key={view.characterId}
-            characterId={view.characterId}
-            onCharacterUpdated={refreshCharacters}
-            onCharacterDeleted={handleCharacterDeleted}
-            onOpenSidebar={() => setSidebarOpen(true)}
-            showToast={showToast}
-          />
-        )}
+      {charSettingsModal.open && (
+        <CharacterSettingsModal
+          key={charSettingsModal.characterId}
+          characterId={charSettingsModal.characterId}
+          onClose={() => setCharSettingsModal((s) => ({ ...s, open: false }))}
+          onCharacterUpdated={refreshCharacters}
+          onCharacterDeleted={handleCharacterDeleted}
+          showToast={showToast}
+        />
+      )}
         {view.type === 'empty' && (
           <div className="empty-state">
             <button className="menu-btn icon-btn" title="打开侧边栏" onClick={() => setSidebarOpen(true)}>
