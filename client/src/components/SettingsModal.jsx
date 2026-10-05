@@ -165,6 +165,39 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   // 统计
   const [stats, setStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  // 投稿审核（管理员）
+  const [reviewList, setReviewList] = useState([]);
+  const [reviewStatus, setReviewStatus] = useState('pending');
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [rejectInputs, setRejectInputs] = useState({});
+  const loadReview = async (status) => {
+    setReviewLoading(true);
+    try {
+      setReviewList(await api.adminSharedCards(status));
+    } catch {
+      setReviewList([]);
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (tab === 'review' && isAdmin) loadReview(reviewStatus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, reviewStatus, isAdmin]);
+  const doReview = async (id, approve) => {
+    const reason = (rejectInputs[id] || '').trim();
+    if (!approve && !reason) {
+      showToast('打回请填写理由');
+      return;
+    }
+    try {
+      await api.adminReviewSharedCard(id, approve, reason);
+      showToast(approve ? '已上架' : '已打回');
+      loadReview(reviewStatus);
+    } catch (e) {
+      showToast((e && e.message) || '操作失败');
+    }
+  };
   const tabsRef = useRef(null);
 
   const isAdmin = !!(pointsInfo && pointsInfo.is_admin);
@@ -174,6 +207,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     { id: 'invite', icon: 'gift', label: '邀请' },
   ];
   if (isAdmin) TABS.push({ id: 'stats', icon: 'chart', label: '统计' });
+  if (isAdmin) TABS.push({ id: 'review', icon: 'shield', label: '审核' });
 
   useEffect(() => {
     api.getConfig().then((c) => setVersion((c && c.version) || '')).catch(() => {});
@@ -746,6 +780,72 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                 </>
               ) : (
                 <p className="key-desc small">暂无数据</p>
+              )}
+            </>
+          )}
+          {tab === 'review' && isAdmin && (
+            <>
+              <div className="review-filter">
+                {['pending', 'approved', 'rejected'].map((s) => (
+                  <button
+                    key={s}
+                    className={reviewStatus === s ? 'cat-tab active' : 'cat-tab'}
+                    onClick={() => setReviewStatus(s)}
+                  >
+                    {s === 'pending' ? '待审核' : s === 'approved' ? '已上架' : '已打回'}
+                  </button>
+                ))}
+                <button className="btn secondary small" onClick={() => loadReview(reviewStatus)}>
+                  刷新
+                </button>
+              </div>
+              {reviewLoading ? (
+                <p className="key-desc">加载中…</p>
+              ) : reviewList.length === 0 ? (
+                <p className="key-desc">没有投稿</p>
+              ) : (
+                <div className="review-list">
+                  {reviewList.map((item) => (
+                    <div key={item.id} className="review-card">
+                      <div className="review-head">
+                        <span className="preset-avatar">{item.card.avatar || '🤖'}</span>
+                        <div className="review-meta">
+                          <div className="review-name">{item.card.name}</div>
+                          <div className="review-sub">
+                            by {item.author_name} · {item.card.tagline}
+                            {item.report_count > 0 && (
+                              <span className="report-flag"> ⚠被举报 {item.report_count} 次</span>
+                            )}
+                          </div>
+                        </div>
+                        <span className={`status-badge ${item.status}`}>
+                          {item.status === 'pending' ? '待审核' : item.status === 'approved' ? '已上架' : '已打回'}
+                        </span>
+                      </div>
+                      {item.card.description && <p className="card-desc">{item.card.description}</p>}
+                      <div className="greeting-box small">{item.card.greeting}</div>
+                      {item.status === 'pending' && (
+                        <div className="review-actions">
+                          <button className="btn primary small" onClick={() => doReview(item.id, true)}>
+                            通过上架
+                          </button>
+                          <input
+                            value={rejectInputs[item.id] || ''}
+                            onChange={(e) => setRejectInputs((m) => ({ ...m, [item.id]: e.target.value }))}
+                            placeholder="打回理由（必填）"
+                            maxLength={200}
+                          />
+                          <button className="btn danger small" onClick={() => doReview(item.id, false)}>
+                            打回
+                          </button>
+                        </div>
+                      )}
+                      {item.status === 'rejected' && item.reject_reason && (
+                        <div className="my-pub-reject">打回原因：{item.reject_reason}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </>
           )}

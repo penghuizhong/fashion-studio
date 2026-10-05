@@ -2922,3 +2922,307 @@ textarea {
 .btn.block {
   width: 100%;
 }
+
+/* ---------- 发现页二级 tab ---------- */
+.section-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.section-tab {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.section-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+/* ---------- 角色广场 ---------- */
+.square-tools {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.square-search {
+  flex: 1;
+}
+.square-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+.square-sort {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.square-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.shared-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.shared-card-btns {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.like-btn {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12.5px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.like-btn.liked {
+  border-color: var(--danger);
+}
+.liked-text {
+  color: var(--danger);
+}
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.danger-text {
+  color: var(--danger);
+}
+.publish-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.modal select,
+.modal textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  padding: 9px 12px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  font-family: inherit;
+}
+.modal textarea {
+  resize: vertical;
+}
+.status-badge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.status-badge.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+.status-badge.approved {
+  background: #d1fae5;
+  color: #065f46;
+}
+.status-badge.rejected {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.my-pub-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.my-pub-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.my-pub-meta {
+  flex: 1;
+  min-width: 0;
+}
+.my-pub-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.my-pub-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.my-pub-reject {
+  font-size: 12px;
+  color: var(--danger);
+  margin-top: 2px;
+}
+.preset-avatar.sm {
+  font-size: 28px;
+}
+
+/* ---------- 集卡图鉴 ---------- */
+.dex-progress-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--bg);
+  margin-bottom: 14px;
+}
+.dex-progress-head {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.dex-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--hover);
+  overflow: hidden;
+}
+.dex-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.4s var(--ease);
+}
+.dex-reward {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.dex-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+@media (min-width: 700px) {
+  .dex-grid {
+    grid-template-columns: repeat(6, 1fr);
+  }
+}
+.dex-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 6px;
+  text-align: center;
+  background: var(--bg);
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.dex-item.locked {
+  cursor: pointer;
+  opacity: 0.75;
+  background: var(--bg-secondary);
+}
+.dex-avatar {
+  font-size: 32px;
+}
+.dex-item.locked .dex-avatar {
+  filter: grayscale(1);
+}
+.dex-name {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.dex-cat {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* ---------- 投稿审核（管理员） ---------- */
+.review-filter {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.review-filter .btn {
+  margin-left: auto;
+}
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.review-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--bg);
+}
+.review-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.review-meta {
+  flex: 1;
+  min-width: 0;
+}
+.review-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+.review-sub {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.report-flag {
+  color: var(--danger);
+  font-weight: 600;
+}
+.greeting-box.small {
+  font-size: 13px;
+  max-height: 96px;
+  overflow: hidden;
+}
+.review-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+.review-actions input {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
