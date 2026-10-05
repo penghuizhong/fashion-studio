@@ -559,6 +559,28 @@ textarea {
   box-shadow: var(--shadow);
   animation: bubble-in 0.18s ease;
 }
+/* v1.13.3: markdown 代码块（内心独白用） */
+.bubble .md-codeblock {
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--border);
+  font-size: 13.5px;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+[data-theme='black'] .bubble .md-codeblock {
+  background: rgba(255, 255, 255, 0.06);
+}
+.bubble .md-codeblock code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.bubble strong {
+  font-weight: 700;
+}
 
 @keyframes bubble-in {
   from {

@@ -1,5 +1,12 @@
 # SoulChat 更新日志
 
+## v1.13.3（2026-10-05）聊天消息支持 markdown 渲染
+
+- 新增轻量 markdown 渲染：`加粗`/`代码块`/换行；HTML 先转义防 XSS
+- 已完成消息用 markdown 渲染，流式输出时保持纯文本（避免 `**` 写一半闪烁），done 后自动切 markdown
+- 代码块样式：圆角浅底（内心独白用）
+- 回归 41/41 + 40/40
+
 ## v1.13.2（2026-10-05）统计 tab 修复
 
 - 修：`api.js` 漏了 `adminStatsTopUsers` 函数定义，导致统计 tab 报 `not a function` 且显示"暂无数据"（后端 `/api/admin/stats/top-users` 接口一直存在）

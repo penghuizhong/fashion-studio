@@ -3,6 +3,26 @@ import { api, formatFullTime } from '../api.js';
 import GroupSettingsModal from './GroupSettingsModal.jsx';
 import Icon from './icons.jsx';
 
+// v1.13.3 轻量 markdown 渲染（聊天消息用）：只处理加粗/代码块/换行
+// 先转义 HTML 防 XSS；代码块先提取避免内部 ** 被误处理
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+  const codeBlocks = [];
+  html = html.replace(/```\w*\n?([\s\S]*?)```/g, (m, code) => {
+    codeBlocks.push(`<pre class="md-codeblock"><code>${code.replace(/\n$/, '')}</code></pre>`);
+    return `\u0000CB${codeBlocks.length - 1}\u0000`;
+  });
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\n/g, '<br>');
+  html = html.replace(/\u0000CB(\d+)\u0000/g, (m, i) => codeBlocks[Number(i)] || '');
+  return html;
+}
+
 export default function ChatView({ characterId, conversationId, isGroup, onConversationsChanged, onOpenSidebar, showToast }) {
   const [character, setCharacter] = useState(null);
   const [group, setGroup] = useState(null);
@@ -390,9 +410,11 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                 <span className="msg-speaker-name">{m.character_name || '某人'}</span>
               </div>
             )}
-            <div className="bubble" title={formatFullTime(m.created_at)}>
-              {m.content}
-            </div>
+            <div
+              className="bubble"
+              title={formatFullTime(m.created_at)}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }}
+            />
             <div className="msg-time">{formatFullTime(m.created_at).slice(5)}</div>
           </div>
         ))}
