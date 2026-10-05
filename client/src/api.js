@@ -277,6 +277,7 @@ export const api = {
   adminStatsOverview: () => get('/api/admin/stats/overview'),
   adminStatsDaily: (days = 30) => get(`/api/admin/stats/daily?days=${days}`),
   adminStatsModels: () => get('/api/admin/stats/models'),
+  adminStatsTopUsers: (limit = 10) => get(`/api/admin/stats/top-users?limit=${limit}`),
   // 角色卡
   getPresetCards: () => get('/api/character-cards/presets'),
   adoptCharacterCard: (data) => post('/api/character-cards/adopt', data),

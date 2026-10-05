@@ -1,5 +1,10 @@
 # SoulChat 更新日志
 
+## v1.13.2（2026-10-05）统计 tab 修复
+
+- 修：`api.js` 漏了 `adminStatsTopUsers` 函数定义，导致统计 tab 报 `not a function` 且显示"暂无数据"（后端 `/api/admin/stats/top-users` 接口一直存在）
+- 回归 41/41 + 40/40
+
 ## v1.13.1（2026-10-05）设置弹窗黑屏根因修复
 
 - 根因：`SettingsModal` 里 `useEffect(..., [tab, reviewStatus, isAdmin])` 的依赖数组在渲染时求值，但 `const isAdmin` 在它之后才声明，导致 `ReferenceError: Cannot access 'isAdmin' before initialization`（压缩后为 `et`），整个 React 树卸载 → 黑屏
