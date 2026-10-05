@@ -252,7 +252,7 @@ export default function Sidebar({
                     onOpenSettings(c.id);
                   }}
                 >
-                  ⚙️
+                  <Icon name="gear" size={16} />
                 </button>
               </div>
               {isOpen && (

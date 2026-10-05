@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, formatFullTime } from '../api.js';
 import GroupSettingsModal from './GroupSettingsModal.jsx';
+import Icon from './icons.jsx';
 
 export default function ChatView({ characterId, conversationId, isGroup, onConversationsChanged, onOpenSidebar, showToast }) {
   const [character, setCharacter] = useState(null);
@@ -262,7 +263,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         <div className="chat-header-actions">
           {isGroup && (
             <button className="icon-btn" title="群成员管理" onClick={() => setSettingsOpen(true)}>
-              ⚙️
+              <Icon name="gear" size={18} />
             </button>
           )}
         </div>
