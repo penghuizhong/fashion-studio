@@ -13,13 +13,22 @@ COPY server ./server
 COPY client/dist ./client/dist
 
 WORKDIR /app/server
-RUN npm install --omit=dev
+RUN npm install --omit=dev \
+  && apt-get purge -y python3 make g++ && apt-get autoremove -y --purge \
+  && rm -rf /var/lib/apt/lists/*
 
 ENV PORT=3001 \
-    DATA_DIR=/data
+    DATA_DIR=/data \
+    NODE_ENV=production
 
 VOLUME ["/data"]
 EXPOSE 3001
+
+# 非 root 运行：node:22-slim 自带 uid 1000 的 node 用户。
+# 注意：宿主机数据目录须 chown 给 1000:1000，否则容器写不进 /data：
+#   chown -R 1000:1000 /opt/soulchat/data
+RUN mkdir -p /data && chown node:node /data
+USER node
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20s \
   CMD node -e "fetch('http://127.0.0.1:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"

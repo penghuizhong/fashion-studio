@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { getConfig, getVersion, assertMultiUserConfig } from './config.js';
 import { getDb } from './db.js';
+import { ah, apiErrorHandler } from './asyncHandler.js';
 import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers } from './llm.js';
 import {
   sessionMiddleware,
@@ -33,6 +34,8 @@ import {
   calcPoints,
   deductPoints,
   maybeInviteReward,
+  maybeSignupBonus,
+  hasSignupBonus,
 } from './points.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
@@ -79,7 +82,9 @@ export function createApp() {
   const tooMany = (req, res) =>
     res.status(429).json({ error: '请求过于频繁，请稍后再试' });
   const limiterOpts = { standardHeaders: 'draft-7', legacyHeaders: false, handler: tooMany, validate: { trustProxy: false } };
-  const authLimiter = rateLimit({ ...limiterOpts, windowMs: 15 * 60 * 1000, max: 10 }); // 注册/登录：按 IP 10 次/15 分钟
+  // AUTH_LIMIT_MAX 仅供回归测试调高配额（默认 10，生产不动）
+  const authMax = parseInt(process.env.AUTH_LIMIT_MAX || '10', 10) || 10;
+  const authLimiter = rateLimit({ ...limiterOpts, windowMs: 15 * 60 * 1000, max: authMax }); // 注册/登录：按 IP 10 次/15 分钟
   const chatLimiter = rateLimit({
     ...limiterOpts,
     windowMs: 60 * 1000,
@@ -87,6 +92,18 @@ export function createApp() {
     keyGenerator: (req) => req.userId || ipKeyGenerator(req.ip), // 多用户按登录用户，单用户按 IP
   });
   const modelsLimiter = rateLimit({ ...limiterOpts, windowMs: 60 * 1000, max: 10 }); // 模型列表：按 IP 10 次/分钟
+  // 写操作通用限流：POST/PUT/DELETE/PATCH 按用户（或 IP）60 次/分钟，防灌爆 SQLite；
+  // 已有更严限流的路由（如聊天 30/分钟）不受影响——限流器叠加，取最严者
+  const writeLimiter = rateLimit({
+    ...limiterOpts,
+    windowMs: 60 * 1000,
+    max: 60,
+    keyGenerator: (req) => req.userId || ipKeyGenerator(req.ip),
+  });
+  app.use('/api', (req, res, next) => {
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) return writeLimiter(req, res, next);
+    next();
+  });
 
   // ---------- 多用户模式：/api/* 统一鉴权（auth/config/health 除外） ----------
   app.use('/api', (req, res, next) => {
@@ -146,7 +163,8 @@ export function createApp() {
     const chatModel = getPointsModel(creds.chatModel) ? creds.chatModel : (activeModels[0] && activeModels[0].id) || '';
     if (!cfg.apiKey && !cfg.mockLlm) return { error: '平台模型服务暂未开通，请联系管理员' };
     const balance = u.points_balance || 0;
-    if (balance < 1 && !cfg.mockLlm)
+    // 新用户首聊放行：0 余额但未领过注册奖励时允许聊，聊完即发奖励再扣本轮费用（防刷号）
+    if (balance < 1 && !cfg.mockLlm && hasSignupBonus(uid))
       return { error: '积分不足：请联系管理员充值，或在「API 设置」中切换为自带 Key 模式' };
     return {
       usePoints: true,
@@ -188,6 +206,20 @@ export function createApp() {
     }
   }
 
+  // SSE 公共：写头 + 安全 send（客户端断开后不再写）
+  function sseInit(res) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    return (event, data) => {
+      if (res.destroyed) return;
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+  }
+
   // ---------- config（绝不泄露 key） ----------
   app.get('/api/config', (req, res) => {
     const cfg = getConfig();
@@ -210,7 +242,7 @@ export function createApp() {
   });
 
   // ---------- 模型列表（动态拉取）：Key 与地址来自请求头，后端只透传、不存储 ----------
-  app.get('/api/models', modelsLimiter, async (req, res) => {
+  app.get('/api/models', modelsLimiter, ah(async (req, res) => {
     const cfg = getConfig();
     // 多用户模式：聊天链路忽略 X-OpenRouter-Key（会话即身份），用用户托管 key || 服务器默认；
     // 但模型列表是只读预览，允许本次请求显式带 key（用户刚输入还未保存时预览用），不存储。
@@ -243,7 +275,7 @@ export function createApp() {
     } catch (e) {
       res.status(502).json({ error: `拉取模型列表失败：${String((e && e.message) || e).slice(0, 200)}` });
     }
-  });
+  }));
 
   // ---------- characters ----------
   app.get('/api/characters', (req, res) => {
@@ -581,6 +613,10 @@ export function createApp() {
     const bill = resolveBilling(req, cfg, creds);
     if (bill.error) return res.status(402).json({ error: bill.error });
     const { chatModel, workerModel, llmOpts } = bill;
+    // M7：客户端断开时取消上游 LLM 请求，防悬空连接堆积
+    const ac = new AbortController();
+    req.on('close', () => ac.abort());
+    llmOpts.signal = ac.signal;
     const usePoints = bill.usePoints;
     let pointsBalance = bill.balance;
     const updBal = (b) => {
@@ -608,13 +644,7 @@ export function createApp() {
     ).run(conv.id, 'user', content, estimateTokens(content), null, t);
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(t, conv.id);
 
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const send = sseInit(res);
 
     try {
       // 1. 定发言顺序：@点名 > 导演决策 > fallback（最久没说话的先回）
@@ -693,6 +723,10 @@ export function createApp() {
         }
         const outTokens = estimateTokens(full);
         usageOutput += outTokens;
+        // 注册奖励：首次聊天成功后发放（幂等），每轮只发一次由 maybeSignupBonus 保证
+        if (bill.userId) {
+          try { maybeSignupBonus(bill.userId); } catch (e) { console.warn('[points] 注册奖励发放失败:', e.message); }
+        }
         // 积分扣费（按发言轮次）
         if (usePoints && !cfg.mockLlm) {
           const u = turnUsage || { input: usedTokens, output: outTokens };
@@ -727,29 +761,31 @@ export function createApp() {
         if (n % cfg.extractEveryN === 0) extractTargets.push(ch);
       }
 
-      // 3. 会话级摘要 + 触发到的角色记忆提取（并行）
-      await summarizeOld(members[0], conv.id, {
-        ...llmOpts,
-        model: workerModel,
-        onUsage: bgBill(bill, cfg, 'summary', workerModel, updBal),
-      });
-      const memResults = await Promise.all(
-        extractTargets.map(async (ch) => ({
-          ch,
-          changed: await extractMemory(ch, conv.id, {
-            ...llmOpts,
-            model: workerModel,
-            onUsage: bgBill(bill, cfg, 'memory', workerModel, updBal),
-          }),
-        }))
-      );
-      for (const { ch, changed } of memResults) {
-        if (changed.length) send('memory_updated', { character_id: ch.id, files: changed });
-      }
-
       if (usePoints) send('points', { balance: pointsBalance });
       if (bill.userId) checkInviteReward(bill.userId);
       send('done', { title: conv.title, usage: { input: usageInput, output: usageOutput } });
+      // 3. 会话级摘要 + 触发到的角色记忆提取放后台（并行），不阻塞 done
+      const bgOpts = { ...llmOpts, signal: undefined };
+      setImmediate(async () => {
+        try {
+          await summarizeOld(members[0], conv.id, {
+            ...bgOpts,
+            model: workerModel,
+            onUsage: bgBill(bill, cfg, 'summary', workerModel, updBal),
+          });
+          await Promise.all(
+            extractTargets.map((ch) =>
+              extractMemory(ch, conv.id, {
+                ...bgOpts,
+                model: workerModel,
+                onUsage: bgBill(bill, cfg, 'memory', workerModel, updBal),
+              })
+            )
+          );
+        } catch (e) {
+          console.warn('[bg] 群聊摘要/记忆提取失败:', e.message);
+        }
+      });
     } catch (e) {
       send('error', { message: String((e && e.message) || e) });
     } finally {
@@ -757,7 +793,7 @@ export function createApp() {
     }
   }
 
-  app.post('/api/conversations/:id/messages', chatLimiter, async (req, res) => {
+  app.post('/api/conversations/:id/messages', chatLimiter, ah(async (req, res) => {
     const cfg = getConfig();
     const conv = getConv(req.params.id, req);
     if (!conv) return conv404(res);
@@ -775,6 +811,10 @@ export function createApp() {
     const bill = resolveBilling(req, cfg, creds);
     if (bill.error) return res.status(402).json({ error: bill.error });
     const { chatModel, workerModel, llmOpts } = bill;
+    // M7：客户端断开时取消上游 LLM 请求，防悬空连接堆积
+    const ac = new AbortController();
+    req.on('close', () => ac.abort());
+    llmOpts.signal = ac.signal;
     const usePoints = bill.usePoints;
     let pointsBalance = bill.balance;
     const updBal = (b) => {
@@ -798,13 +838,7 @@ export function createApp() {
       db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(t, conv.id);
     }
 
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const send = sseInit(res);
 
     try {
       const { apiMessages, usedTokens, budget } = buildContext(char, conv.id);
@@ -824,6 +858,10 @@ export function createApp() {
         .prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)')
         .run(conv.id, 'assistant', full, estimateTokens(full), now());
       const outTokens = estimateTokens(full);
+      // 注册奖励：首次聊天成功后发放（幂等），再扣本轮费用
+      if (bill.userId) {
+        try { maybeSignupBonus(bill.userId); } catch (e) { console.warn('[points] 注册奖励发放失败:', e.message); }
+      }
       // 积分扣费（主聊天；无真实用量时回退到估算值）
       if (usePoints && !cfg.mockLlm) {
         const u = usage || { input: usedTokens, output: outTokens };
@@ -840,31 +878,38 @@ export function createApp() {
           }
         }
       }
-      await summarizeOld(char, conv.id, {
-        ...llmOpts,
-        model: workerModel,
-        onUsage: bgBill(bill, cfg, 'summary', workerModel, updBal),
-      });
-      const asstCount = db
-        .prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'assistant'")
-        .get(conv.id).n;
-      if (asstCount % cfg.extractEveryN === 0) {
-        const changed = await extractMemory(char, conv.id, {
-          ...llmOpts,
-          model: workerModel,
-          onUsage: bgBill(bill, cfg, 'memory', workerModel, updBal),
-        });
-        if (changed.length) send('memory_updated', { files: changed });
-      }
       if (usePoints) send('points', { balance: pointsBalance });
       if (bill.userId) checkInviteReward(bill.userId);
       send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens } });
+      // 摘要 + 记忆提取放后台，不阻塞 done；去掉请求级 signal（响应结束后不断连带取消）
+      const bgOpts = { ...llmOpts, signal: undefined };
+      setImmediate(async () => {
+        try {
+          await summarizeOld(char, conv.id, {
+            ...bgOpts,
+            model: workerModel,
+            onUsage: bgBill(bill, cfg, 'summary', workerModel, updBal),
+          });
+          const asstCount = db
+            .prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'assistant'")
+            .get(conv.id).n;
+          if (asstCount % cfg.extractEveryN === 0) {
+            await extractMemory(char, conv.id, {
+              ...bgOpts,
+              model: workerModel,
+              onUsage: bgBill(bill, cfg, 'memory', workerModel, updBal),
+            });
+          }
+        } catch (e) {
+          console.warn('[bg] 摘要/记忆提取失败:', e.message);
+        }
+      });
     } catch (e) {
       send('error', { message: String((e && e.message) || e) });
     } finally {
       res.end();
     }
-  });
+  }));
 
   // ---------- 静态前端（存在才挂） ----------
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -874,6 +919,9 @@ export function createApp() {
     // SPA fallback：非 /api 请求返回 index.html
     app.get(/^\/(?!api).*/, (req, res) => res.sendFile(path.join(distDir, 'index.html')));
   }
+
+  // 集中错误处理（必须在所有路由之后）
+  app.use(apiErrorHandler);
 
   return app;
 }

@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 const MODE = process.env.CHECK_MODE === 'multi' ? 'multi' : 'single';
 
 process.env.MOCK_LLM = 'true';
+process.env.AUTH_LIMIT_MAX = '100'; // 回归测试内多次注册/登录，不触发限流
 if (MODE === 'multi') {
   process.env.MULTI_USER = 'true';
   if (!process.env.MASTER_KEY) process.env.MASTER_KEY = crypto.randomBytes(32).toString('hex');
@@ -233,7 +234,7 @@ async function runSingle() {
     );
   }
 
-  // 10. 再发 4 轮（凑满 5 条 assistant）：第 5 轮 SSE 含 memory_updated
+  // 10. 再发 4 轮（凑满 5 条 assistant）：第 5 轮 done 先回（记忆提取已改后台），稍后 memory_md 被后台更新
   {
     const texts = ['今天天气真不错', '你喜欢什么颜色', '讲个简短的笑话', '好的再见'];
     let fifthEvents = null;
@@ -241,11 +242,14 @@ async function runSingle() {
       const { events } = await postSSE(`/api/conversations/${convId}/messages`, { content: texts[i] });
       if (i === texts.length - 1) fifthEvents = events;
     }
-    const memEv = fifthEvents.find((e) => e.event === 'memory_updated');
+    const hasDone = fifthEvents.some((e) => e.event === 'done');
+    const noMemEv = !fifthEvents.some((e) => e.event === 'memory_updated');
+    // 等后台任务（setImmediate + mock）完成
+    await new Promise((r) => setTimeout(r, 800));
     const f = await req('GET', `/api/characters/${charId}/files`);
     ok(
-      '10. 第 5 轮 SSE 含 memory_updated；memory_md 含 "mock 提取"',
-      !!memEv && Array.isArray(memEv.data.files) && memEv.data.files.includes('memory') &&
+      '10. 第 5 轮 done 先回（无 memory_updated 事件）；后台记忆提取后 memory_md 含 "mock 提取"',
+      hasDone && noMemEv &&
         f.status === 200 && typeof f.json.memory_md === 'string' && f.json.memory_md.includes('mock 提取'),
       `events=${fifthEvents.map((e) => e.event).join(',')} memory_md=${JSON.stringify(f.json && f.json.memory_md).slice(0, 120)}`
     );
@@ -615,12 +619,12 @@ async function runMulti() {
     );
   }
 
-  // M14. 积分：注册赠送 500，默认 points 模式，白名单 3 模型
+  // M14. 积分：注册奖励改首聊发放 → 新用户余额 0；默认 points 模式，白名单 3 模型
   {
     const p = await req('GET', '/api/points', undefined, { jar: jarB });
     ok(
-      'M14. GET /api/points → balance 500 / billing_mode=points / 3 个白名单模型',
-      p.status === 200 && p.json && p.json.balance === 500 &&
+      'M14. GET /api/points → balance 0（奖励首聊发）/ billing_mode=points / 3 个白名单模型',
+      p.status === 200 && p.json && p.json.balance === 0 &&
         p.json.billing_mode === 'points' &&
         Array.isArray(p.json.models) && p.json.models.length === 3,
       JSON.stringify(p.json)
@@ -651,21 +655,21 @@ async function runMulti() {
     const notFound = await req('POST', '/api/admin/points/grant', { username: 'nobody999', points: 100 }, { jar: jarAdminM });
     const p = await req('GET', '/api/points', undefined, { jar: jarB });
     ok(
-      'M16. 管理员发放 100 → B 余额 600；非管理员 → 403；不存在的用户 → 404',
-      login.status === 200 && g.status === 200 && g.json && g.json.balance === 600 &&
+      'M16. 管理员发放 100 → B 余额 100；非管理员 → 403；不存在的用户 → 404',
+      login.status === 200 && g.status === 200 && g.json && g.json.balance === 100 &&
         forbidden.status === 403 && notFound.status === 404 &&
-        p.json && p.json.balance === 600,
+        p.json && p.json.balance === 100,
       `grant=${g.status}(${JSON.stringify(g.json)}) forbidden=${forbidden.status} notFound=${notFound.status} balance=${p.json && p.json.balance}`
     );
   }
 
-  // M17. 积分：消费明细有注册赠送 + 发放两条
+  // M17. 积分：消费明细有发放记录（B 还没聊过天，signup_bonus 在 M27 首聊后才有）
   {
     const l = await req('GET', '/api/points/ledger?limit=20', undefined, { jar: jarB });
     const reasons = Array.isArray(l.json) ? l.json.map((r) => r.reason) : [];
     ok(
-      'M17. GET /api/points/ledger → 含 signup_bonus + admin_grant，带中文 reason_label',
-      l.status === 200 && reasons.includes('signup_bonus') && reasons.includes('admin_grant') &&
+      'M17. GET /api/points/ledger → 含 admin_grant，带中文 reason_label',
+      l.status === 200 && reasons.includes('admin_grant') &&
         l.json.every((r) => typeof r.reason_label === 'string' && r.reason_label),
       `reasons=${reasons.join(',')}`
     );
@@ -685,14 +689,14 @@ async function runMulti() {
     );
   }
 
-  // M19. 邀请验证：C 余额 600（500+100），账本有 invite_bonus
+  // M19. 邀请验证：C 还没聊过 → 余额 0，奖励首聊后才发
   {
     const p = await req('GET', '/api/points', undefined, { jar: jarC });
     const l = await req('GET', '/api/points/ledger?limit=5', undefined, { jar: jarC });
     const reasons = Array.isArray(l.json) ? l.json.map((x) => x.reason) : [];
     ok(
-      'M19. 邀请注册验证：C 余额 600，账本有 invite_bonus',
-      p.json && p.json.balance === 600 && reasons.includes('invite_bonus'),
+      'M19. 邀请注册验证：C 未聊天 → 余额 0，账本暂无 signup_bonus/invite_bonus',
+      p.json && p.json.balance === 0 && !reasons.includes('signup_bonus') && !reasons.includes('invite_bonus'),
       `balance=${p.json && p.json.balance} reasons=${reasons.join(',')}`
     );
   }
@@ -744,6 +748,83 @@ async function runMulti() {
       'M22. GET /api/points/ledger 行含 tokens_input/tokens_output/model 字段',
       l.status === 200 && !!row && 'tokens_input' in row && 'tokens_output' in row && 'model' in row,
       `keys=${row ? Object.keys(row).join(',') : 'none'}`
+    );
+  }
+
+  // M23. 密码重置：B 取重置码（12 位）→ 错码 401 → 正确 200（轮换新码）→ 旧会话失效 → 新密码可登录
+  {
+    const rc = await req('GET', '/api/auth/recovery-code', undefined, { jar: jarB });
+    const code = rc.json && rc.json.recovery_code;
+    const wrong = await req('POST', '/api/auth/reset-password', { username: 'testuserB', recovery_code: 'WRONGCODE12', new_password: 'newpassword123' });
+    const good = await req('POST', '/api/auth/reset-password', { username: 'testuserB', recovery_code: code, new_password: 'newpassword123' });
+    const newCode = good.json && good.json.recovery_code;
+    const meAfter = await req('GET', '/api/auth/me', undefined, { jar: jarB });
+    const jarB2 = makeJar();
+    const login = await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB2 });
+    ok(
+      'M23. 重置码 12 位 → 错码 401 → 正确 200 且轮换新码 → 旧会话 401 → 新密码登录 200',
+      rc.status === 200 && typeof code === 'string' && code.length === 12 &&
+        wrong.status === 401 && good.status === 200 && typeof newCode === 'string' && newCode.length === 12 && newCode !== code &&
+        meAfter.status === 401 && login.status === 200,
+      `code=${code} wrong=${wrong.status} good=${good.status} newCode=${newCode} meAfter=${meAfter.status} login=${login.status}`
+    );
+    // M24. 查看/重生重置码：GET 与轮换后一致 → 重生得不同码 → GET 返回新码
+    const g1 = await req('GET', '/api/auth/recovery-code', undefined, { jar: jarB2 });
+    const rg = await req('POST', '/api/auth/recovery-code/regenerate', {}, { jar: jarB2 });
+    const g2 = await req('GET', '/api/auth/recovery-code', undefined, { jar: jarB2 });
+    const regen = rg.json && rg.json.recovery_code;
+    ok(
+      'M24. GET 重置码 = 轮换后新码 → 重生得不同 12 位码 → GET 返回新码',
+      g1.status === 200 && g1.json.recovery_code === newCode &&
+        rg.status === 200 && typeof regen === 'string' && regen.length === 12 && regen !== newCode &&
+        g2.json.recovery_code === regen,
+      `g1=${g1.json && g1.json.recovery_code} regen=${regen} g2=${g2.json && g2.json.recovery_code}`
+    );
+    // M26. SSRF：非法 baseUrl 入库 400（内网/非 https/元数据），合法 https 公网 200
+    const bad1 = await req('PUT', '/api/user/api-key', { baseUrl: 'https://169.254.169.254/x' }, { jar: jarB2 });
+    const bad2 = await req('PUT', '/api/user/api-key', { baseUrl: 'http://openrouter.ai/api' }, { jar: jarB2 });
+    const bad3 = await req('PUT', '/api/user/api-key', { baseUrl: 'https://localhost:11434/v1' }, { jar: jarB2 });
+    const good2 = await req('PUT', '/api/user/api-key', { baseUrl: 'https://openrouter.ai/api/v1' }, { jar: jarB2 });
+    ok(
+      'M26. 非法 baseUrl（元数据/http/localhost）→ 400；合法 https 公网 → 200',
+      bad1.status === 400 && bad2.status === 400 && bad3.status === 400 && good2.status === 200,
+      `bad1=${bad1.status} bad2=${bad2.status} bad3=${bad3.status} good=${good2.status}`
+    );
+    // M27. 注册奖励首聊发放：B（已获 grant 100，未领注册奖励）聊一条 → +500，账本有 signup_bonus
+    const chB = await req('POST', '/api/characters', { name: '小测' }, { jar: jarB2 });
+    const charB2 = chB.json && chB.json.id;
+    const cvB = await req('POST', `/api/characters/${charB2}/conversations`, {}, { jar: jarB2 });
+    const convB = cvB.json && cvB.json.id;
+    await postSSE(`/api/conversations/${convB}/messages`, { content: '你好' }, { jar: jarB2 });
+    const pb = await req('GET', '/api/points', undefined, { jar: jarB2 });
+    const lb = await req('GET', '/api/points/ledger?limit=5', undefined, { jar: jarB2 });
+    const reasonsB = Array.isArray(lb.json) ? lb.json.map((x) => x.reason) : [];
+    ok(
+      'M27. 首聊后注册奖励到账：B 余额 100+500=600，账本有 signup_bonus',
+      pb.json && pb.json.balance === 600 && reasonsB.includes('signup_bonus'),
+      `balance=${pb.json && pb.json.balance} reasons=${reasonsB.join(',')}`
+    );
+  }
+
+  // M25. 管理员模型 CRUD：查 → 增 → 改价 → 下架（公开列表消失）→ 删除；非管理员 403
+  {
+    const jarAdmin = jarAdminM;
+    const list0 = await req('GET', '/api/admin/points/models', undefined, { jar: jarAdmin });
+    const n0 = Array.isArray(list0.json) ? list0.json.length : -1;
+    const add = await req('POST', '/api/admin/points/models', { model_id: 'test/model-x', name: '测试模型', input_per_1m: 100, output_per_1m: 200 }, { jar: jarAdmin });
+    const newId = add.json && add.json.id;
+    const upd = await req('PUT', `/api/admin/points/models/${newId}`, { input_per_1m: 111 }, { jar: jarAdmin });
+    const off = await req('PUT', `/api/admin/points/models/${newId}`, { is_active: 0 }, { jar: jarAdmin });
+    const pub = await req('GET', '/api/points', undefined, { jar: jarAdmin });
+    const pubIds = ((pub.json && pub.json.models) || []).map((m) => m.id);
+    const del = await req('DELETE', `/api/admin/points/models/${newId}`, undefined, { jar: jarAdmin });
+    const forbidden = await req('POST', '/api/admin/points/models', { model_id: 'x/y', name: 'x' }, { jar: jarC });
+    ok(
+      'M25. 模型 CRUD：列表 200 → 新增 200 → 改价 200 → 下架后公开列表无 → 删除 200；非管理员 403',
+      list0.status === 200 && n0 >= 3 && add.status === 200 && newId &&
+        upd.status === 200 && off.status === 200 && !pubIds.includes('test/model-x') &&
+        del.status === 200 && forbidden.status === 403,
+      `n0=${n0} add=${add.status} upd=${upd.status} off=${off.status} del=${del.status} forbidden=${forbidden.status}`
     );
   }
 }
