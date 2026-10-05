@@ -34,7 +34,7 @@ import {
   buildGroupContext,
   getLabeledHistory,
   summarizeOld,
-  extractMemory,
+  runMemoryPipeline,
 } from './memory.js';
 import {
   listPointsModels,
@@ -868,6 +868,54 @@ export function createApp() {
     res.json({ ok: true, file: v.file });
   });
 
+  // ---------- v1.10 意图识别：灵魂修改建议 ----------
+  // 待确认的建议列表
+  app.get('/api/characters/:id/suggestions', (req, res) => {
+    const c = getChar(req.params.id, req);
+    if (!c) return char404(res);
+    const rows = db
+      .prepare(
+        `SELECT id, proposed, status, created_at FROM intent_suggestions
+         WHERE character_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 10`
+      )
+      .all(c.id);
+    res.json(rows);
+  });
+  // 一键写入灵魂：追加到 ## 对话补充设定 小节 + 写版本
+  app.post('/api/suggestions/:id/apply', (req, res) => {
+    const s = db.prepare('SELECT * FROM intent_suggestions WHERE id = ?').get(req.params.id);
+    if (!s || s.status !== 'pending') return res.status(404).json({ error: '建议不存在或已处理' });
+    const c = getChar(s.character_id, req);
+    if (!c) return char404(res);
+    const t = now();
+    const section = '## 对话补充设定';
+    let soul = c.soul_md || '';
+    const line = `- ${s.proposed}`;
+    if (!soul.includes(line)) {
+      soul = soul.includes(section) ? `${soul.trimEnd()}\n${line}\n` : `${soul.trimEnd()}\n\n${section}\n${line}\n`;
+    }
+    db.transaction(() => {
+      db.prepare('UPDATE characters SET soul_md = ?, updated_at = ? WHERE id = ?').run(soul, t, c.id);
+      db.prepare('INSERT INTO file_versions(character_id, file, content, created_at) VALUES(?,?,?,?)').run(
+        c.id,
+        'soul',
+        soul,
+        t
+      );
+      db.prepare("UPDATE intent_suggestions SET status = 'applied' WHERE id = ?").run(s.id);
+    })();
+    res.json({ ok: true });
+  });
+  // 忽略建议
+  app.post('/api/suggestions/:id/dismiss', (req, res) => {
+    const s = db.prepare('SELECT * FROM intent_suggestions WHERE id = ?').get(req.params.id);
+    if (!s || s.status !== 'pending') return res.status(404).json({ error: '建议不存在或已处理' });
+    const c = getChar(s.character_id, req);
+    if (!c) return char404(res);
+    db.prepare("UPDATE intent_suggestions SET status = 'dismissed' WHERE id = ?").run(s.id);
+    res.json({ ok: true });
+  });
+
   // ---------- conversations ----------
   app.get('/api/characters/:id/conversations', (req, res) => {
     const c = getChar(req.params.id, req);
@@ -1097,7 +1145,7 @@ export function createApp() {
       if (!speakerIds.length) speakerIds = [members[0].id];
 
       // 2. 按角色串行流式：每轮重建上下文，后发言者能看到先发言者的回复
-      const extractTargets = [];
+      const speakerChars = [];
       let ctxInfo = null;
       let usageInput = 0;
       let usageOutput = 0;
@@ -1105,7 +1153,7 @@ export function createApp() {
         if (res.destroyed) break;
         const ch = members.find((m) => m.id === sid);
         if (!ch) continue;
-        const groupCtx = buildGroupContext(members, conv.id);
+        const groupCtx = buildGroupContext(members, conv.id, content);
         if (!ctxInfo) {
           ctxInfo = { used: groupCtx.usedTokens, budget: groupCtx.budget };
           send('context', ctxInfo);
@@ -1164,17 +1212,17 @@ export function createApp() {
           content: full,
           tokens: estimateTokens(full),
         });
-        // 该角色发言数每 N 条触发一次记忆提取（各角色独立计数）
-        const n = db
-          .prepare('SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND character_id = ?')
-          .get(conv.id, ch.id).n;
-        if (n % cfg.extractEveryN === 0) extractTargets.push(ch);
+        // v1.10：本轮发言过的角色各跑一次记忆流水线（意图识别/事件驱动，gate 会自动跳过无价值轮）
+        for (const sid of speakerIds) {
+          const sch = members.find((m) => m.id === sid);
+          if (sch) speakerChars.push(sch);
+        }
       }
 
       if (usePoints) send('points', { balance: pointsBalance });
       if (bill.userId) checkInviteReward(bill.userId);
       send('done', { title: conv.title, usage: { input: usageInput, output: usageOutput } });
-      // 3. 会话级摘要 + 触发到的角色记忆提取放后台（并行），不阻塞 done
+      // 3. 会话级摘要 + v1.10 记忆流水线放后台（并行），不阻塞 done
       const bgOpts = { ...llmOpts, signal: undefined };
       setImmediate(async () => {
         try {
@@ -1184,16 +1232,17 @@ export function createApp() {
             onUsage: bgBill(bill, cfg, 'summary', workerModel, updBal),
           });
           await Promise.all(
-            extractTargets.map((ch) =>
-              extractMemory(ch, conv.id, {
+            speakerChars.map((sch) =>
+              runMemoryPipeline(sch, conv.id, content, {
                 ...bgOpts,
                 model: workerModel,
+                userId: bill.userId || null,
                 onUsage: bgBill(bill, cfg, 'memory', workerModel, updBal),
               })
             )
           );
         } catch (e) {
-          console.warn('[bg] 群聊摘要/记忆提取失败:', e.message);
+          console.warn('[bg] 群聊摘要/记忆流水线失败:', e.message);
         }
       });
     } catch (e) {
@@ -1251,7 +1300,7 @@ export function createApp() {
     const send = sseInit(res);
 
     try {
-      const { apiMessages, usedTokens, budget } = buildContext(char, conv.id);
+      const { apiMessages, usedTokens, budget } = buildContext(char, conv.id, content);
       send('context', { used: usedTokens, budget });
       let full = '';
       const { usage } = await chatStream({
@@ -1291,7 +1340,7 @@ export function createApp() {
       if (usePoints) send('points', { balance: pointsBalance });
       if (bill.userId) checkInviteReward(bill.userId);
       send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens } });
-      // 摘要 + 记忆提取放后台，不阻塞 done；去掉请求级 signal（响应结束后不断连带取消）
+      // 摘要 + v1.10 记忆流水线（意图识别/事件驱动）放后台，不阻塞 done；去掉请求级 signal
       const bgOpts = { ...llmOpts, signal: undefined };
       setImmediate(async () => {
         try {
@@ -1300,18 +1349,14 @@ export function createApp() {
             model: workerModel,
             onUsage: bgBill(bill, cfg, 'summary', workerModel, updBal),
           });
-          const asstCount = db
-            .prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'assistant'")
-            .get(conv.id).n;
-          if (asstCount % cfg.extractEveryN === 0) {
-            await extractMemory(char, conv.id, {
-              ...bgOpts,
-              model: workerModel,
-              onUsage: bgBill(bill, cfg, 'memory', workerModel, updBal),
-            });
-          }
+          await runMemoryPipeline(char, conv.id, content, {
+            ...bgOpts,
+            model: workerModel,
+            userId: bill.userId || null,
+            onUsage: bgBill(bill, cfg, 'memory', workerModel, updBal),
+          });
         } catch (e) {
-          console.warn('[bg] 摘要/记忆提取失败:', e.message);
+          console.warn('[bg] 摘要/记忆流水线失败:', e.message);
         }
       });
     } catch (e) {
