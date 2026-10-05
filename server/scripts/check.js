@@ -379,6 +379,7 @@ async function runSingle() {
 // ================= 多用户套件（13 项） =================
 async function runMulti() {
   const jarA = makeJar(); // 用户 A
+  let jarAdminM = null; // 管理员会话（M16 登录，M20/M21 复用）
   const jarB = makeJar(); // 用户 B
   const anon = makeJar(); // 未登录
   let userA = null;
@@ -409,6 +410,21 @@ async function runMulti() {
       'M2. 注册校验：非法用户名 400×2、短密码 400、重名 409',
       badShort.status === 400 && badChars.status === 400 && shortPw.status === 400 && dup.status === 409,
       `short=${badShort.status} chars=${badChars.status} shortPw=${shortPw.status} dup=${dup.status}(${JSON.stringify(dup.json)})`
+    );
+  }
+
+  // M2b. 邀请注册前置：A 取邀请码 → C 用邀请码注册（放前面，避免后面限流）
+  // 注意：jarA 在 M12 会退出登录，邀请码必须现在取
+  let inviteCodeA = '';
+  const jarC = makeJar();
+  {
+    const inv = await req('GET', '/api/invite', undefined, { jar: jarA });
+    inviteCodeA = (inv.json && inv.json.code) || '';
+    const r = await req('POST', '/api/auth/register', { username: 'testuserC', password: 'password123', inviteCode: inviteCodeA }, { jar: jarC });
+    ok(
+      'M2b. 邀请注册：A 取邀请码 → C 用邀请码注册 → 201',
+      inv.status === 200 && inviteCodeA.length === 8 && r.status === 201,
+      `invite=${inv.status} code=${inviteCodeA} reg=${r.status}(${JSON.stringify(r.json)})`
     );
   }
 
@@ -626,12 +642,13 @@ async function runMulti() {
   }
 
   // M16. 积分：管理员发放（testuserA 是首个用户=管理员）；非管理员 → 403
+  // jarAdminM 提升到外层：M20/M21 复用（限流已满，不能再登录）
   {
-    const jarAdmin = makeJar();
-    const login = await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarAdmin });
-    const g = await req('POST', '/api/admin/points/grant', { username: 'testuserB', points: 100 }, { jar: jarAdmin });
+    jarAdminM = makeJar();
+    const login = await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarAdminM });
+    const g = await req('POST', '/api/admin/points/grant', { username: 'testuserB', points: 100 }, { jar: jarAdminM });
     const forbidden = await req('POST', '/api/admin/points/grant', { username: 'testuserB', points: 100 }, { jar: jarB });
-    const notFound = await req('POST', '/api/admin/points/grant', { username: 'nobody999', points: 100 }, { jar: jarAdmin });
+    const notFound = await req('POST', '/api/admin/points/grant', { username: 'nobody999', points: 100 }, { jar: jarAdminM });
     const p = await req('GET', '/api/points', undefined, { jar: jarB });
     ok(
       'M16. 管理员发放 100 → B 余额 600；非管理员 → 403；不存在的用户 → 404',
@@ -665,6 +682,68 @@ async function runMulti() {
       'M18. 积分模式聊天 → 200 且 done；未登录 → 401',
       status === 200 && !!done && noAuth.status === 401,
       `status=${status} events=${events.map((e) => e.event).join(',')} noAuth=${noAuth.status}`
+    );
+  }
+
+  // M19. 邀请验证：C 余额 600（500+100），账本有 invite_bonus
+  {
+    const p = await req('GET', '/api/points', undefined, { jar: jarC });
+    const l = await req('GET', '/api/points/ledger?limit=5', undefined, { jar: jarC });
+    const reasons = Array.isArray(l.json) ? l.json.map((x) => x.reason) : [];
+    ok(
+      'M19. 邀请注册验证：C 余额 600，账本有 invite_bonus',
+      p.json && p.json.balance === 600 && reasons.includes('invite_bonus'),
+      `balance=${p.json && p.json.balance} reasons=${reasons.join(',')}`
+    );
+  }
+
+  // M20. 邀请奖励：C 聊满 10 条 → A 收到 invite_reward 200；再聊不重复发
+  {
+    const cc = await req('POST', '/api/characters', { name: '小邀' }, { jar: jarC });
+    const charC = cc.json && cc.json.id;
+    const cv = await req('POST', `/api/characters/${charC}/conversations`, {}, { jar: jarC });
+    const convC = cv.json && cv.json.id;
+    for (let i = 0; i < 11; i++) {
+      await postSSE(`/api/conversations/${convC}/messages`, { content: `第${i + 1}条` }, { jar: jarC });
+    }
+    const la = await req('GET', '/api/points/ledger?limit=100', undefined, { jar: jarAdminM });
+    const rewards = Array.isArray(la.json) ? la.json.filter((x) => x.reason === 'invite_reward') : [];
+    const total = rewards.reduce((s, x) => s + x.delta, 0);
+    ok(
+      'M20. C 聊满 10 条 → A 收到 invite_reward 200（幂等，只发一次）',
+      rewards.length === 1 && total === 200 && rewards[0].reason_label === '邀请奖励',
+      `rewards=${rewards.length} total=${total}`
+    );
+  }
+
+  // M21. 统计：管理员 4 个接口 → 200；非管理员 → 403；未登录 → 401
+  {
+    const jarAdmin = jarAdminM; // testuserA 是首个用户=管理员（M16 已登录，复用避开限流）
+    const ov = await req('GET', '/api/admin/stats/overview', undefined, { jar: jarAdmin });
+    const da = await req('GET', '/api/admin/stats/daily?days=7', undefined, { jar: jarAdmin });
+    const mo = await req('GET', '/api/admin/stats/models', undefined, { jar: jarAdmin });
+    const tu = await req('GET', '/api/admin/stats/top-users?limit=5', undefined, { jar: jarAdmin });
+    const forbidden = await req('GET', '/api/admin/stats/overview', undefined, { jar: jarB });
+    const noAuth = await req('GET', '/api/admin/stats/overview');
+    ok(
+      'M21. 统计：admin 4 接口 → 200；非管理员 → 403；未登录 → 401',
+      ov.status === 200 && typeof ov.json.totalUsers === 'number' && ov.json.totalUsers >= 3 &&
+        da.status === 200 && Array.isArray(da.json) && da.json.length === 7 &&
+        mo.status === 200 && Array.isArray(mo.json) &&
+        tu.status === 200 && Array.isArray(tu.json) &&
+        forbidden.status === 403 && noAuth.status === 401,
+      `ov=${ov.status} users=${ov.json && ov.json.totalUsers} daily=${da.json && da.json.length} models=${mo.status} top=${tu.status} forbidden=${forbidden.status} noAuth=${noAuth.status}`
+    );
+  }
+
+  // M22. 账本新字段：ledger 行带 tokens_input/tokens_output/model 键
+  {
+    const l = await req('GET', '/api/points/ledger?limit=1', undefined, { jar: jarB });
+    const row = Array.isArray(l.json) && l.json[0];
+    ok(
+      'M22. GET /api/points/ledger 行含 tokens_input/tokens_output/model 字段',
+      l.status === 200 && !!row && 'tokens_input' in row && 'tokens_output' in row && 'model' in row,
+      `keys=${row ? Object.keys(row).join(',') : 'none'}`
     );
   }
 }
