@@ -160,8 +160,30 @@ export function getDb() {
     if (firstUser) {
       _db.prepare('UPDATE users SET is_admin = 1 WHERE id = ? AND is_admin = 0').run(firstUser.id);
     }
-    // 邀请码唯一索引 + 老用户补发邀请码（8 位大写字母数字，去掉易混淆字符）
-    _db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_invite_code ON users(invite_code)');
+    // 邀请码唯一索引 + 老用户补发邀请码（8 位大写字母数字，去掉易混淆字符）    _db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_invite_code ON users(invite_code)');
+    // 密码重置码：老库加列，老用户补发（与邀请码独立，绝不公开）
+    if (!userCols.includes('recovery_code')) _db.exec('ALTER TABLE users ADD COLUMN recovery_code TEXT');
+    const noRecovery = _db.prepare("SELECT id FROM users WHERE recovery_code IS NULL OR recovery_code = ''").all();
+    if (noRecovery.length) {
+      const usedR = new Set(
+        _db.prepare('SELECT recovery_code FROM users WHERE recovery_code IS NOT NULL').all().map((r) => r.recovery_code)
+      );
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      const mk = () => {
+        let s = '';
+        for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+        return s;
+      };
+      const upd = _db.prepare('UPDATE users SET recovery_code = ? WHERE id = ?');
+      _db.transaction((rows) => {
+        for (const r of rows) {
+          let code = mk();
+          while (usedR.has(code)) code = mk();
+          usedR.add(code);
+          upd.run(code, r.id);
+        }
+      })(noRecovery);
+    }
     const noCode = _db.prepare("SELECT id FROM users WHERE invite_code IS NULL OR invite_code = ''").all();
     if (noCode.length) {
       const used = new Set(

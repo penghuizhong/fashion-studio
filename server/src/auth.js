@@ -232,11 +232,14 @@ export function mountAuthRoutes(app, authLimiter) {
     }
     let myCode = genInviteCode();
     while (db.prepare('SELECT id FROM users WHERE invite_code = ?').get(myCode)) myCode = genInviteCode();
+    // 密码重置码：与邀请码独立，注册时发放一次，用于自助找回密码
+    let recoveryCode = genInviteCode();
+    while (db.prepare('SELECT id FROM users WHERE recovery_code = ?').get(recoveryCode)) recoveryCode = genInviteCode();
     const bonus = SIGNUP_BONUS + (inviter ? INVITE_REWARD_INVITEE : 0);
     db.transaction(() => {
       db.prepare(
-        'INSERT INTO users(id, username, password_hash, created_at, points_balance, billing_mode, is_admin, invite_code, invited_by) VALUES(?,?,?,?,?,?,?,?,?)'
-      ).run(id, username, hash, t, bonus, 'points', isFirst ? 1 : 0, myCode, inviter ? inviter.id : null);
+        'INSERT INTO users(id, username, password_hash, created_at, points_balance, billing_mode, is_admin, invite_code, invited_by, recovery_code) VALUES(?,?,?,?,?,?,?,?,?,?)'
+      ).run(id, username, hash, t, bonus, 'points', isFirst ? 1 : 0, myCode, inviter ? inviter.id : null, recoveryCode);
       // 注册赠送积分（写流水）
       const ins = db.prepare(
         'INSERT INTO points_ledger(user_id, delta, balance_after, reason, ref_id, created_at) VALUES(?,?,?,?,?,?)'
@@ -252,7 +255,7 @@ export function mountAuthRoutes(app, authLimiter) {
     })();
     db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now()); // 顺手清过期会话
     createSession(req, res, id);
-    res.status(201).json({ user: { id, username, inviteCode: myCode } });
+    res.status(201).json({ user: { id, username, inviteCode: myCode, recoveryCode } });
   });
 
   // POST /api/auth/login
@@ -271,6 +274,29 @@ export function mountAuthRoutes(app, authLimiter) {
   // POST /api/auth/logout
   app.post('/api/auth/logout', needMulti, (req, res) => {
     destroySession(req, res);
+    res.json({ ok: true });
+  });
+
+  // POST /api/auth/reset-password：凭用户名 + 密码重置码自助重置密码（限流同登录）
+  app.post('/api/auth/reset-password', needMulti, authLimiter, async (req, res) => {
+    const username = String((req.body && req.body.username) || '').trim();
+    const recoveryCode = String((req.body && req.body.recovery_code) || '').trim().toUpperCase();
+    const newPassword = (req.body && req.body.new_password) || '';
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      return res.status(400).json({ error: '新密码至少 8 位' });
+    }
+    const db = getDb();
+    const row = db.prepare('SELECT id, recovery_code FROM users WHERE username = ?').get(username);
+    // 统一错误信息，防用户名枚举
+    if (!row || !row.recovery_code || row.recovery_code !== recoveryCode) {
+      return res.status(401).json({ error: '用户名或重置码错误' });
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    db.transaction(() => {
+      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, row.id);
+      // 重置后所有会话失效，需重新登录
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.id);
+    })();
     res.json({ ok: true });
   });
 
@@ -313,6 +339,21 @@ export function mountAuthRoutes(app, authLimiter) {
     req.uid = uid;
     next();
   };
+
+  // GET /api/auth/recovery-code：查看自己的密码重置码（登录态）
+  app.get('/api/auth/recovery-code', needMulti, needLogin, (req, res) => {
+    const row = getDb().prepare('SELECT recovery_code FROM users WHERE id = ?').get(req.uid);
+    res.json({ recovery_code: (row && row.recovery_code) || '' });
+  });
+
+  // POST /api/auth/recovery-code/regenerate：重新生成重置码（登录态）
+  app.post('/api/auth/recovery-code/regenerate', needMulti, needLogin, (req, res) => {
+    const db = getDb();
+    let code = genInviteCode();
+    while (db.prepare('SELECT id FROM users WHERE recovery_code = ?').get(code)) code = genInviteCode();
+    db.prepare('UPDATE users SET recovery_code = ? WHERE id = ?').run(code, req.uid);
+    res.json({ ok: true, recovery_code: code });
+  });
   const needAdmin = (req, res, next) => {
     const row = getDb().prepare('SELECT is_admin FROM users WHERE id = ?').get(req.uid);
     if (!row || !row.is_admin) return res.status(403).json({ error: '需要管理员权限' });
