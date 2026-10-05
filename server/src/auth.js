@@ -6,7 +6,8 @@ import { getDb } from './db.js';
 import { getConfig } from './config.js';
 import {
   SIGNUP_BONUS,
-  POINTS_MODELS,
+  listPointsModels,
+  listPointsModelRows,
   POINTS_PER_YUAN,
   REASON_LABELS,
   INVITE_REWARD_INVITER,
@@ -328,7 +329,7 @@ export function mountAuthRoutes(app, authLimiter) {
       is_admin: !!(u && u.is_admin),
       signup_bonus: SIGNUP_BONUS,
       platform_ready: !!cfg.apiKey,
-      models: POINTS_MODELS,
+      models: listPointsModels(true),
     });
   });
 
@@ -359,6 +360,75 @@ export function mountAuthRoutes(app, authLimiter) {
     if (!target) return res.status(404).json({ error: '用户不存在' });
     const balance = grantPoints(target.id, points, 'admin_grant');
     res.json({ ok: true, username: target.username, granted: points, balance });
+  });
+
+  // ---------- 积分可用模型管理（管理员） ----------
+  // GET /api/admin/points/models：全部模型（含未启用）
+  app.get('/api/admin/points/models', needMulti, needLogin, needAdmin, (req, res) => {
+    res.json(listPointsModelRows());
+  });
+
+  // POST /api/admin/points/models：新增 { model_id, name, description?, input_per_1m, output_per_1m }
+  app.post('/api/admin/points/models', needMulti, needLogin, needAdmin, (req, res) => {
+    const b = req.body || {};
+    const model_id = String(b.model_id || '').trim();
+    const name = String(b.name || '').trim() || model_id;
+    const description = String(b.description || '').trim();
+    const input_per_1m = Math.floor(Number(b.input_per_1m));
+    const output_per_1m = Math.floor(Number(b.output_per_1m));
+    if (!model_id) return res.status(400).json({ error: '模型 ID 不能为空' });
+    if (!input_per_1m || input_per_1m <= 0 || !output_per_1m || output_per_1m <= 0)
+      return res.status(400).json({ error: '输入/输出单价必须是大于 0 的整数（积分/1M tokens）' });
+    try {
+      const r = getDb()
+        .prepare(
+          'INSERT INTO points_models(model_id, name, description, input_per_1m, output_per_1m, is_active, sort_order, created_at) VALUES(?,?,?,?,?,?,?,?)'
+        )
+        .run(model_id, name, description, input_per_1m, output_per_1m, 1, 999, new Date().toISOString());
+      res.json({ ok: true, id: Number(r.lastInsertRowid) });
+    } catch (e) {
+      if (String(e.message || '').includes('UNIQUE'))
+        return res.status(409).json({ error: '该模型 ID 已存在' });
+      throw e;
+    }
+  });
+
+  // PUT /api/admin/points/models/:id：改名/改价/启用/排序（字段缺省=保持）
+  app.put('/api/admin/points/models/:id', needMulti, needLogin, needAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    const b = req.body || {};
+    const row = getDb().prepare('SELECT * FROM points_models WHERE id = ?').get(id);
+    if (!row) return res.status(404).json({ error: '模型不存在' });
+    const patch = {};
+    if (b.name !== undefined) patch.name = String(b.name).trim() || row.name;
+    if (b.description !== undefined) patch.description = String(b.description).trim();
+    if (b.input_per_1m !== undefined) {
+      const v = Math.floor(Number(b.input_per_1m));
+      if (!v || v <= 0) return res.status(400).json({ error: '输入单价必须是大于 0 的整数' });
+      patch.input_per_1m = v;
+    }
+    if (b.output_per_1m !== undefined) {
+      const v = Math.floor(Number(b.output_per_1m));
+      if (!v || v <= 0) return res.status(400).json({ error: '输出单价必须是大于 0 的整数' });
+      patch.output_per_1m = v;
+    }
+    if (b.is_active !== undefined) patch.is_active = b.is_active ? 1 : 0;
+    if (b.sort_order !== undefined) patch.sort_order = Math.floor(Number(b.sort_order)) || 0;
+    const keys = Object.keys(patch);
+    if (keys.length) {
+      getDb()
+        .prepare(`UPDATE points_models SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+        .run(...keys.map((k) => patch[k]), id);
+    }
+    res.json({ ok: true });
+  });
+
+  // DELETE /api/admin/points/models/:id：删除
+  app.delete('/api/admin/points/models/:id', needMulti, needLogin, needAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    const r = getDb().prepare('DELETE FROM points_models WHERE id = ?').run(id);
+    if (!r.changes) return res.status(404).json({ error: '模型不存在' });
+    res.json({ ok: true });
   });
 
   // GET /api/admin/users：管理员查看用户列表（q 可选，按用户名模糊搜）

@@ -27,8 +27,8 @@ import {
   extractMemory,
 } from './memory.js';
 import {
-  POINTS_MODELS,
-  POINTS_WORKER_MODEL,
+  listPointsModels,
+  getWorkerModel,
   getPointsModel,
   calcPoints,
   deductPoints,
@@ -142,7 +142,8 @@ export function createApp() {
     const u = db.prepare('SELECT billing_mode, points_balance FROM users WHERE id = ?').get(uid);
     if (!u || (u.billing_mode || 'points') !== 'points') return base;
     // 积分模式：模型必须在白名单（服务端强制，前端传什么都没用），后台固定最便宜
-    const chatModel = getPointsModel(creds.chatModel) ? creds.chatModel : POINTS_MODELS[0].id;
+    const activeModels = listPointsModels(true);
+    const chatModel = getPointsModel(creds.chatModel) ? creds.chatModel : (activeModels[0] && activeModels[0].id) || '';
     if (!cfg.apiKey && !cfg.mockLlm) return { error: '平台模型服务暂未开通，请联系管理员' };
     const balance = u.points_balance || 0;
     if (balance < 1 && !cfg.mockLlm)
@@ -152,7 +153,7 @@ export function createApp() {
       userId: uid,
       balance,
       chatModel,
-      workerModel: POINTS_WORKER_MODEL,
+      workerModel: getWorkerModel(),
       llmOpts: { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl }, // 平台 Key，绝不暴露给前端
     };
   }
@@ -199,7 +200,7 @@ export function createApp() {
       // 积分系统：多用户模式可用；platform_ready 表示站长已配置平台 Key
       points_enabled: !!cfg.multiUser,
       platform_ready: !!cfg.apiKey,
-      points_models: cfg.multiUser ? POINTS_MODELS : [],
+      points_models: cfg.multiUser ? listPointsModels(true) : [],
     });
   });
 
