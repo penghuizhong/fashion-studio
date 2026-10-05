@@ -2913,10 +2913,32 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: relative;
 }
 .preset-card:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-lg);
+}
+/* v1.13: 收藏卡片的已领养角标 */
+.preset-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft, rgba(0, 0, 0, 0.06));
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+/* v1.13: 空状态 */
+.dex-empty {
+  text-align: center;
+  padding: 32px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
 }
 .preset-face {
   display: flex;
