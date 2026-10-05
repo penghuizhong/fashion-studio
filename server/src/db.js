@@ -188,6 +188,18 @@ CREATE TABLE IF NOT EXISTS sys_settings(
   value TEXT NOT NULL DEFAULT '',
   updated_at TEXT
 );
+
+-- v1.13: 用户收藏的 AI 生成角色卡（生成时自动保存）
+CREATE TABLE IF NOT EXISTS saved_cards(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  card_json TEXT NOT NULL,
+  prompt TEXT NOT NULL DEFAULT '',
+  adopted INTEGER NOT NULL DEFAULT 0,
+  character_id INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saved_cards_user ON saved_cards(user_id, created_at DESC);
 `;
 
 let _db = null;
