@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, formatFullTime } from '../api.js';
 import Icon from './icons.jsx';
+import MemoryFacts from './MemoryFacts.jsx';
 
 const TABS = [
   { id: 'chat', label: '对话', icon: 'chat' },
@@ -57,7 +58,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
   }, [characterId]);
 
   useEffect(() => {
-    if (tab === 'chat') return;
+    if (tab === 'chat' || tab === 'memory') return;
     setDraft(files[FILE_FIELD[tab]] || '');
     setDirty(false);
     let cancelled = false;
@@ -214,9 +215,12 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
               </div>
             </>
           )}
-          {tab !== 'chat' && (
-            <>
-              <textarea
+          {tab === 'memory' ? (
+            <MemoryFacts characterId={characterId} showToast={showToast} />
+          ) : (
+            tab !== 'chat' && (
+              <>
+                <textarea
                 className="md-editor"
                 value={draft}
                 onChange={(e) => {
@@ -245,6 +249,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                 ))}
               </div>
             </>
+          )
           )}
         </div>
       </div>

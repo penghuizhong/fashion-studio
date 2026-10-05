@@ -225,6 +225,11 @@ export const api = {
   applySuggestion: (id) => post(`/api/suggestions/${id}/apply`, {}),
   dismissSuggestion: (id) => post(`/api/suggestions/${id}/dismiss`, {}),
 
+  // v1.11 记忆事实列表
+  getFacts: (characterId, all = false) =>
+    get(`/api/characters/${characterId}/facts${all ? '?all=1' : ''}`),
+  deleteFact: (id) => del(`/api/facts/${id}`),
+
   listConversations: (characterId) => get(`/api/characters/${characterId}/conversations`),
   createConversation: (characterId, data = {}) => post(`/api/characters/${characterId}/conversations`, data),
   renameConversation: (id, title) => put(`/api/conversations/${id}`, { title }),

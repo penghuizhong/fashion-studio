@@ -1430,6 +1430,107 @@ textarea {
   box-shadow: var(--shadow);
 }
 
+/* v1.11 记忆事实列表 */
+.facts-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.facts-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.facts-loading,
+.facts-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.facts-empty-title {
+  font-size: 14px;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.facts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fact-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+.fact-main {
+  flex: 1;
+  min-width: 0;
+}
+.fact-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.fact-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.fact-imp {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.fact-imp.imp-5 {
+  background: rgba(255, 80, 80, 0.12);
+  color: #e5484d;
+}
+.fact-imp.imp-4 {
+  background: rgba(255, 150, 50, 0.12);
+  color: #d9822b;
+}
+.fact-imp.imp-3 {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.fact-imp.imp-low {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.fact-time {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.fact-del {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.fact-del:hover {
+  background: rgba(255, 80, 80, 0.1);
+  color: #e5484d;
+}
+.fact-del:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .version-meta {
   font-size: 12px;
   color: var(--text-secondary);
