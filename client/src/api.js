@@ -118,6 +118,12 @@ const post = (path, body) => request('POST', path, body);
 const put = (path, body) => request('PUT', path, body);
 const del = (path) => request('DELETE', path);
 
+// 密码重置（无需登录）
+const resetPassword = (data) => post('/api/auth/reset-password', data);
+// 查看 / 重生自己的密码重置码（需登录）
+const getRecoveryCode = () => get('/api/auth/recovery-code');
+const regenerateRecoveryCode = () => post('/api/auth/recovery-code/regenerate');
+
 /**
  * 发送聊天消息（SSE，fetch + reader 手工解析）。
  * onEvent(event, data)：event ∈ context | token | memory_updated | done | error
@@ -221,6 +227,10 @@ export const api = {
   getUserApiKey: () => get('/api/user/api-key'),
   saveUserApiKey: (data) => put('/api/user/api-key', data),
 
+  // 密码重置（无需登录）/ 重置码管理（需登录）
+  resetPassword,
+  getRecoveryCode,
+  regenerateRecoveryCode,
   // 积分系统（多用户模式）
   getPoints: () => get('/api/points'),
   setBillingMode: (mode) => put('/api/points/mode', { mode }),
