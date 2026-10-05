@@ -9,7 +9,14 @@ import { randomUUID } from 'node:crypto';
 import { getConfig, getVersion, assertMultiUserConfig } from './config.js';
 import { getDb } from './db.js';
 import { ah, apiErrorHandler } from './asyncHandler.js';
-import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers } from './llm.js';
+import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, generateCardJson } from './llm.js';
+import {
+  getPresetCards,
+  getPresetCard,
+  sanitizeCardInput,
+  isAdoptableCard,
+  CARD_CATEGORIES,
+} from './characterCards.js';
 import {
   sessionMiddleware,
   currentUserId,
@@ -92,6 +99,13 @@ export function createApp() {
     keyGenerator: (req) => req.userId || ipKeyGenerator(req.ip), // 多用户按登录用户，单用户按 IP
   });
   const modelsLimiter = rateLimit({ ...limiterOpts, windowMs: 60 * 1000, max: 10 }); // 模型列表：按 IP 10 次/分钟
+  // AI 生成角色卡：10 次/分钟/用户（防刷；生成是低频高价值调用）
+  const generateLimiter = rateLimit({
+    ...limiterOpts,
+    windowMs: 60 * 1000,
+    max: 10,
+    keyGenerator: (req) => req.userId || ipKeyGenerator(req.ip),
+  });
   // 写操作通用限流：POST/PUT/DELETE/PATCH 按用户（或 IP）60 次/分钟，防灌爆 SQLite；
   // 已有更严限流的路由（如聊天 30/分钟）不受影响——限流器叠加，取最严者
   const writeLimiter = rateLimit({
@@ -109,7 +123,8 @@ export function createApp() {
   app.use('/api', (req, res, next) => {
     if (!cfg.multiUser) return next();
     const p = req.path;
-    if (p.startsWith('/auth/') || p === '/config' || p === '/health') return next();
+    // 预设角色卡列表公开（未登录可浏览，用于拉新）；领养/生成仍需登录
+    if (p.startsWith('/auth/') || p === '/config' || p === '/health' || p === '/character-cards/presets') return next();
     if (!req.userId) return res.status(401).json({ error: '未登录，请先登录' });
     next();
   });
@@ -276,6 +291,142 @@ export function createApp() {
       res.status(502).json({ error: `拉取模型列表失败：${String((e && e.message) || e).slice(0, 200)}` });
     }
   }));
+
+  // ---------- 角色卡 ----------
+  // 预设卡列表（公开：未登录可浏览，用于拉新）
+  app.get('/api/character-cards/presets', (req, res) => {
+    res.json({ categories: CARD_CATEGORIES, cards: getPresetCards() });
+  });
+
+  // 一键领养：preset_id 或 card（二选一）→ 建角色 + 建对话 + 开场白作为首条消息
+  app.post(
+    '/api/character-cards/adopt',
+    ah(async (req, res) => {
+      const body = req.body || {};
+      let card = null;
+      if (body.preset_id) {
+        card = getPresetCard(String(body.preset_id));
+        if (!card) return res.status(404).json({ error: '预设角色卡不存在' });
+      } else if (body.card) {
+        card = sanitizeCardInput(body.card);
+        if (!isAdoptableCard(card)) return res.status(400).json({ error: '角色卡数据不完整' });
+      } else {
+        return res.status(400).json({ error: '缺少 preset_id 或 card' });
+      }
+      const uid = uidOf(req);
+      const t = now();
+      const charId = randomUUID();
+      const convId = randomUUID();
+      const title = `与${card.name}的相遇`;
+      db.transaction(() => {
+        db.prepare(
+          'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)'
+        ).run(
+          charId,
+          uid,
+          card.name,
+          card.avatar || '🤖',
+          card.soul_md,
+          DEFAULT_USER_MD,
+          DEFAULT_MEMORY_MD,
+          '',
+          0.8,
+          t,
+          t
+        );
+        db.prepare(
+          'INSERT INTO conversations(id, character_id, title, user_id, created_at, updated_at) VALUES(?,?,?,?,?,?)'
+        ).run(convId, charId, title, uid, t, t);
+        db.prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)').run(
+          convId,
+          'assistant',
+          card.greeting,
+          estimateTokens(card.greeting),
+          t
+        );
+      })();
+      res.status(201).json({
+        character: getChar(charId, req),
+        conversation: { id: convId, character_id: charId, title, created_at: t, updated_at: t },
+      });
+    })
+  );
+
+  // AI 生成角色卡：成功后按真实用量扣积分（积分模式），失败不扣
+  app.post(
+    '/api/character-cards/generate',
+    generateLimiter,
+    ah(async (req, res) => {
+      const desc = String((req.body && req.body.prompt) || '').trim();
+      if (!desc) return res.status(400).json({ error: '请先用一句话描述你想要的角色' });
+      if (desc.length > 500) return res.status(400).json({ error: '描述太长了，请控制在 500 字以内' });
+
+      const creds = llmCreds(req, cfg, requestApiKey);
+      const uid = uidOf(req);
+      let usePoints = false;
+      let model = '';
+      let apiKey = creds.apiKey;
+      let baseUrl = creds.baseUrl;
+
+      if (cfg.multiUser && uid) {
+        const u = db.prepare('SELECT billing_mode, points_balance FROM users WHERE id = ?').get(uid);
+        if (u && (u.billing_mode || 'points') === 'points') {
+          // 积分模式：请求模型必须在白名单内（默认最便宜）；用平台 Key
+          const requested = String((req.body && req.body.model) || '').trim();
+          model = getPointsModel(requested) ? requested : getWorkerModel();
+          if (!model) return res.status(503).json({ error: '平台暂无可用模型' });
+          if (!cfg.apiKey && !cfg.mockLlm) return res.status(503).json({ error: '平台模型服务暂未开通，请联系管理员' });
+          if (!cfg.mockLlm && (u.points_balance || 0) < 1)
+            return res.status(402).json({ error: '积分不足：请联系管理员充值，或在「API 设置」中切换为自带 Key 模式' });
+          usePoints = true;
+          apiKey = cfg.apiKey;
+          baseUrl = cfg.baseUrl;
+        }
+      }
+      if (!model) {
+        // 自带 Key 模式（或单用户）：用用户自己的 worker 模型，不扣平台积分
+        model = creds.workerModel || creds.chatModel;
+        if (!apiKey && !cfg.mockLlm) return res.status(401).json({ error: NO_KEY_MESSAGE });
+      }
+
+      const ac = new AbortController();
+      req.on('close', () => ac.abort());
+      let result;
+      try {
+        result = await generateCardJson({ desc, model, apiKey, baseUrl, signal: ac.signal });
+      } catch (e) {
+        return res.status(502).json({ error: String((e && e.message) || e).slice(0, 300) });
+      }
+
+      // 成功后扣费（积分模式且非 mock）；失败/解析错误不扣
+      let cost = null;
+      if (usePoints && !cfg.mockLlm) {
+        const usage = result.usage || {
+          input: estimateTokens(desc),
+          output: estimateTokens(JSON.stringify(result.card)),
+        };
+        const pts = calcPoints(model, usage);
+        let balance;
+        try {
+          balance = deductPoints(uid, pts, 'character_generate', null, null, {
+            tokensInput: usage.input,
+            tokensOutput: usage.output,
+            model,
+          });
+        } catch (e) {
+          return res.status(402).json({ error: '积分不足，本次生成不计费' });
+        }
+        cost = {
+          points: pts,
+          model,
+          tokens_input: usage.input,
+          tokens_output: usage.output,
+          balance,
+        };
+      }
+      res.json({ card: result.card, cost });
+    })
+  );
 
   // ---------- characters ----------
   app.get('/api/characters', (req, res) => {

@@ -321,3 +321,41 @@ messages: [
 });
 return (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content || '').trim();
 }
+
+// AI 生成角色卡：返回 { card, usage }；mock 模式返回固定示例卡
+export async function generateCardJson({ desc, model, apiKey, baseUrl, signal }) {
+  const cfg = getConfig();
+  if (cfg.mockLlm) {
+    const { parseGeneratedCard } = await import('./characterCards.js');
+    const mock = {
+      name: '测试猫娘',
+      avatar: '🐱',
+      tagline: '傲娇猫耳少女，深夜陪聊',
+      category: 'anime',
+      tags: ['猫耳', '傲娇'],
+      description: '一只住在旧书店阁楼的猫耳少女，白天睡觉，晚上出来陪你聊天。',
+      greeting: '（深夜，你推开旧书店的门，阁楼上传来一声慵懒的猫叫）喵……都这个点了还不睡？算了，反正我也睡不着，陪你说会儿话吧。先说好，不许摸耳朵！',
+      soul_md: '## 身份\n旧书店阁楼的猫耳少女，白天睡觉晚上活动。\n## 性格\n傲娇，嘴硬心软，喜欢被夸但不承认。\n## 说话风格\n慵懒，带点猫叫口癖，句子短。\n## 关系\n初次见面，保持距离，慢慢升温。',
+      example_dialogues: [
+        { user: '你好呀', assistant: '喵……你好。都这么晚了，找我有什么事？' },
+        { user: '睡不着', assistant: '哼，我就知道。那坐下吧，我给你讲个阁楼上的故事。' },
+      ],
+    };
+    return { card: parseGeneratedCard(JSON.stringify(mock)), usage: null };
+  }
+  const { buildGenerateMessages, parseGeneratedCard } = await import('./characterCards.js');
+  const messages = buildGenerateMessages(desc);
+  let lastErr = null;
+  // 解析失败自动重试一次（换 temperature），成功才计费
+  for (const temperature of [0.9, 0.7]) {
+    const { json, usage } = await postJson({ model, temperature, apiKey, baseUrl, signal, messages });
+    const text =
+      (json && json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
+    try {
+      return { card: parseGeneratedCard(text), usage };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(`角色卡生成失败：${(lastErr && lastErr.message) || '未知错误'}`);
+}
