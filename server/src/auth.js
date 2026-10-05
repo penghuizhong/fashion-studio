@@ -7,7 +7,13 @@ import { getConfig } from './config.js';
 import {
   SIGNUP_BONUS,
   POINTS_MODELS,
+  POINTS_PER_YUAN,
   REASON_LABELS,
+  INVITE_REWARD_INVITER,
+  INVITE_REWARD_INVITEE,
+  INVITE_CHAT_THRESHOLD,
+  genInviteCode,
+  getPointsModel,
   getBalance,
   getLedger,
   grantPoints,
@@ -217,14 +223,25 @@ export function mountAuthRoutes(app, authLimiter) {
     const hash = await bcrypt.hash(password, 10);
     const t = new Date().toISOString();
     const isFirst = db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0;
+    // 邀请码：注册时可带 inviteCode；同时生成自己的唯一邀请码
+    const inviteCode = String((req.body && req.body.inviteCode) || '').trim().toUpperCase();
+    let inviter = null;
+    if (inviteCode) {
+      inviter = db.prepare('SELECT id FROM users WHERE invite_code = ?').get(inviteCode);
+    }
+    let myCode = genInviteCode();
+    while (db.prepare('SELECT id FROM users WHERE invite_code = ?').get(myCode)) myCode = genInviteCode();
+    const bonus = SIGNUP_BONUS + (inviter ? INVITE_REWARD_INVITEE : 0);
     db.transaction(() => {
       db.prepare(
-        'INSERT INTO users(id, username, password_hash, created_at, points_balance, billing_mode, is_admin) VALUES(?,?,?,?,?,?,?)'
-      ).run(id, username, hash, t, SIGNUP_BONUS, 'points', isFirst ? 1 : 0);
+        'INSERT INTO users(id, username, password_hash, created_at, points_balance, billing_mode, is_admin, invite_code, invited_by) VALUES(?,?,?,?,?,?,?,?,?)'
+      ).run(id, username, hash, t, bonus, 'points', isFirst ? 1 : 0, myCode, inviter ? inviter.id : null);
       // 注册赠送积分（写流水）
-      db.prepare(
-        'INSERT INTO points_ledger(user_id, delta, balance_after, reason, created_at) VALUES(?,?,?,?,?)'
-      ).run(id, SIGNUP_BONUS, SIGNUP_BONUS, 'signup_bonus', t);
+      const ins = db.prepare(
+        'INSERT INTO points_ledger(user_id, delta, balance_after, reason, ref_id, created_at) VALUES(?,?,?,?,?,?)'
+      );
+      ins.run(id, SIGNUP_BONUS, SIGNUP_BONUS, 'signup_bonus', null, t);
+      if (inviter) ins.run(id, INVITE_REWARD_INVITEE, bonus, 'invite_bonus', inviter.id, t);
       // 首个注册用户：认领全库 user_id IS NULL 的老数据（只执行一次）
       if (isFirst) {
         db.prepare('UPDATE characters SET user_id = ? WHERE user_id IS NULL').run(id);
@@ -234,7 +251,7 @@ export function mountAuthRoutes(app, authLimiter) {
     })();
     db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now()); // 顺手清过期会话
     createSession(req, res, id);
-    res.status(201).json({ user: { id, username } });
+    res.status(201).json({ user: { id, username, inviteCode: myCode } });
   });
 
   // POST /api/auth/login
@@ -358,6 +375,134 @@ export function mountAuthRoutes(app, authLimiter) {
             'SELECT id, username, points_balance, billing_mode, created_at FROM users ORDER BY created_at DESC LIMIT 50'
           )
           .all();
+    res.json(rows);
+  });
+
+  // ---------- 邀请系统 ----------
+  // GET /api/invite：我的邀请码与邀请统计
+  app.get('/api/invite', needMulti, needLogin, (req, res) => {
+    const db = getDb();
+    const me = db.prepare('SELECT invite_code FROM users WHERE id = ?').get(req.uid);
+    const invited = db.prepare('SELECT COUNT(*) AS n FROM users WHERE invited_by = ?').get(req.uid).n;
+    const rewarded = db
+      .prepare("SELECT COUNT(*) AS n FROM points_ledger WHERE user_id = ? AND reason = 'invite_reward'")
+      .get(req.uid).n;
+    res.json({
+      code: (me && me.invite_code) || '',
+      invitedCount: invited,
+      rewardedCount: rewarded,
+      inviterReward: INVITE_REWARD_INVITER,
+      inviteeBonus: INVITE_REWARD_INVITEE,
+      chatThreshold: INVITE_CHAT_THRESHOLD,
+    });
+  });
+
+  // ---------- 用量统计（管理员） ----------
+  // GET /api/admin/stats/overview：总览
+  app.get('/api/admin/stats/overview', needMulti, needLogin, needAdmin, (req, res) => {
+    const db = getDb();
+    const users = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+    const agg = db
+      .prepare(
+        `SELECT
+           COALESCE(SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0) AS granted,
+           COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0) AS consumed
+         FROM points_ledger`
+      )
+      .get();
+    const balance = db.prepare('SELECT COALESCE(SUM(points_balance), 0) AS s FROM users').get().s;
+    // 平台 $ 花费估算：按白名单单价反推（points → 元 → USD，汇率 7.2，仅供参考）
+    const tok = db
+      .prepare(
+        `SELECT model, COALESCE(SUM(tokens_input),0) AS ti, COALESCE(SUM(tokens_output),0) AS too
+         FROM points_ledger WHERE delta < 0 AND tokens_input IS NOT NULL GROUP BY model`
+      )
+      .all();
+    let estUsd = 0;
+    for (const r of tok) {
+      const m = getPointsModel(r.model);
+      if (m) {
+        estUsd += ((r.ti / 1e6) * m.inputPer1M + (r.too / 1e6) * m.outputPer1M) / POINTS_PER_YUAN / 7.2;
+      }
+    }
+    const today = db
+      .prepare(
+        `SELECT COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0) AS consumed,
+                COUNT(DISTINCT user_id) AS activeUsers
+         FROM points_ledger WHERE substr(created_at, 1, 10) = date('now')`
+      )
+      .get();
+    res.json({
+      totalUsers: users,
+      totalGranted: agg.granted,
+      totalConsumed: agg.consumed,
+      totalBalance: balance,
+      estCostUsd: Math.round(estUsd * 100) / 100,
+      todayConsumed: today.consumed,
+      todayActiveUsers: today.activeUsers,
+    });
+  });
+
+  // GET /api/admin/stats/daily?days=30：每日趋势
+  app.get('/api/admin/stats/daily', needMulti, needLogin, needAdmin, (req, res) => {
+    const days = Math.min(Math.max(parseInt(req.query.days || '30', 10) || 30, 1), 90);
+    const db = getDb();
+    const rows = db
+      .prepare(
+        `SELECT substr(created_at, 1, 10) AS day,
+                COALESCE(SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0) AS granted,
+                COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0) AS consumed
+         FROM points_ledger WHERE created_at >= date('now', ?) GROUP BY day ORDER BY day ASC`
+      )
+      .all(`-${days} days`);
+    const users = db
+      .prepare(
+        `SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM users
+         WHERE created_at >= date('now', ?) GROUP BY day`
+      )
+      .all(`-${days} days`);
+    const map = new Map();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+      map.set(d, { day: d, granted: 0, consumed: 0, newUsers: 0 });
+    }
+    for (const r of rows) {
+      if (map.has(r.day)) Object.assign(map.get(r.day), { granted: r.granted, consumed: r.consumed });
+    }
+    for (const r of users) {
+      if (map.has(r.day)) map.get(r.day).newUsers = r.n;
+    }
+    res.json([...map.values()]);
+  });
+
+  // GET /api/admin/stats/models：模型用量分布
+  app.get('/api/admin/stats/models', needMulti, needLogin, needAdmin, (req, res) => {
+    const rows = getDb()
+      .prepare(
+        `SELECT model, COUNT(*) AS calls,
+                COALESCE(SUM(tokens_input),0) AS inputTokens,
+                COALESCE(SUM(tokens_output),0) AS outputTokens,
+                COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END),0) AS points
+         FROM points_ledger WHERE delta < 0 AND model IS NOT NULL
+         GROUP BY model ORDER BY points DESC`
+      )
+      .all();
+    res.json(rows);
+  });
+
+  // GET /api/admin/stats/top-users：消费排行
+  app.get('/api/admin/stats/top-users', needMulti, needLogin, needAdmin, (req, res) => {
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10) || 10, 1), 50);
+    const rows = getDb()
+      .prepare(
+        `SELECT u.username,
+                COALESCE(SUM(CASE WHEN l.delta < 0 THEN -l.delta ELSE 0 END),0) AS consumed,
+                COALESCE(SUM(CASE WHEN l.delta > 0 THEN l.delta ELSE 0 END),0) AS granted,
+                u.points_balance AS balance
+         FROM users u LEFT JOIN points_ledger l ON l.user_id = u.id
+         GROUP BY u.id ORDER BY consumed DESC LIMIT ?`
+      )
+      .all(limit);
     res.json(rows);
   });
 }
