@@ -91,12 +91,12 @@ export default function AuthPage({ theme, onToggleTheme }) {
       setError('');
       setBusy(true);
       try {
-        await api.resetPassword({
+        const ret = await api.resetPassword({
           username: u,
           recovery_code: recoveryCodeInput.trim(),
           new_password: password,
         });
-        setForgotDone(true);
+        setForgotDone((ret && ret.recovery_code) || true);
       } catch (err) {
         setError((err && err.message) || '重置失败，请稍后再试');
       } finally {
@@ -205,7 +205,12 @@ export default function AuthPage({ theme, onToggleTheme }) {
         )}
         {forgotDone ? (
           <>
-            <p className="auth-tip" style={{ margin: '8px 0 18px' }}>密码已重置，请用新密码登录。</p>
+            <p className="auth-tip" style={{ margin: '8px 0 6px' }}>密码已重置，旧重置码已作废，请保存新的重置码：</p>
+            {typeof forgotDone === 'string' && (
+              <div className="recovery-show">
+                <code>{forgotDone}</code>
+              </div>
+            )}
             <button type="button" className="btn primary auth-submit" onClick={() => switchMode('login')}>
               去登录
             </button>
@@ -229,10 +234,10 @@ export default function AuthPage({ theme, onToggleTheme }) {
                 <input
                   value={recoveryCodeInput}
                   onChange={(e) => setRecoveryCodeInput(e.target.value.toUpperCase())}
-                  placeholder="注册时发放的 8 位重置码"
+                  placeholder="注册时发放的 12 位重置码"
                   spellCheck={false}
                   autoComplete="off"
-                  maxLength={8}
+                  maxLength={12}
                   style={{ textTransform: 'uppercase' }}
                 />
               </label>

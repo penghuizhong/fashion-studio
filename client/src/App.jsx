@@ -10,7 +10,7 @@ import { api } from './api.js';
 // view = { type: 'empty' } | { type: 'chat', characterId, conversationId }
 
 export default function App() {
-  const { multiUser, user, authReady } = useAuth();
+  const { multiUser, user, authReady, logout } = useAuth();
   const [config, setConfig] = useState(null);
   const [characters, setCharacters] = useState([]);
   const [view, setView] = useState({ type: 'empty' });
@@ -91,11 +91,30 @@ export default function App() {
     }
   }, [authReady, multiUser, user]);
 
+  // 401 会话过期：后端 401 时 api.js 广播事件，这里登出并回登录页（仅已登录态才响应，避免启动探测触发）
+  // （挂在 showToast 定义之后，避免 TDZ）
+  const userRef = useRef(user);
+  userRef.current = user;
+  const unauthorizedHandlerInstalled = useRef(false);
+
   const showToast = useCallback((text, ms = 2500) => {
     setToast({ text, id: Date.now() });
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), ms);
   }, []);
+
+  // 401 会话过期监听（挂在 showToast 定义之后）
+  useEffect(() => {
+    if (unauthorizedHandlerInstalled.current) return;
+    unauthorizedHandlerInstalled.current = true;
+    const onUnauthorized = () => {
+      if (!userRef.current) return;
+      logout().catch(() => {});
+      showToast('登录已过期，请重新登录', 2600);
+    };
+    window.addEventListener('soulchat-unauthorized', onUnauthorized);
+    return () => window.removeEventListener('soulchat-unauthorized', onUnauthorized);
+  }, [logout, showToast]);
 
   const bumpConversations = useCallback(() => setConvRefresh((k) => k + 1), []);
 

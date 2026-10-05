@@ -518,7 +518,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                       <div className="points-balance-num">
                         {pointsInfo ? pointsInfo.balance : '…'} <span>积分</span>
                       </div>
-                      <div className="key-desc small">1 元 = 100 积分 · 注册赠送 {pointsInfo ? pointsInfo.signup_bonus : 500} 积分</div>
+                      <div className="key-desc small">1 元 = 100 积分 · 首次聊天后赠送 {pointsInfo ? pointsInfo.signup_bonus : 500} 积分（防刷号）</div>
                     </div>
                     <button className="btn secondary" onClick={refreshPoints} disabled={loading}>刷新</button>
                   </div>

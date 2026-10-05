@@ -1,7 +1,7 @@
 // 多用户模式的登录/注册会话：会话靠后端 HttpOnly cookie，前端只持有 user 状态。
 // 启动时先读 /api/config：multi_user 为 true 才走 /api/auth/me 检查登录态。
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { setMultiUserMode } from './api.js';
+import { setMultiUserMode, clearApiConfig } from './api.js';
 
 const AuthContext = createContext(null);
 
@@ -104,6 +104,12 @@ export function AuthProvider({ children }) {
       await authPost('/api/auth/logout');
     } catch {
       /* 忽略登出失败，本地照样清状态 */
+    }
+    // 登出清掉内存中的 Key 与本地 API 配置残留，防下一个使用者沿用
+    try {
+      clearApiConfig();
+    } catch {
+      /* 忽略 */
     }
     setUser(null);
   }, []);

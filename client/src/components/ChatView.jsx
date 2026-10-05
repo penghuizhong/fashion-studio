@@ -184,7 +184,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
       );
     } catch (err) {
       if (err.name !== 'AbortError') {
-        setErrorMsg(err.message || '网络错误');
+        if (err.status === 429) setErrorMsg('请求太频繁了，休息几秒再试');
+        else setErrorMsg(err.message || '网络错误');
       }
     } finally {
       setSending(false);

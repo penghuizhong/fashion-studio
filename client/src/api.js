@@ -23,24 +23,36 @@ export function isMultiUserMode() {
 }
 
 export function getApiConfig() {
+  // Key 只放内存（防 XSS 持久化窃取，刷新页面后需重新填写）；地址/模型等非敏感项仍存 localStorage
   try {
     return {
       baseUrl: (localStorage.getItem(API_BASE_URL_KEY) || '').trim(),
-      key: (localStorage.getItem(API_KEY_KEY) || '').trim(),
+      key: memApiKey,
       model: (localStorage.getItem(API_MODEL_KEY) || '').trim(),
       workerModel: (localStorage.getItem(API_WORKER_MODEL_KEY) || '').trim(),
     };
   } catch {
-    return { baseUrl: '', key: '', model: '', workerModel: '' };
+    return { baseUrl: '', key: memApiKey, model: '', workerModel: '' };
   }
 }
 
+// Key 仅存内存；兼容老版本：首次加载时把 localStorage 里的旧 Key 迁入内存并删除
+let memApiKey = '';
+try {
+  const legacy = localStorage.getItem(API_KEY_KEY);
+  if (legacy) {
+    memApiKey = legacy.trim();
+    localStorage.removeItem(API_KEY_KEY);
+  }
+} catch {
+  /* 忽略 */
+}
+
 export function setApiConfig({ baseUrl, key, model, workerModel }) {
+  if (typeof key === 'string') memApiKey = key.trim();
   try {
     if (baseUrl) localStorage.setItem(API_BASE_URL_KEY, baseUrl);
     else localStorage.removeItem(API_BASE_URL_KEY);
-    if (key) localStorage.setItem(API_KEY_KEY, key);
-    else localStorage.removeItem(API_KEY_KEY);
     if (model) localStorage.setItem(API_MODEL_KEY, model);
     else localStorage.removeItem(API_MODEL_KEY);
     if (workerModel) localStorage.setItem(API_WORKER_MODEL_KEY, workerModel);
@@ -70,22 +82,42 @@ function authHeaders() {
 }
 
 // 用给定的 key / 地址动态拉取可用模型列表（OpenAI 兼容的 /models 接口）
+// 统一 HTTP 错误：5xx 对外脱敏（不展示后端堆栈/SQL）；错误对象带 .status 供调用方分支
+async function httpError(res, fallback) {
+  let msg;
+  if (res.status >= 500) {
+    msg = '服务器开小差了，请稍后再试';
+  } else {
+    msg = fallback || `请求失败 (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data && data.message) msg = data.message;
+      else if (data && data.error) msg = data.error;
+    } catch {
+      /* 忽略解析错误 */
+    }
+  }
+  const err = new Error(msg);
+  err.status = res.status;
+  // 401：会话过期/失效，通知 App 跳回登录页（auth 相关接口自身不触发，避免循环）
+  if (res.status === 401) {
+    try {
+      window.dispatchEvent(new CustomEvent('soulchat-unauthorized'));
+    } catch {
+      /* 忽略 */
+    }
+  }
+  return err;
+}
+
+// 用给定的 key / 地址动态拉取可用模型列表（OpenAI 兼容的 /models 接口）
 // 多用户模式下 key 可留空：不发 key 头，后端用该用户服务器端保存的 key。
 export async function fetchModels(baseUrl, key) {
   const headers = {};
   if (key) headers['X-OpenRouter-Key'] = key;
   if (baseUrl) headers['X-Api-Base-Url'] = baseUrl;
   const res = await fetch('/api/models', { headers, credentials: 'same-origin' });
-  if (!res.ok) {
-    let msg = `拉取失败 (${res.status})`;
-    try {
-      const data = await res.json();
-      if (data && data.error) msg = data.error;
-    } catch {
-      /* 忽略 */
-    }
-    throw new Error(msg);
-  }
+  if (!res.ok) throw await httpError(res, '拉取失败');
   const data = await res.json();
   return Array.isArray(data.models) ? data.models : [];
 }
@@ -97,17 +129,7 @@ async function request(method, path, body) {
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(path, opts);
-  if (!res.ok) {
-    let msg = `请求失败 (${res.status})`;
-    try {
-      const data = await res.json();
-      if (data && data.message) msg = data.message;
-      else if (data && data.error) msg = data.error;
-    } catch {
-      /* 忽略解析错误 */
-    }
-    throw new Error(msg);
-  }
+  if (!res.ok) throw await httpError(res);
   if (res.status === 204) return null;
   const text = await res.text();
   return text ? JSON.parse(text) : null;
@@ -137,17 +159,7 @@ export async function sendMessage(conversationId, content, onEvent, signal) {
     body: JSON.stringify({ content }),
     signal,
   });
-  if (!res.ok) {
-    let msg = `发送失败 (${res.status})`;
-    try {
-      const data = await res.json();
-      if (data && data.message) msg = data.message;
-      else if (data && data.error) msg = data.error;
-    } catch {
-      /* 忽略 */
-    }
-    throw new Error(msg);
-  }
+  if (!res.ok) throw await httpError(res, '发送失败');
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
