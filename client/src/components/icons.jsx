@@ -76,6 +76,12 @@ const PATHS = {
   ),
   book: <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z" />,
   menu: <path d="M3 6h18M3 12h18M3 18h18" />,
+  compass: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+    </>
+  ),
 };
 
 export default function Icon({ name, size = 20, className = '' }) {
