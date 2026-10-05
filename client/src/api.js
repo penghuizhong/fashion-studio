@@ -264,4 +264,16 @@ export const api = {
   getPresetCards: () => get('/api/character-cards/presets'),
   adoptCharacterCard: (data) => post('/api/character-cards/adopt', data),
   generateCharacterCard: (data) => post('/api/character-cards/generate', data),
+  // 角色广场 UGC
+  listSharedCards: (params = {}) => get(`/api/character-cards/shared?${new URLSearchParams(params)}`),
+  publishCharacterCard: (data) => post('/api/character-cards/publish', data),
+  myPublishedCards: () => get('/api/character-cards/my-published'),
+  deleteSharedCard: (id) => del(`/api/character-cards/shared/${id}`),
+  adoptSharedCard: (id) => post(`/api/character-cards/shared/${id}/adopt`),
+  likeSharedCard: (id) => post(`/api/character-cards/shared/${id}/like`),
+  reportSharedCard: (id, reason) => post(`/api/character-cards/shared/${id}/report`, { reason }),
+  getCollection: () => get('/api/character-cards/collection'),
+  // 广场审核（管理员）
+  adminSharedCards: (status = 'pending') => get(`/api/admin/shared-cards?status=${encodeURIComponent(status)}`),
+  adminReviewSharedCard: (id, approve, reason) => post(`/api/admin/shared-cards/${id}/review`, { approve, reason }),
 };

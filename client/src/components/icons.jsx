@@ -82,6 +82,7 @@ const PATHS = {
       <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
     </>
   ),
+  shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
 };
 
 export default function Icon({ name, size = 20, className = '' }) {
