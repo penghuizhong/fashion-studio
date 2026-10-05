@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { getDb } from './db.js';
+import { getDb, getSetting, setSetting } from './db.js';
 import { getConfig } from './config.js';
 import { assertPublicHttpsUrl } from './llm.js';
 import { ah } from './asyncHandler.js';
@@ -487,6 +487,33 @@ export function mountAuthRoutes(app, authLimiter) {
     const r = getDb().prepare('DELETE FROM points_models WHERE id = ?').run(id);
     if (!r.changes) return res.status(404).json({ error: '模型不存在' });
     res.json({ ok: true });
+  });
+
+  // v1.12 模型配置：GET /api/admin/settings → { worker_model, chat_default_model }
+  // worker_model：后台模型（群聊导演/记忆/摘要共用），'' = 自动选最便宜
+  // chat_default_model：聊天默认模型，'' = 自动选最便宜
+  app.get('/api/admin/settings', needMulti, needLogin, needAdmin, (req, res) => {
+    res.json({
+      worker_model: getSetting('worker_model', ''),
+      chat_default_model: getSetting('chat_default_model', ''),
+    });
+  });
+
+  // v1.12 模型配置：PUT /api/admin/settings { worker_model?, chat_default_model? }
+  // 值必须为 '' 或已启用的积分模型 model_id
+  app.put('/api/admin/settings', needMulti, needLogin, needAdmin, (req, res) => {
+    const b = req.body || {};
+    const out = {};
+    for (const key of ['worker_model', 'chat_default_model']) {
+      if (b[key] === undefined) continue;
+      const v = String(b[key] || '').trim();
+      if (v && !getPointsModel(v)) {
+        return res.status(400).json({ error: `模型 ${v} 不存在或未启用` });
+      }
+      setSetting(key, v);
+      out[key] = v;
+    }
+    res.json({ ok: true, ...out });
   });
 
   // GET /api/admin/users：管理员查看用户列表（q 可选，按用户名模糊搜）

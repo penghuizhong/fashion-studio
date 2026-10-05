@@ -39,6 +39,7 @@ import {
 import {
   listPointsModels,
   getWorkerModel,
+  getChatDefaultModel,
   getPointsModel,
   calcPoints,
   deductPoints,
@@ -181,7 +182,9 @@ export function createApp() {
     if (!u || (u.billing_mode || 'points') !== 'points') return base;
     // 积分模式：模型必须在白名单（服务端强制，前端传什么都没用），后台固定最便宜
     const activeModels = listPointsModels(true);
-    const chatModel = getPointsModel(creds.chatModel) ? creds.chatModel : (activeModels[0] && activeModels[0].id) || '';
+    const chatModel = getPointsModel(creds.chatModel)
+      ? creds.chatModel
+      : getChatDefaultModel() || (activeModels[0] && activeModels[0].id) || '';
     if (!cfg.apiKey && !cfg.mockLlm) return { error: '平台模型服务暂未开通，请联系管理员' };
     const balance = u.points_balance || 0;
     // 新用户首聊放行：0 余额但未领过注册奖励时允许聊，聊完即发奖励再扣本轮费用（防刷号）
@@ -1001,6 +1004,22 @@ export function createApp() {
          WHERE m.conversation_id = ? ORDER BY m.id ASC LIMIT ?`
       )
       .all(conv.id, limit);
+    res.json(rows);
+  });
+
+  // v1.12 记忆写入事件：前端在 done 后轮询，拿到新事件即 toast"记住了"
+  app.get('/api/conversations/:id/memory-events', (req, res) => {
+    const conv = getConv(req.params.id, req);
+    if (!conv) return conv404(res);
+    const since = String(req.query.since || '1970-01-01T00:00:00.000Z');
+    const rows = db
+      .prepare(
+        `SELECT e.id, e.character_id, e.created_at, e.facts_added, e.user_md_changed, c.name AS character_name
+         FROM memory_events e LEFT JOIN characters c ON c.id = e.character_id
+         WHERE e.conversation_id = ? AND e.created_at > ?
+         ORDER BY e.id ASC LIMIT 20`
+      )
+      .all(conv.id, since);
     res.json(rows);
   });
 
