@@ -633,4 +633,48 @@ export function mountAuthRoutes(app, authLimiter) {
       .all(limit);
     res.json(rows);
   });
+
+  // ---------- 角色广场审核 ----------
+  // GET /api/admin/shared-cards?status=pending：待审列表（被举报多的排前面）
+  app.get('/api/admin/shared-cards', needMulti, needLogin, needAdmin, (req, res) => {
+    const status = ['pending', 'approved', 'rejected'].includes(req.query.status) ? req.query.status : 'pending';
+    const rows = getDb()
+      .prepare(
+        `SELECT s.id, s.card_json, s.status, s.reject_reason, s.adopt_count, s.like_count,
+                s.report_count, s.created_at, s.reviewed_at, u.username AS author_name
+         FROM shared_cards s LEFT JOIN users u ON u.id = s.author_id
+         WHERE s.status = ? ORDER BY s.report_count DESC, s.created_at ASC LIMIT 100`
+      )
+      .all(status);
+    res.json(
+      rows.map((r) => ({
+        id: r.id,
+        author_name: r.author_name || '(单用户)',
+        card: JSON.parse(r.card_json),
+        status: r.status,
+        reject_reason: r.reject_reason,
+        adopt_count: r.adopt_count,
+        like_count: r.like_count,
+        report_count: r.report_count,
+        created_at: r.created_at,
+        reviewed_at: r.reviewed_at,
+      }))
+    );
+  });
+
+  // POST /api/admin/shared-cards/:id/review：{ approve: bool, reason? }
+  app.post('/api/admin/shared-cards/:id/review', needMulti, needLogin, needAdmin, (req, res) => {
+    const db = getDb();
+    const r = db.prepare('SELECT * FROM shared_cards WHERE id = ?').get(req.params.id);
+    if (!r) return res.status(404).json({ error: '投稿不存在' });
+    const approve = !!(req.body && req.body.approve);
+    const reason = String((req.body && req.body.reason) || '').trim().slice(0, 200);
+    const t = new Date().toISOString();
+    if (approve) {
+      db.prepare("UPDATE shared_cards SET status = 'approved', reject_reason = '', report_count = 0, reviewed_at = ? WHERE id = ?").run(t, r.id);
+    } else {
+      db.prepare("UPDATE shared_cards SET status = 'rejected', reject_reason = ?, reviewed_at = ? WHERE id = ?").run(reason || '不符合上架规范', t, r.id);
+    }
+    res.json({ ok: true, status: approve ? 'approved' : 'rejected' });
+  });
 }

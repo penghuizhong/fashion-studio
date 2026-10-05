@@ -15,6 +15,8 @@ import {
   getPresetCard,
   sanitizeCardInput,
   isAdoptableCard,
+  validateSharedCard,
+  buildPublishDraft,
   CARD_CATEGORIES,
 } from './characterCards.js';
 import {
@@ -42,6 +44,8 @@ import {
   deductPoints,
   maybeInviteReward,
   maybeSignupBonus,
+  maybeCollectionReward,
+  COLLECTION_REWARD,
   hasSignupBonus,
 } from './points.js';
 
@@ -123,8 +127,8 @@ export function createApp() {
   app.use('/api', (req, res, next) => {
     if (!cfg.multiUser) return next();
     const p = req.path;
-    // 预设角色卡列表公开（未登录可浏览，用于拉新）；领养/生成仍需登录
-    if (p.startsWith('/auth/') || p === '/config' || p === '/health' || p === '/character-cards/presets') return next();
+    // 预设角色卡 / 广场列表公开（未登录可浏览，用于拉新）；领养/生成/发布仍需登录
+    if (p.startsWith('/auth/') || p === '/config' || p === '/health' || p === '/character-cards/presets' || p === '/character-cards/shared') return next();
     if (!req.userId) return res.status(401).json({ error: '未登录，请先登录' });
     next();
   });
@@ -299,55 +303,310 @@ export function createApp() {
   });
 
   // 一键领养：preset_id 或 card（二选一）→ 建角色 + 建对话 + 开场白作为首条消息
+  // card_key 用于图鉴记录（preset:<id> / shared:<id> / gen），rewardInfo 回传集齐奖励
+  function adoptCardInternal(card, req, cardKey) {
+    const uid = uidOf(req);
+    const collUid = uid || 'local'; // 单用户模式用固定 key，保证图鉴唯一性
+    const t = now();
+    const charId = randomUUID();
+    const convId = randomUUID();
+    const title = `与${card.name}的相遇`;
+    let reward = 0;
+    db.transaction(() => {
+      db.prepare(
+        'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)'
+      ).run(
+        charId,
+        uid,
+        card.name,
+        card.avatar || '🤖',
+        card.soul_md,
+        DEFAULT_USER_MD,
+        DEFAULT_MEMORY_MD,
+        '',
+        0.8,
+        t,
+        t
+      );
+      db.prepare(
+        'INSERT INTO conversations(id, character_id, title, user_id, created_at, updated_at) VALUES(?,?,?,?,?,?)'
+      ).run(convId, charId, title, uid, t, t);
+      db.prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)').run(
+        convId,
+        'assistant',
+        card.greeting,
+        estimateTokens(card.greeting),
+        t
+      );
+      // 图鉴记录（幂等）
+      if (cardKey) {
+        db.prepare('INSERT OR IGNORE INTO user_collection(user_id, card_key, adopted_at) VALUES(?,?,?)').run(
+          collUid,
+          cardKey,
+          t
+        );
+      }
+    })();
+    // 集齐官方卡奖励（多用户模式，幂等；失败不影响领养）
+    try {
+      if (uid && cardKey && cardKey.startsWith('preset:')) reward = maybeCollectionReward(uid, getPresetCards().length);
+    } catch (e) {
+      console.warn('[points] 集卡奖励检查失败:', e.message);
+    }
+    return {
+      character: getChar(charId, req),
+      conversation: { id: convId, character_id: charId, title, created_at: t, updated_at: t },
+      collection_reward: reward,
+    };
+  }
+
   app.post(
     '/api/character-cards/adopt',
     ah(async (req, res) => {
       const body = req.body || {};
       let card = null;
+      let cardKey = null;
       if (body.preset_id) {
-        card = getPresetCard(String(body.preset_id));
-        if (!card) return res.status(404).json({ error: '预设角色卡不存在' });
+        const preset = getPresetCard(String(body.preset_id));
+        if (!preset) return res.status(404).json({ error: '预设角色卡不存在' });
+        card = preset;
+        cardKey = `preset:${preset.id}`;
       } else if (body.card) {
         card = sanitizeCardInput(body.card);
         if (!isAdoptableCard(card)) return res.status(400).json({ error: '角色卡数据不完整' });
+        cardKey = 'gen'; // AI 生成/自定义卡：记一条通用收藏，不计入官方收集进度
       } else {
         return res.status(400).json({ error: '缺少 preset_id 或 card' });
       }
+      res.status(201).json(adoptCardInternal(card, req, cardKey));
+    })
+  );
+
+  // ---------- 角色广场 UGC ----------
+  // 广场列表（公开：未登录可浏览；仅 approved）
+  app.get(
+    '/api/character-cards/shared',
+    ah(async (req, res) => {
+      const sort = req.query.sort === 'new' ? 'new' : 'hot';
+      const q = String(req.query.q || '').trim().toLowerCase();
+      const limit = Math.min(parseInt(req.query.limit || '30', 10) || 30, 100);
+      const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
+      const orderBy = sort === 'new' ? 's.created_at DESC' : 's.adopt_count DESC, s.like_count DESC';
       const uid = uidOf(req);
+      const collUid = uid || 'local';
+      let rows = db
+        .prepare(
+          `SELECT s.*, u.username AS author_name,
+             CASE WHEN l.user_id IS NULL THEN 0 ELSE 1 END AS liked,
+             CASE WHEN c.card_key IS NULL THEN 0 ELSE 1 END AS adopted
+           FROM shared_cards s
+           LEFT JOIN users u ON u.id = s.author_id
+           LEFT JOIN card_likes l ON l.shared_card_id = s.id AND l.user_id = ?
+           LEFT JOIN user_collection c ON c.card_key = ('shared:' || s.id) AND c.user_id = ?
+           WHERE s.status = 'approved'
+           ORDER BY ${orderBy} LIMIT ? OFFSET ?`
+        )
+        .all(collUid, collUid, limit, offset);
+      if (q) {
+        rows = rows.filter((r) => {
+          const card = JSON.parse(r.card_json);
+          const hay = `${card.name} ${card.tagline || ''} ${(card.tags || []).join(' ')} ${card.description || ''}`.toLowerCase();
+          return hay.includes(q);
+        });
+      }
+      res.json(
+        rows.map((r) => ({
+          id: r.id,
+          author_name: r.author_name || '神秘作者',
+          card: JSON.parse(r.card_json),
+          adopt_count: r.adopt_count,
+          like_count: r.like_count,
+          liked: !!r.liked,
+          adopted: !!r.adopted,
+          created_at: r.created_at,
+        }))
+      );
+    })
+  );
+
+  // 发布角色到广场：从我的一只角色快照建卡 → pending 待审核
+  app.post(
+    '/api/character-cards/publish',
+    ah(async (req, res) => {
+      const uid = uidOf(req);
+      const body = req.body || {};
+      const char = getChar(body.character_id, req);
+      if (!char) return res.status(404).json({ error: '角色不存在' });
+      // 每人最多 10 条待审核，避免灌水
+      const pending = db
+        .prepare("SELECT COUNT(*) AS n FROM shared_cards WHERE author_id = ? AND status = 'pending'")
+        .get(uid || 'local').n;
+      if (pending >= 10) return res.status(429).json({ error: '待审核投稿已达 10 条上限，请等待审核' });
+      // 开场白：前端可传 greeting；不传则取该角色最近一条 AI 回复；都没有则要求前端填写
+      const lastAsst = db
+        .prepare(
+          `SELECT m.content FROM messages m JOIN conversations c ON c.id = m.conversation_id
+           WHERE c.character_id = ? AND m.role = 'assistant' ORDER BY m.id DESC LIMIT 1`
+        )
+        .get(char.id);
+      const draft = buildPublishDraft(char, lastAsst ? lastAsst.content : '');
+      draft.tagline = String(body.tagline || '').trim();
+      draft.description = String(body.description || '').trim();
+      const bodyGreeting = String(body.greeting || '').trim();
+      if (bodyGreeting) draft.greeting = bodyGreeting;
+      if (body.category && CARD_CATEGORIES[body.category]) draft.category = body.category;
+      if (Array.isArray(body.tags)) draft.tags = body.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 6);
+      const v = validateSharedCard(draft);
+      if (!v.ok) return res.status(400).json({ error: v.error });
+      const id = randomUUID();
       const t = now();
-      const charId = randomUUID();
-      const convId = randomUUID();
-      const title = `与${card.name}的相遇`;
-      db.transaction(() => {
-        db.prepare(
-          'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)'
-        ).run(
-          charId,
-          uid,
-          card.name,
-          card.avatar || '🤖',
-          card.soul_md,
-          DEFAULT_USER_MD,
-          DEFAULT_MEMORY_MD,
-          '',
-          0.8,
-          t,
-          t
-        );
-        db.prepare(
-          'INSERT INTO conversations(id, character_id, title, user_id, created_at, updated_at) VALUES(?,?,?,?,?,?)'
-        ).run(convId, charId, title, uid, t, t);
-        db.prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)').run(
-          convId,
-          'assistant',
-          card.greeting,
-          estimateTokens(card.greeting),
-          t
-        );
-      })();
+      // 单用户模式是私有部署，发布直接上架；多用户模式进待审核
+      const cfg = getConfig();
+      const status = cfg.multiUser ? 'pending' : 'approved';
+      db.prepare(
+        'INSERT INTO shared_cards(id, author_id, card_json, status, created_at) VALUES(?,?,?,?,?)'
+      ).run(id, uid || 'local', JSON.stringify(v.card), status, t);
       res.status(201).json({
-        character: getChar(charId, req),
-        conversation: { id: convId, character_id: charId, title, created_at: t, updated_at: t },
+        id,
+        status,
+        message: status === 'approved' ? '已上架广场' : '已提交，审核通过后上架广场',
+      });
+    })
+  );
+
+  // 我的投稿（含状态）
+  app.get('/api/character-cards/my-published', (req, res) => {
+    const uid = uidOf(req) || 'local';
+    const rows = db
+      .prepare(
+        'SELECT id, card_json, status, reject_reason, adopt_count, like_count, created_at, reviewed_at FROM shared_cards WHERE author_id = ? ORDER BY created_at DESC'
+      )
+      .all(uid);
+    res.json(
+      rows.map((r) => ({
+        id: r.id,
+        card: JSON.parse(r.card_json),
+        status: r.status,
+        reject_reason: r.reject_reason,
+        adopt_count: r.adopt_count,
+        like_count: r.like_count,
+        created_at: r.created_at,
+        reviewed_at: r.reviewed_at,
+      }))
+    );
+  });
+
+  // 删除自己的投稿（作者本人；管理员走审核打回）
+  app.delete(
+    '/api/character-cards/shared/:id',
+    ah(async (req, res) => {
+      const uid = uidOf(req) || 'local';
+      const r = db.prepare('SELECT * FROM shared_cards WHERE id = ? AND author_id = ?').get(req.params.id, uid);
+      if (!r) return res.status(404).json({ error: '投稿不存在' });
+      db.transaction(() => {
+        db.prepare('DELETE FROM card_likes WHERE shared_card_id = ?').run(r.id);
+        db.prepare('DELETE FROM shared_cards WHERE id = ?').run(r.id);
+      })();
+      res.json({ ok: true });
+    })
+  );
+
+  // 领养广场卡（仅 approved）
+  app.post(
+    '/api/character-cards/shared/:id/adopt',
+    ah(async (req, res) => {
+      const r = db.prepare("SELECT * FROM shared_cards WHERE id = ? AND status = 'approved'").get(req.params.id);
+      if (!r) return res.status(404).json({ error: '该角色卡不存在或未上架' });
+      const card = sanitizeCardInput(JSON.parse(r.card_json));
+      db.prepare('UPDATE shared_cards SET adopt_count = adopt_count + 1 WHERE id = ?').run(r.id);
+      res.status(201).json(adoptCardInternal(card, req, `shared:${r.id}`));
+    })
+  );
+
+  // 点赞 / 取消赞
+  app.post(
+    '/api/character-cards/shared/:id/like',
+    ah(async (req, res) => {
+      const uid = uidOf(req) || 'local';
+      const r = db.prepare("SELECT id FROM shared_cards WHERE id = ? AND status = 'approved'").get(req.params.id);
+      if (!r) return res.status(404).json({ error: '该角色卡不存在或未上架' });
+      const t = now();
+      const liked = db.transaction(() => {
+        const has = db
+          .prepare('SELECT 1 FROM card_likes WHERE user_id = ? AND shared_card_id = ?')
+          .get(uid, r.id);
+        if (has) {
+          db.prepare('DELETE FROM card_likes WHERE user_id = ? AND shared_card_id = ?').run(uid, r.id);
+          db.prepare('UPDATE shared_cards SET like_count = MAX(like_count - 1, 0) WHERE id = ?').run(r.id);
+          return false;
+        }
+        db.prepare('INSERT INTO card_likes(user_id, shared_card_id, created_at) VALUES(?,?,?)').run(uid, r.id, t);
+        db.prepare('UPDATE shared_cards SET like_count = like_count + 1 WHERE id = ?').run(r.id);
+        return true;
+      })();
+      const likeCount = db.prepare('SELECT like_count FROM shared_cards WHERE id = ?').get(r.id).like_count;
+      res.json({ liked, like_count: likeCount });
+    })
+  );
+
+  // 举报：累计 5 次自动下架回 pending 待审
+  app.post(
+    '/api/character-cards/shared/:id/report',
+    ah(async (req, res) => {
+      const r = db.prepare("SELECT id, report_count FROM shared_cards WHERE id = ? AND status = 'approved'").get(
+        req.params.id
+      );
+      if (!r) return res.status(404).json({ error: '该角色卡不存在或未上架' });
+      const reason = String((req.body && req.body.reason) || '').trim().slice(0, 200);
+      db.transaction(() => {
+        db.prepare('UPDATE shared_cards SET report_count = report_count + 1 WHERE id = ?').run(r.id);
+        if (r.report_count + 1 >= 5) {
+          db.prepare("UPDATE shared_cards SET status = 'pending', reviewed_at = ? WHERE id = ?").run(now(), r.id);
+        }
+      })();
+      res.json({ ok: true, message: reason ? '已收到举报，管理员会尽快处理' : '已收到举报' });
+    })
+  );
+
+  // 集卡图鉴：官方 18 张收集进度 + 已领养的广场卡
+  app.get(
+    '/api/character-cards/collection',
+    ah(async (req, res) => {
+      const uid = uidOf(req);
+      const collUid = uid || 'local';
+      const presets = getPresetCards();
+      const adoptedKeys = new Set(
+        db.prepare('SELECT card_key FROM user_collection WHERE user_id = ?').all(collUid).map((r) => r.card_key)
+      );
+      const adoptedCount = presets.filter((c) => adoptedKeys.has(`preset:${c.id}`)).length;
+      const rewardClaimed = uid
+        ? !!db
+            .prepare("SELECT id FROM points_ledger WHERE user_id = ? AND reason = 'collection_reward' LIMIT 1")
+            .get(uid)
+        : adoptedCount >= presets.length; // 单用户无账本：集齐即视为完成
+      // 已领养的广场卡
+      const sharedAdopted = db
+        .prepare(
+          `SELECT s.id, s.card_json, s.adopt_count FROM shared_cards s
+           JOIN user_collection c ON c.card_key = ('shared:' || s.id)
+           WHERE c.user_id = ? ORDER BY c.adopted_at DESC`
+        )
+        .all(collUid)
+        .map((r) => ({ id: r.id, card: JSON.parse(r.card_json), adopt_count: r.adopt_count }));
+      res.json({
+        presets: presets.map((c) => ({
+          id: c.id,
+          name: c.name,
+          avatar: c.avatar,
+          category: c.category,
+          tagline: c.tagline,
+          adopted: adoptedKeys.has(`preset:${c.id}`),
+        })),
+        adopted_count: adoptedCount,
+        total: presets.length,
+        reward_points: COLLECTION_REWARD,
+        reward_claimed: rewardClaimed,
+        shared_adopted: sharedAdopted,
       });
     })
   );
