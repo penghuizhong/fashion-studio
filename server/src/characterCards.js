@@ -86,6 +86,49 @@ export function isAdoptableCard(c) {
   return !!(c && c.name && c.greeting && c.soul_md);
 }
 
+// ---------- UGC 投稿 ----------
+// 敏感词前置过滤（小词表；命中直接打回，提示用户修改）
+const SENSITIVE_WORDS = [
+  '约炮', '一夜情', '援交', '裸聊', 'SM', '调教', '主人', '性奴',
+  '赌博', '博彩', '时时彩', '六合彩',
+  '法轮功', '台独', '藏独', '疆独',
+  '习近平', '毛泽东', // 防真人政治人物仿真
+  '自杀', '自残', '割腕',
+];
+export function findSensitiveWord(card) {
+  const blob = [card.name, card.tagline, card.description, card.greeting, card.soul_md, (card.tags || []).join(' ')]
+    .join('\n');
+  for (const w of SENSITIVE_WORDS) {
+    if (w && blob.includes(w)) return w;
+  }
+  return null;
+}
+
+// 投稿卡片校验（发布/审核共用）
+export function validateSharedCard(card) {
+  const c = sanitizeCardInput(card);
+  if (!isAdoptableCard(c)) return { ok: false, error: '角色卡缺少名字/开场白/人设，无法发布' };
+  if (!c.tagline) return { ok: false, error: '请填写一句话卖点（一句话介绍你的角色）' };
+  if (!c.description) return { ok: false, error: '请填写角色简介' };
+  const bad = findSensitiveWord(c);
+  if (bad) return { ok: false, error: `内容含敏感词「${bad}」，请修改后重新发布` };
+  return { ok: true, card: c };
+}
+
+// 从角色快照生成投稿卡片初稿（greeting 取该角色最近一条 assistant 消息）
+export function buildPublishDraft(char, greeting) {
+  return {
+    name: char.name || '',
+    avatar: char.avatar || '🤖',
+    tagline: '',
+    category: 'comfort',
+    tags: [],
+    description: '',
+    greeting: greeting || '',
+    soul_md: char.soul_md || '',
+    example_dialogues: [],
+  };
+}
 // ---------- AI 生成 ----------
 const GENERATE_SYSTEM = `你是角色卡设计师。根据用户的一句话描述，设计一张中文 AI 聊天角色卡。
 只输出 JSON，不要任何其他文字，不要 markdown 代码块。JSON 结构如下：

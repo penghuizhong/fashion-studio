@@ -107,8 +107,27 @@ export function deductPoints(userId, points, reason, refType = null, refId = nul
   return addLedger(userId, -points, reason, refType, refId, extra);
 }
 
-// 是否已领取过注册奖励（ledger 有 signup_bonus 即视为已领取；老用户注册时已发过）
+// 集卡奖励：集齐官方预设卡一次性 +200，幂等（多用户模式；单用户无账本直接跳过）
+// totalPresets 由调用方传入，避免 points ↔ characterCards 循环引用
+export const COLLECTION_REWARD = 200;
+export function maybeCollectionReward(userId, totalPresets) {
+  if (!userId || !totalPresets) return 0;
+  const db = getDb();
+  const done = db
+    .prepare("SELECT id FROM points_ledger WHERE user_id = ? AND reason = 'collection_reward' LIMIT 1")
+    .get(userId);
+  if (done) return 0;
+  const n = db
+    .prepare("SELECT COUNT(*) AS n FROM user_collection WHERE user_id = ? AND card_key LIKE 'preset:%'")
+    .get(userId).n;
+  if (n >= totalPresets) {
+    addLedger(userId, COLLECTION_REWARD, 'collection_reward');
+    return COLLECTION_REWARD;
+  }
+  return 0;
+}
 export function hasSignupBonus(userId) {
+  // 是否已领取过注册奖励（ledger 有 signup_bonus 即视为已领取；老用户注册时已发过）
   const db = getDb();
   return !!db
     .prepare("SELECT id FROM points_ledger WHERE user_id = ? AND reason = 'signup_bonus' LIMIT 1")
@@ -154,6 +173,7 @@ export const REASON_LABELS = {
   invite_bonus: '邀请奖励（被邀）',
   invite_reward: '邀请奖励',
   character_generate: 'AI 生成角色',
+  collection_reward: '集卡奖励',
 };
 
 // 邀请奖励触发：被邀请人 assistant 消息数达标后，给邀请人发奖励（幂等）

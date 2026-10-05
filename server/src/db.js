@@ -112,6 +112,33 @@ CREATE TABLE IF NOT EXISTS points_models(
 );
 -- ---- 邀请系统 ----
 -- users.invite_code / users.invited_by 在迁移块中按需添加（老库兼容）
+-- ---- 角色广场 UGC ----
+CREATE TABLE IF NOT EXISTS shared_cards(
+  id TEXT PRIMARY KEY,
+  author_id TEXT NOT NULL,
+  card_json TEXT NOT NULL,
+  status TEXT DEFAULT 'pending',
+  reject_reason TEXT DEFAULT '',
+  adopt_count INTEGER DEFAULT 0,
+  like_count INTEGER DEFAULT 0,
+  report_count INTEGER DEFAULT 0,
+  created_at TEXT,
+  reviewed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_shared_status ON shared_cards(status, created_at);
+CREATE TABLE IF NOT EXISTS card_likes(
+  user_id TEXT NOT NULL,
+  shared_card_id TEXT NOT NULL,
+  created_at TEXT,
+  PRIMARY KEY(user_id, shared_card_id)
+);
+-- ---- 集卡图鉴 ----
+CREATE TABLE IF NOT EXISTS user_collection(
+  user_id TEXT NOT NULL,
+  card_key TEXT NOT NULL,
+  adopted_at TEXT,
+  PRIMARY KEY(user_id, card_key)
+);
 `;
 
 let _db = null;
