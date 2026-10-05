@@ -356,5 +356,11 @@ continue;
 insFact.run(character.id, f.text, f.importance, now, 'chat');
 changes.factsAdded++;
 }
+// v1.12：有实际写入时记一条事件，前端轮询做"记住了"轻提示
+if (changes.factsAdded > 0 || changes.userMdChanged) {
+db.prepare(
+'INSERT INTO memory_events(conversation_id, character_id, created_at, facts_added, user_md_changed) VALUES(?,?,?,?,?)'
+).run(conversationId, character.id, now, changes.factsAdded, changes.userMdChanged ? 1 : 0);
+}
 return changes;
 }

@@ -1,7 +1,7 @@
 // 积分系统：平台 Key 计费（多用户模式）
 // 汇率：1 元 = 100 积分（POINTS_PER_YUAN）
 // 单价单位：积分 / 1M tokens。以下为默认值，请对照 OpenRouter 账单定期核对调整。
-import { getDb } from './db.js';
+import { getDb, getSetting } from './db.js';
 
 export const POINTS_PER_YUAN = 100;
 export const SIGNUP_BONUS = 500;
@@ -48,8 +48,26 @@ export function getPointsModel(id) {
   return r ? rowToModel(r) : null;
 }
 
-// 后台任务（记忆提取/摘要/导演）用最便宜的启用模型
+// 后台任务（记忆提取/摘要/导演）用管理员配置的模型；未配置或已下架时回退到最便宜的启用模型
 export function getWorkerModel() {
+  const configured = getSetting('worker_model', '').trim();
+  if (configured) {
+    const m = getPointsModel(configured);
+    if (m) return m.id;
+  }
+  const r = getDb()
+    .prepare('SELECT * FROM points_models WHERE is_active = 1 ORDER BY (input_per_1m + output_per_1m) ASC, id ASC LIMIT 1')
+    .get();
+  return r ? r.model_id : null;
+}
+
+// v1.12 聊天默认模型（管理员配置；未配置时回退到最便宜的启用模型）
+export function getChatDefaultModel() {
+  const configured = getSetting('chat_default_model', '').trim();
+  if (configured) {
+    const m = getPointsModel(configured);
+    if (m) return m.id;
+  }
   const r = getDb()
     .prepare('SELECT * FROM points_models WHERE is_active = 1 ORDER BY (input_per_1m + output_per_1m) ASC, id ASC LIMIT 1')
     .get();

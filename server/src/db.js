@@ -172,6 +172,22 @@ CREATE TABLE IF NOT EXISTS intent_suggestions(
   created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sugg_char ON intent_suggestions(character_id, status, id);
+-- ---- 记忆写入事件（v1.12：流水线有实际写入时记一条，前端轮询做"记住了"轻提示） ----
+CREATE TABLE IF NOT EXISTS memory_events(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT NOT NULL,
+  character_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  facts_added INTEGER DEFAULT 0,
+  user_md_changed INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_memev_conv ON memory_events(conversation_id, id);
+-- ---- 系统设置（v1.12：管理员可配置项，如后台模型） ----
+CREATE TABLE IF NOT EXISTS sys_settings(
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT '',
+  updated_at TEXT
+);
 `;
 
 let _db = null;
@@ -327,4 +343,17 @@ export function closeDb() {
     _db.close();
     _db = null;
   }
+}
+
+// v1.12 系统设置读写
+export function getSetting(key, def = '') {
+  const r = getDb().prepare('SELECT value FROM sys_settings WHERE key = ?').get(key);
+  return r ? r.value : def;
+}
+export function setSetting(key, value) {
+  getDb()
+    .prepare(
+      'INSERT INTO sys_settings(key, value, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'
+    )
+    .run(key, String(value ?? ''), new Date().toISOString());
 }
