@@ -19,37 +19,46 @@ export function genInviteCode() {
   return s;
 }
 
-// 积分模式可用模型白名单（服务端强制校验，前端传什么都没用）
-// id 必须与 OpenRouter 上的模型 id 一致
-export const POINTS_MODELS = [
-  {
-    id: 'qwen3.8-flash',
-    name: 'Qwen3.8 Flash',
-    desc: '快速便宜，日常聊天首选',
-    inputPer1M: 200,
-    outputPer1M: 600,
-  },
-  {
-    id: 'gemini/gemini-3.8-flash',
-    name: 'Gemini 3.8 Flash',
-    desc: '快速便宜，日常聊天首选',
-    inputPer1M: 200,
-    outputPer1M: 600,
-  },
-  {
-    id: 'openai/gpt-6-luna',
-    name: 'GPT-6 Luna',
-    desc: '旗舰模型，效果最强，消耗较高',
-    inputPer1M: 2500,
-    outputPer1M: 10000,
-  },
-];
+// 积分模式可用模型：改为数据库动态管理（管理员后台增删改价）
+// 行结构：{ id, model_id, name, description, input_per_1m, output_per_1m, is_active, sort_order }
+// 对外统一转成 { id, name, desc, inputPer1M, outputPer1M } 形状，保持 API 稳定
+function rowToModel(r) {
+  return {
+    id: r.model_id,
+    name: r.name,
+    desc: r.description || '',
+    inputPer1M: r.input_per_1m,
+    outputPer1M: r.output_per_1m,
+  };
+}
 
-// 后台任务（记忆提取/摘要/导演）固定用最便宜的模型
-export const POINTS_WORKER_MODEL = POINTS_MODELS[0].id;
+// 列出可用模型（activeOnly=true 只返回启用中的，供用户端/计费校验）
+export function listPointsModels(activeOnly = true) {
+  const db = getDb();
+  const rows = activeOnly
+    ? db.prepare('SELECT * FROM points_models WHERE is_active = 1 ORDER BY sort_order ASC, id ASC').all()
+    : db.prepare('SELECT * FROM points_models ORDER BY sort_order ASC, id ASC').all();
+  return rows.map(rowToModel);
+}
 
+// 管理员视角：原始行（含 id/is_active/sort_order）
+export function listPointsModelRows() {
+  return getDb().prepare('SELECT * FROM points_models ORDER BY sort_order ASC, id ASC').all();
+}
+
+// 白名单校验：服务端强制，只认启用中的模型
 export function getPointsModel(id) {
-  return POINTS_MODELS.find((m) => m.id === id) || null;
+  if (!id) return null;
+  const r = getDb().prepare('SELECT * FROM points_models WHERE model_id = ? AND is_active = 1').get(id);
+  return r ? rowToModel(r) : null;
+}
+
+// 后台任务（记忆提取/摘要/导演）用最便宜的启用模型
+export function getWorkerModel() {
+  const r = getDb()
+    .prepare('SELECT * FROM points_models WHERE is_active = 1 ORDER BY (input_per_1m + output_per_1m) ASC, id ASC LIMIT 1')
+    .get();
+  return r ? r.model_id : null;
 }
 
 // 按真实用量算积分（至少 1 积分；usage 为空如 mock 模式则返回 0）

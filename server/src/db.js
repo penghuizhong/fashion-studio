@@ -87,6 +87,18 @@ CREATE TABLE IF NOT EXISTS points_ledger(
   created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON points_ledger(user_id, id);
+-- ---- 积分可用模型（管理员动态管理） ----
+CREATE TABLE IF NOT EXISTS points_models(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  model_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  input_per_1m INTEGER NOT NULL,
+  output_per_1m INTEGER NOT NULL,
+  is_active INTEGER DEFAULT 1,
+  sort_order INTEGER DEFAULT 0,
+  created_at TEXT
+);
 -- ---- 邀请系统 ----
 -- users.invite_code / users.invited_by 在迁移块中按需添加（老库兼容）
 `;
@@ -126,6 +138,23 @@ export function getDb() {
     if (!ledgerCols.includes('tokens_input')) _db.exec('ALTER TABLE points_ledger ADD COLUMN tokens_input INTEGER');
     if (!ledgerCols.includes('tokens_output')) _db.exec('ALTER TABLE points_ledger ADD COLUMN tokens_output INTEGER');
     if (!ledgerCols.includes('model')) _db.exec('ALTER TABLE points_ledger ADD COLUMN model TEXT');
+    // 积分可用模型：表为空时写入初始默认数据（仅一次）
+    const modelCount = _db.prepare('SELECT COUNT(*) AS n FROM points_models').get().n;
+    if (modelCount === 0) {
+      const now = new Date().toISOString();
+      const seed = [
+        ['qwen3.8-flash', 'Qwen3.8 Flash', '快速便宜，日常聊天首选', 200, 600, 0],
+        ['gemini/gemini-3.8-flash', 'Gemini 3.8 Flash', '快速便宜，日常聊天首选', 200, 600, 1],
+        ['openai/gpt-6-luna', 'GPT-6 Luna', '旗舰模型，效果最强，消耗较高', 2500, 10000, 2],
+      ];
+      const ins = _db.prepare(
+        'INSERT INTO points_models(model_id, name, description, input_per_1m, output_per_1m, is_active, sort_order, created_at) VALUES(?,?,?,?,?,?,?,?)'
+      );
+      const tx = _db.transaction(() => {
+        for (const [mid, name, desc, ip, op, so] of seed) ins.run(mid, name, desc, ip, op, 1, so, now);
+      });
+      tx();
+    }
     // 首个注册用户自动成为管理员（只执行一次）
     const firstUser = _db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
     if (firstUser) {
