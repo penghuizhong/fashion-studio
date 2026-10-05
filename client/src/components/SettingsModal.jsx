@@ -162,6 +162,28 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [pmAdding, setPmAdding] = useState(false);
   const [pmEditing, setPmEditing] = useState(null); // 正在编辑的行 id
   const [pmEditForm, setPmEditForm] = useState({});
+  // v1.12 模型配置（管理员）：后台模型 / 聊天默认模型
+  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '' });
+  const [modelCfgSaving, setModelCfgSaving] = useState(false);
+  const loadModelCfg = async () => {
+    try {
+      const s = await api.adminGetSettings();
+      setModelCfg({ worker_model: (s && s.worker_model) || '', chat_default_model: (s && s.chat_default_model) || '' });
+    } catch {
+      /* 非管理员或加载失败就保持默认 */
+    }
+  };
+  const saveModelCfg = async () => {
+    setModelCfgSaving(true);
+    try {
+      await api.adminUpdateSettings(modelCfg);
+      showToast('模型配置已保存');
+    } catch (e) {
+      showToast((e && e.message) || '保存失败');
+    } finally {
+      setModelCfgSaving(false);
+    }
+  };
   // 统计
   const [stats, setStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -276,6 +298,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         if (!cancelled) setStats({ ov, da: da || [], mo: mo || [], tu: tu || [] });
         const pm = await api.adminPointsModels().catch(() => []);
         if (!cancelled) setPmModels(Array.isArray(pm) ? pm : []);
+        if (!cancelled) await loadModelCfg();
       } catch (e) {
         showToast((e && e.message) || '读取统计失败', 2600);
       } finally {
@@ -720,7 +743,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   </div>
                   <p className="key-desc small">手动充值：用户付款后，按用户名发放积分。</p>
                   <div className="card-title" style={{ marginTop: 4 }}>积分可用模型</div>
-                  <p className="key-desc small">上架后用户可在「积分」tab 选用；单价单位：积分 / 1M tokens；后台任务自动用最便宜的启用模型。</p>
+                  <p className="key-desc small">上架后用户可在「积分」tab 选用；单价单位：积分 / 1M tokens；后台任务用的模型在下方「模型配置」里指定（不选则自动用最便宜的）。</p>
                   <div className="pm-list">
                       {pmModels.map((m) => (
                         <div key={m.id} className={`pm-row${m.is_active ? '' : ' off'}`}>
@@ -759,6 +782,37 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                       ))}
                       {pmModels.length === 0 && <p className="key-desc small">暂无模型，请添加。</p>}
                     </div>
+                  <div className="card-title" style={{ marginTop: 4 }}>模型配置</div>
+                  <p className="key-desc small">后台模型负责群聊导演调度、记忆提取、对话摘要（共用一个）；聊天默认模型用于新用户默认和异常回退。不选 = 自动用最便宜的启用模型。</p>
+                  <label>
+                    后台模型
+                    <select
+                      value={modelCfg.worker_model}
+                      onChange={(e) => setModelCfg((f) => ({ ...f, worker_model: e.target.value }))}
+                    >
+                      <option value="">自动（最便宜）</option>
+                      {pmModels.filter((m) => m.is_active).map((m) => (
+                        <option key={m.model_id} value={m.model_id}>{m.name}（{m.model_id}）</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    聊天默认模型
+                    <select
+                      value={modelCfg.chat_default_model}
+                      onChange={(e) => setModelCfg((f) => ({ ...f, chat_default_model: e.target.value }))}
+                    >
+                      <option value="">自动（最便宜）</option>
+                      {pmModels.filter((m) => m.is_active).map((m) => (
+                        <option key={m.model_id} value={m.model_id}>{m.name}（{m.model_id}）</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="key-input-row" style={{ marginTop: 8 }}>
+                    <button className="btn primary" onClick={saveModelCfg} disabled={modelCfgSaving}>
+                      {modelCfgSaving ? '保存中…' : '保存模型配置'}
+                    </button>
+                  </div>
                   <div className="card-title" style={{ marginTop: 4 }}>上架新模型</div>
                   <label>
                     模型 ID（须与 OpenRouter 一致）

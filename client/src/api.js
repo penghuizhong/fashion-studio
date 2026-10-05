@@ -230,6 +230,10 @@ export const api = {
     get(`/api/characters/${characterId}/facts${all ? '?all=1' : ''}`),
   deleteFact: (id) => del(`/api/facts/${id}`),
 
+  // v1.12 记忆写入事件（done 后轮询，做"记住了"轻提示）
+  getMemoryEvents: (conversationId, since) =>
+    get(`/api/conversations/${conversationId}/memory-events?since=${encodeURIComponent(since)}`),
+
   listConversations: (characterId) => get(`/api/characters/${characterId}/conversations`),
   createConversation: (characterId, data = {}) => post(`/api/characters/${characterId}/conversations`, data),
   renameConversation: (id, title) => put(`/api/conversations/${id}`, { title }),
@@ -264,6 +268,9 @@ export const api = {
   adminAddPointsModel: (data) => post('/api/admin/points/models', data),
   adminUpdatePointsModel: (id, data) => put(`/api/admin/points/models/${id}`, data),
   adminDeletePointsModel: (id) => del(`/api/admin/points/models/${id}`),
+  // v1.12 模型配置（管理员）：后台模型 / 聊天默认模型
+  adminGetSettings: () => get('/api/admin/settings'),
+  adminUpdateSettings: (data) => put('/api/admin/settings', data),
   // 邀请
   getInvite: () => get('/api/invite'),
   // 用量统计（管理员）

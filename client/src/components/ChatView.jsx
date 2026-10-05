@@ -29,6 +29,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   const taRef = useRef(null);
   const scrollRef = useRef(null);
   const abortRef = useRef(null);
+  const memPollRef = useRef(null); // v1.12 记忆事件轮询定时器
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +65,10 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     return () => {
       cancelled = true;
       if (abortRef.current) abortRef.current.abort();
+      if (memPollRef.current) {
+        clearInterval(memPollRef.current);
+        memPollRef.current = null;
+      }
     };
   }, [characterId, conversationId, isGroup]);
 
@@ -123,6 +128,41 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   };
 
   const memberOf = (cid) => (group && group.members ? group.members.find((m) => m.id === cid) : null);
+
+  // v1.12：done 后轮询记忆写入事件，有实际写入即 toast"记住了"（后台流水线约需 5~20 秒）
+  const pollMemoryEvents = (since) => {
+    if (memPollRef.current) clearInterval(memPollRef.current);
+    const seen = new Set();
+    let cursor = since;
+    let lastNewAt = 0;
+    let n = 0;
+    memPollRef.current = setInterval(async () => {
+      n++;
+      try {
+        const list = await api.getMemoryEvents(conversationId, cursor);
+        let newest = cursor;
+        for (const e of Array.isArray(list) ? list : []) {
+          if (!e || seen.has(e.id)) continue;
+          seen.add(e.id);
+          if (e.created_at > newest) newest = e.created_at;
+          lastNewAt = Date.now();
+          const who = e.character_name || (e.character_id ? (memberOf(e.character_id) || {}).name : null);
+          showToast(who ? `${who} 记住了 ✨` : '已记住 ✨', 2500);
+        }
+        cursor = newest;
+      } catch {
+        // 查询失败（网络/会话失效）就停，避免空转
+        clearInterval(memPollRef.current);
+        memPollRef.current = null;
+        return;
+      }
+      // 最多 60 秒；有事件后 15 秒无新事件也停
+      if (n >= 15 || (lastNewAt > 0 && Date.now() - lastNewAt > 15000)) {
+        clearInterval(memPollRef.current);
+        memPollRef.current = null;
+      }
+    }, 4000);
+  };
 
   const send = async () => {
     const content = input.trim();
@@ -221,6 +261,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
               setTitle(data.title);
               onConversationsChanged();
             }
+            // v1.12：后台记忆流水线跑完有写入时 toast 提示
+            pollMemoryEvents(new Date().toISOString());
           } else if (ev === 'error') {
             setErrorMsg((data && data.message) || '生成失败，换句话试试');
           }
