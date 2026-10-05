@@ -2,6 +2,26 @@ import { getConfig} from './config.js';
 import { getDb} from './db.js';
 import { summarizeText, classifyTurn, extractFacts } from './llm.js';
 
+// v1.13.4: 当前北京时间（拼进 system prompt，模型知道今天几号）
+// 用 Intl 按 Asia/Shanghai 算，不依赖服务器系统时区
+export function nowBeijingStr() {
+  try {
+    const fmt = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    return fmt.format(new Date()) + '（北京时间）';
+  } catch {
+    return new Date().toLocaleString('zh-CN');
+  }
+}
+
 // 粗略 token 估算：CJK 字符 1.5 字符/token，其余 4 字符/token
 export function estimateTokens(text) {
 const s = String(text?? '');
@@ -62,6 +82,7 @@ const db = getDb();
 
 const sysParts = [
 ANTI_HALLU.replaceAll('{name}', character.name || ''),
+`# 当前时间\n${nowBeijingStr()}`,
 `# 角色设定\n${character.soul_md || ''}`,
 `# 关于用户\n${character.user_md || ''}`,
 ];
@@ -154,6 +175,7 @@ const buildFor = (character) => {
 const sysParts = [
 ANTI_HALLU.replaceAll('{name}', character.name || ''),
 `# 你正在一个群聊里。下面是你的角色设定，群聊消息格式为「说话人：内容」。只以${character.name || '你'}的身份发言，不要冒充别人。`,
+`# 当前时间\n${nowBeijingStr()}`,
 `# 角色设定\n${character.soul_md || ''}`,
 `# 关于用户\n${character.user_md || ''}`,
 ];
