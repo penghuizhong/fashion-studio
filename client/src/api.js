@@ -227,6 +227,11 @@ export const api = {
   getPointsLedger: (limit = 20) => get(`/api/points/ledger?limit=${limit}`),
   adminGrantPoints: (data) => post('/api/admin/points/grant', data),
   adminListUsers: (q = '') => get(`/api/admin/users?q=${encodeURIComponent(q)}`),
+  // 积分可用模型管理（管理员）
+  adminPointsModels: () => get('/api/admin/points/models'),
+  adminAddPointsModel: (data) => post('/api/admin/points/models', data),
+  adminUpdatePointsModel: (id, data) => put(`/api/admin/points/models/${id}`, data),
+  adminDeletePointsModel: (id) => del(`/api/admin/points/models/${id}`),
   // 邀请
   getInvite: () => get('/api/invite'),
   // 用量统计（管理员）

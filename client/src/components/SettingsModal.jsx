@@ -153,6 +153,12 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [grantUser, setGrantUser] = useState('');
   const [grantAmount, setGrantAmount] = useState('');
   const [granting, setGranting] = useState(false);
+  // 积分模型管理
+  const [pmModels, setPmModels] = useState([]);
+  const [pmForm, setPmForm] = useState({ model_id: '', name: '', description: '', input_per_1m: '', output_per_1m: '' });
+  const [pmAdding, setPmAdding] = useState(false);
+  const [pmEditing, setPmEditing] = useState(null); // 正在编辑的行 id
+  const [pmEditForm, setPmEditForm] = useState({});
   // 统计
   const [stats, setStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -229,6 +235,8 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
           api.adminStatsTopUsers(10),
         ]);
         if (!cancelled) setStats({ ov, da: da || [], mo: mo || [], tu: tu || [] });
+        const pm = await api.adminPointsModels().catch(() => []);
+        if (!cancelled) setPmModels(Array.isArray(pm) ? pm : []);
       } catch (e) {
         showToast((e && e.message) || '读取统计失败', 2600);
       } finally {
@@ -355,6 +363,92 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       showToast('邀请链接已复制', 2000);
     } catch {
       showToast(link, 4000);
+    }
+  };
+
+  // ---- 积分模型管理 ----
+  const refreshPmModels = async () => {
+    try {
+      const pm = await api.adminPointsModels();
+      setPmModels(Array.isArray(pm) ? pm : []);
+    } catch (e) {
+      showToast((e && e.message) || '读取模型列表失败', 2200);
+    }
+  };
+
+  const pmAdd = async () => {
+    const f = pmForm;
+    if (!f.model_id.trim()) {
+      showToast('请填写模型 ID', 2000);
+      return;
+    }
+    setPmAdding(true);
+    try {
+      await api.adminAddPointsModel({
+        model_id: f.model_id.trim(),
+        name: f.name.trim() || f.model_id.trim(),
+        description: f.description.trim(),
+        input_per_1m: Math.floor(Number(f.input_per_1m)),
+        output_per_1m: Math.floor(Number(f.output_per_1m)),
+      });
+      setPmForm({ model_id: '', name: '', description: '', input_per_1m: '', output_per_1m: '' });
+      await refreshPmModels();
+      await refreshPoints();
+      showToast('已上架', 2000);
+    } catch (e) {
+      showToast((e && e.message) || '添加失败', 2600);
+    } finally {
+      setPmAdding(false);
+    }
+  };
+
+  const pmToggle = async (m) => {
+    try {
+      await api.adminUpdatePointsModel(m.id, { is_active: !m.is_active });
+      await refreshPmModels();
+      await refreshPoints();
+      showToast(m.is_active ? '已下架' : '已上架', 1800);
+    } catch (e) {
+      showToast((e && e.message) || '操作失败', 2200);
+    }
+  };
+
+  const pmStartEdit = (m) => {
+    setPmEditing(m.id);
+    setPmEditForm({
+      name: m.name || '',
+      description: m.description || '',
+      input_per_1m: String(m.input_per_1m || ''),
+      output_per_1m: String(m.output_per_1m || ''),
+    });
+  };
+
+  const pmSaveEdit = async (id) => {
+    try {
+      await api.adminUpdatePointsModel(id, {
+        name: pmEditForm.name.trim(),
+        description: pmEditForm.description.trim(),
+        input_per_1m: Math.floor(Number(pmEditForm.input_per_1m)),
+        output_per_1m: Math.floor(Number(pmEditForm.output_per_1m)),
+      });
+      setPmEditing(null);
+      await refreshPmModels();
+      await refreshPoints();
+      showToast('已保存', 1800);
+    } catch (e) {
+      showToast((e && e.message) || '保存失败', 2600);
+    }
+  };
+
+  const pmDelete = async (m) => {
+    if (!window.confirm(`确定删除模型「${m.name}」(${m.model_id})吗？`)) return;
+    try {
+      await api.adminDeletePointsModel(m.id);
+      await refreshPmModels();
+      await refreshPoints();
+      showToast('已删除', 1800);
+    } catch (e) {
+      showToast((e && e.message) || '删除失败', 2200);
     }
   };
 
@@ -563,6 +657,64 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                     <button className="btn secondary" onClick={grant} disabled={granting}>{granting ? '发放中…' : '发放'}</button>
                   </div>
                   <p className="key-desc small">手动充值：用户付款后，按用户名发放积分。</p>
+                  <div className="card-title" style={{ marginTop: 4 }}>积分可用模型</div>
+                  <p className="key-desc small">上架后用户可在「积分」tab 选用；单价单位：积分 / 1M tokens；后台任务自动用最便宜的启用模型。</p>
+                  <div className="pm-list">
+                      {pmModels.map((m) => (
+                        <div key={m.id} className={`pm-row${m.is_active ? '' : ' off'}`}>
+                          {pmEditing === m.id ? (
+                            <div className="pm-edit">
+                              <div className="key-input-row">
+                                <input value={pmEditForm.name} onChange={(e) => setPmEditForm((f) => ({ ...f, name: e.target.value }))} placeholder="显示名" />
+                              </div>
+                              <div className="key-input-row" style={{ marginTop: 8 }}>
+                                <input value={pmEditForm.description} onChange={(e) => setPmEditForm((f) => ({ ...f, description: e.target.value }))} placeholder="描述（可选）" />
+                              </div>
+                              <div className="key-input-row" style={{ marginTop: 8 }}>
+                                <input value={pmEditForm.input_per_1m} onChange={(e) => setPmEditForm((f) => ({ ...f, input_per_1m: e.target.value }))} placeholder="输入单价" inputMode="numeric" />
+                                <input value={pmEditForm.output_per_1m} onChange={(e) => setPmEditForm((f) => ({ ...f, output_per_1m: e.target.value }))} placeholder="输出单价" inputMode="numeric" />
+                              </div>
+                              <div className="key-input-row" style={{ marginTop: 8 }}>
+                                <button className="btn primary small" onClick={() => pmSaveEdit(m.id)}>保存</button>
+                                <button className="btn secondary small" onClick={() => setPmEditing(null)}>取消</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="pm-info">
+                                <div className="pm-name">{m.name}{!m.is_active && <span className="pm-off-tag">已下架</span>}</div>
+                                <div className="pm-id">{m.model_id}</div>
+                                <div className="pm-price">输入 {m.input_per_1m} / 输出 {m.output_per_1m}</div>
+                              </div>
+                              <div className="pm-actions">
+                                <button className="btn secondary small" onClick={() => pmToggle(m)}>{m.is_active ? '下架' : '上架'}</button>
+                                <button className="btn secondary small" onClick={() => pmStartEdit(m)}>改价</button>
+                                <button className="btn danger small" onClick={() => pmDelete(m)}>删除</button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                      {pmModels.length === 0 && <p className="key-desc small">暂无模型，请添加。</p>}
+                    </div>
+                  <div className="card-title" style={{ marginTop: 4 }}>上架新模型</div>
+                  <label>
+                    模型 ID（须与 OpenRouter 一致）
+                    <input value={pmForm.model_id} onChange={(e) => setPmForm((f) => ({ ...f, model_id: e.target.value }))} placeholder="如 openai/gpt-7-mini" spellCheck={false} autoComplete="off" />
+                  </label>
+                  <label>
+                    显示名
+                    <input value={pmForm.name} onChange={(e) => setPmForm((f) => ({ ...f, name: e.target.value }))} placeholder="留空则用模型 ID" spellCheck={false} autoComplete="off" />
+                  </label>
+                  <label>
+                    描述（可选）
+                    <input value={pmForm.description} onChange={(e) => setPmForm((f) => ({ ...f, description: e.target.value }))} placeholder="如：快速便宜，日常聊天首选" spellCheck={false} autoComplete="off" />
+                  </label>
+                  <div className="key-input-row">
+                    <input value={pmForm.input_per_1m} onChange={(e) => setPmForm((f) => ({ ...f, input_per_1m: e.target.value }))} placeholder="输入单价 /1M" inputMode="numeric" autoComplete="off" />
+                    <input value={pmForm.output_per_1m} onChange={(e) => setPmForm((f) => ({ ...f, output_per_1m: e.target.value }))} placeholder="输出单价 /1M" inputMode="numeric" autoComplete="off" />
+                    <button className="btn primary" onClick={pmAdd} disabled={pmAdding}>{pmAdding ? '上架中…' : '上架'}</button>
+                  </div>
                 </>
               ) : (
                 <p className="key-desc small">暂无数据</p>
