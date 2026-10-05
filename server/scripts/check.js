@@ -378,6 +378,58 @@ async function runSingle() {
     const hasError = events.some((e) => e.event === 'error');
     ok('21. 不存在的对话发消息 → error 事件或 HTTP 404', status === 404 || hasError, `status=${status} events=${events.map((e) => e.event).join(',')}`);
   }
+
+  // 22. 预设角色卡列表：18 张 + 7 个分类
+  {
+    const r = await req('GET', '/api/character-cards/presets');
+    const cats = r.json && r.json.categories;
+    ok(
+      '22. GET /api/character-cards/presets → 200，18 张卡，7 个分类',
+      r.status === 200 && Array.isArray(r.json.cards) && r.json.cards.length === 18 &&
+        cats && Object.keys(cats).length === 7 &&
+        r.json.cards.every((c) => c.id && c.name && c.greeting && c.soul_md && cats[c.category]),
+      `status=${r.status} n=${r.json && r.json.cards && r.json.cards.length}`
+    );
+  }
+
+  // 23. 一键领养：建角色 + 建对话 + 开场白首条消息
+  {
+    const r = await req('POST', '/api/character-cards/adopt', { preset_id: 'luchen' });
+    const ch = r.json && r.json.character;
+    const conv = r.json && r.json.conversation;
+    const msgs = conv ? await req('GET', `/api/conversations/${conv.id}/messages`) : null;
+    const first = msgs && msgs.json && msgs.json[0];
+    ok(
+      '23. POST adopt 预设卡 → 201：角色/对话/开场白消息齐全',
+      r.status === 201 && ch && ch.name === '陆沉' && conv && conv.id &&
+        Array.isArray(msgs.json) && msgs.json.length === 1 &&
+        first.role === 'assistant' && first.content.length > 60,
+      `status=${r.status} name=${ch && ch.name} msgs=${msgs && msgs.json && msgs.json.length}`
+    );
+    // 24. 非法 preset_id → 404；空 body → 400
+    const bad = await req('POST', '/api/character-cards/adopt', { preset_id: 'no-such-card' });
+    const empty = await req('POST', '/api/character-cards/adopt', {});
+    ok(
+      '24. adopt 非法 preset_id → 404；空 body → 400',
+      bad.status === 404 && empty.status === 400,
+      `bad=${bad.status} empty=${empty.status}`
+    );
+    if (ch) await req('DELETE', `/api/characters/${ch.id}`);
+  }
+
+  // 25. AI 生成角色卡（mock）：结构完整
+  {
+    const r = await req('POST', '/api/character-cards/generate', { prompt: '一只会讲冷笑话的猫耳女仆' });
+    const card = r.json && r.json.card;
+    ok(
+      '25. POST generate（mock）→ 200：卡结构完整（名字/开场白/人设/示例对话）',
+      r.status === 200 && card && card.name && card.greeting && card.soul_md &&
+        Array.isArray(card.example_dialogues) && card.example_dialogues.length >= 1,
+      `status=${r.status} name=${card && card.name}`
+    );
+    const empty = await req('POST', '/api/character-cards/generate', { prompt: '' });
+    ok('25b. generate 空 prompt → 400', empty.status === 400, `status=${empty.status}`);
+  }
 }
 
 // ================= 多用户套件（13 项） =================
@@ -825,6 +877,48 @@ async function runMulti() {
         upd.status === 200 && off.status === 200 && !pubIds.includes('test/model-x') &&
         del.status === 200 && forbidden.status === 403,
       `n0=${n0} add=${add.status} upd=${upd.status} off=${off.status} del=${del.status} forbidden=${forbidden.status}`
+    );
+  }
+
+  // M28. 角色卡权限：预设列表公开（未登录 200）；领养/生成未登录 → 401
+  {
+    const pub = await req('GET', '/api/character-cards/presets');
+    const noAdopt = await req('POST', '/api/character-cards/adopt', { preset_id: 'luchen' });
+    const noGen = await req('POST', '/api/character-cards/generate', { prompt: '测试' });
+    ok(
+      'M28. 预设列表未登录 → 200（18 张）；adopt/generate 未登录 → 401',
+      pub.status === 200 && Array.isArray(pub.json.cards) && pub.json.cards.length === 18 &&
+        noAdopt.status === 401 && noGen.status === 401,
+      `pub=${pub.status} n=${pub.json && pub.json.cards && pub.json.cards.length} adopt=${noAdopt.status} gen=${noGen.status}`
+    );
+  }
+
+  // M29. 登录后领养：201 且链路完整；其他用户查该角色 → 404（隔离）
+  {
+    const ad = await req('POST', '/api/character-cards/adopt', { preset_id: 'taoyao' }, { jar: jarC });
+    const ch = ad.json && ad.json.character;
+    const conv = ad.json && ad.json.conversation;
+    const msgs = conv ? await req('GET', `/api/conversations/${conv.id}/messages`, undefined, { jar: jarC }) : null;
+    const other = ch ? await req('GET', `/api/characters/${ch.id}`, undefined, { jar: jarAdminM }) : null;
+    ok(
+      'M29. 登录后 adopt → 201：角色/对话/开场白齐全；其他用户查 → 404',
+      ad.status === 201 && ch && ch.name === '桃夭' && conv && conv.id &&
+        Array.isArray(msgs.json) && msgs.json.length === 1 && msgs.json[0].role === 'assistant' &&
+        other.status === 404,
+      `adopt=${ad.status} name=${ch && ch.name} msgs=${msgs && msgs.json && msgs.json.length} other=${other && other.status}`
+    );
+  }
+
+  // M30. AI 生成（mock）：200 且卡完整；非法模型回退到 worker；mock 不扣费（cost null）
+  {
+    const g = await req('POST', '/api/character-cards/generate', { prompt: '一只会社畜的柴犬', model: 'nope/not-real' }, { jar: jarC });
+    const card = g.json && g.json.card;
+    const g2 = await req('POST', '/api/character-cards/generate', { prompt: '' }, { jar: jarC });
+    ok(
+      'M30. generate（mock）→ 200：卡完整，非法模型回退可用，cost 为 null；空 prompt → 400',
+      g.status === 200 && card && card.name && card.greeting && card.soul_md &&
+        Array.isArray(card.example_dialogues) && g.json.cost === null && g2.status === 400,
+      `gen=${g.status} name=${card && card.name} cost=${JSON.stringify(g.json && g.json.cost)} empty=${g2.status}`
     );
   }
 }
