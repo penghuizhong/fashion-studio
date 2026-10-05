@@ -1,7 +1,18 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomInt } from 'node:crypto';
 import { getConfig } from './config.js';
+
+// 安全随机码：crypto 强随机（邀请码 8 位公开分享，重置码 12 位绝不公开）
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export function genSecureCode(len) {
+  let s = '';
+  for (let i = 0; i < len; i++) s += CODE_CHARS[randomInt(CODE_CHARS.length)];
+  return s;
+}
+export const genInviteCode = () => genSecureCode(8);
+export const genRecoveryCode = () => genSecureCode(12);
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS characters(
@@ -168,17 +179,11 @@ export function getDb() {
       const usedR = new Set(
         _db.prepare('SELECT recovery_code FROM users WHERE recovery_code IS NOT NULL').all().map((r) => r.recovery_code)
       );
-      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      const mk = () => {
-        let s = '';
-        for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
-        return s;
-      };
       const upd = _db.prepare('UPDATE users SET recovery_code = ? WHERE id = ?');
       _db.transaction((rows) => {
         for (const r of rows) {
-          let code = mk();
-          while (usedR.has(code)) code = mk();
+          let code = genRecoveryCode();
+          while (usedR.has(code)) code = genRecoveryCode();
           usedR.add(code);
           upd.run(code, r.id);
         }
@@ -189,12 +194,6 @@ export function getDb() {
       const used = new Set(
         _db.prepare('SELECT invite_code FROM users WHERE invite_code IS NOT NULL').all().map((r) => r.invite_code)
       );
-      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      const mk = () => {
-        let s = '';
-        for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
-        return s;
-      };
       const upd = _db.prepare('UPDATE users SET invite_code = ? WHERE id = ?');
       _db.transaction((rows) => {
         for (const r of rows) {

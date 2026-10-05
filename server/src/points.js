@@ -11,13 +11,8 @@ export const INVITE_REWARD_INVITER = 200; // 邀请人奖励
 export const INVITE_REWARD_INVITEE = 100; // 被邀请人额外奖励（500 基础上）
 export const INVITE_CHAT_THRESHOLD = 10; // 被邀请人聊满 N 条后给邀请人发奖励（防刷）
 
-// 生成 8 位邀请码（大写字母数字，去掉易混淆字符）
-export function genInviteCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s = '';
-  for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return s;
-}
+// 生成 8 位邀请码 / 12 位密码重置码（crypto 强随机，见 db.js）
+export { genInviteCode, genRecoveryCode } from './db.js';
 
 // 积分模式可用模型：改为数据库动态管理（管理员后台增删改价）
 // 行结构：{ id, model_id, name, description, input_per_1m, output_per_1m, is_active, sort_order }
@@ -84,6 +79,8 @@ export function addLedger(userId, delta, reason, refType = null, refId = null, e
     const row = db.prepare('SELECT points_balance FROM users WHERE id = ?').get(userId);
     if (!row) throw new Error('用户不存在');
     const after = row.points_balance + delta;
+    // 防并发超扣：事务内原子检查，余额不足直接回滚（better-sqlite3 事务同步串行，无交错）
+    if (delta < 0 && after < 0) throw new Error('积分不足');
     db.prepare('UPDATE users SET points_balance = ? WHERE id = ?').run(after, userId);
     db.prepare(
       'INSERT INTO points_ledger(user_id, delta, balance_after, reason, ref_type, ref_id, tokens_input, tokens_output, model, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)'
@@ -108,6 +105,30 @@ export function addLedger(userId, delta, reason, refType = null, refId = null, e
 export function deductPoints(userId, points, reason, refType = null, refId = null, extra = {}) {
   if (!points || points <= 0) return getBalance(userId);
   return addLedger(userId, -points, reason, refType, refId, extra);
+}
+
+// 是否已领取过注册奖励（ledger 有 signup_bonus 即视为已领取；老用户注册时已发过）
+export function hasSignupBonus(userId) {
+  const db = getDb();
+  return !!db
+    .prepare("SELECT id FROM points_ledger WHERE user_id = ? AND reason = 'signup_bonus' LIMIT 1")
+    .get(userId);
+}
+
+// 注册奖励：首次聊天成功（收到第一条 assistant 回复）后发放，防批量注册刷号薅积分。
+// 幂等：已发放过（ledger 有 signup_bonus）则跳过；老用户注册时已发过，不会重复。
+export function maybeSignupBonus(userId) {
+  if (hasSignupBonus(userId)) return 0;
+  const db = getDb();
+  const u = db.prepare('SELECT invited_by FROM users WHERE id = ?').get(userId);
+  if (!u) return 0;
+  addLedger(userId, SIGNUP_BONUS, 'signup_bonus');
+  let total = SIGNUP_BONUS;
+  if (u.invited_by) {
+    addLedger(userId, INVITE_REWARD_INVITEE, 'invite_bonus', 'user', u.invited_by);
+    total += INVITE_REWARD_INVITEE;
+  }
+  return total;
 }
 
 export function grantPoints(userId, points, reason = 'admin_grant', refId = null) {

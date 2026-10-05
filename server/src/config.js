@@ -36,13 +36,11 @@ export function getConfig() {
   };
 }
 
-// 多用户模式启动校验：MASTER_KEY 缺失或非法、SESSION_SECRET 缺失 → 抛错，调用方负责报错退出
+// 多用户模式启动校验：MASTER_KEY 缺失或非法 → 抛错，调用方负责报错退出
+// （SESSION_SECRET 已废弃：会话是 DB 里的随机 token，不再需要它；.env 里留着也无妨）
 export function assertMultiUserConfig(cfg) {
   if (!cfg.multiUser) return;
   if (!/^[0-9a-fA-F]{64}$/.test(cfg.masterKey || '')) {
     throw new Error('[config] 多用户模式要求 MASTER_KEY 为 64 位 hex 字符（32 字节），请检查环境变量');
-  }
-  if (!cfg.sessionSecret) {
-    throw new Error('[config] 多用户模式要求设置 SESSION_SECRET 环境变量');
   }
 }
