@@ -153,6 +153,7 @@ export const REASON_LABELS = {
   director: '群聊导演',
   invite_bonus: '邀请奖励（被邀）',
   invite_reward: '邀请奖励',
+  character_generate: 'AI 生成角色',
 };
 
 // 邀请奖励触发：被邀请人 assistant 消息数达标后，给邀请人发奖励（幂等）
