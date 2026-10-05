@@ -414,6 +414,38 @@ async function runSingle() {
     );
   }
 
+  // 10m. v1.12.1 模板注释 facts 清理：污染条目被删，真实条目保留
+  {
+    const db = getDb();
+    const mk = (fact) => db.prepare('INSERT INTO memory_facts(character_id, fact, importance, created_at, source) VALUES(?,?,?,?,?)').run(charId, fact, 3, new Date().toISOString(), 'test').lastInsertRowid;
+    const p1 = mk('此文本框保留做兼容：手动填写的内容不会被 AI 读取');
+    const p2 = mk('<!-- 记忆：v1.10 起已升级为 AI 自动条目');
+    const real = mk('v1.12.1 真实记忆：用户约了周五看电影');
+    // 与 db.js 启动清理相同的 SQL
+    const del = db.prepare(`DELETE FROM memory_facts WHERE fact LIKE '%此文本框保留做兼容%' OR fact LIKE '<!--%'`).run();
+    const gone1 = !db.prepare('SELECT id FROM memory_facts WHERE id = ?').get(p1);
+    const gone2 = !db.prepare('SELECT id FROM memory_facts WHERE id = ?').get(p2);
+    const kept = !!db.prepare('SELECT id FROM memory_facts WHERE id = ?').get(real);
+    // FTS 索引同步清理：搜污染词应无结果（trigram 需 3 字）
+    const fts = db.prepare(`SELECT rowid FROM memory_facts_fts WHERE memory_facts_fts MATCH ?`).all('做兼容');
+    db.prepare('DELETE FROM memory_facts WHERE id = ?').run(real);
+    ok(
+      '10m. 注释 facts 清理：2 条污染删除、真实保留、FTS 同步',
+      del.changes >= 2 && gone1 && gone2 && kept && fts.length === 0,
+      `del=${del.changes} gone=${gone1 && gone2} kept=${kept} ftsLeft=${fts.length}`
+    );
+  }
+
+  // 10n. v1.12.1 互斥规则：extract prompt 明确画像/事件分开记
+  {
+    const { FACTS_SYSTEM } = await import('../src/llm.js');
+    ok(
+      '10n. FACTS_SYSTEM 包含互斥规则（画像只进 user_md，事件只进 facts）',
+      FACTS_SYSTEM.includes('互斥') && FACTS_SYSTEM.includes('只进 user_md') && FACTS_SYSTEM.includes('只进 facts'),
+      `hasMutualExclusion=${FACTS_SYSTEM.includes('互斥')}`
+    );
+  }
+
   // 11. estimateTokens 单测
   {
     const a = estimateTokens('hello');
