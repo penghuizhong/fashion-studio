@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, formatTime, getApiConfig } from '../api.js';
 import { useAuth } from '../auth.jsx';
 
@@ -14,7 +14,8 @@ export default function Sidebar({
   onCharacterCreated,
   onConversationDeleted,
   onConversationsChanged,
-  onOpenApiSettings,
+  onOpenAccount,
+  onOpenStats,
   onToggleSidebar,
   showToast,
 }) {
@@ -24,9 +25,12 @@ export default function Sidebar({
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ name: '', avatar: '', temperature: '' });
   const [creating, setCreating] = useState(false);
-  // 多用户模式：当前用户 + 服务器端 key 状态
+  // 多用户模式：当前用户
   const { multiUser, user, logout } = useAuth();
-  const [serverKey, setServerKey] = useState(null);
+  // 用户卡片：积分余额 + 管理员标识 + 菜单
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pointsInfo, setPointsInfo] = useState(null);
+  const menuRef = useRef(null);
   // 群聊
   const [groups, setGroups] = useState([]);
   const [groupModalOpen, setGroupModalOpen] = useState(false);
@@ -68,26 +72,36 @@ export default function Sidebar({
     return () => window.removeEventListener('soulchat-api-changed', onApiChanged);
   }, []);
 
-  // 多用户模式：从服务器读取该用户的 key 状态（API 设置弹窗保存后刷新）
+  // 多用户模式：读取积分余额与管理员标识（聊天扣费后通过事件刷新）
   useEffect(() => {
     if (!multiUser) return;
     let cancelled = false;
     const load = () => {
       api
-        .getUserApiKey()
+        .getPoints()
         .then((d) => {
-          if (!cancelled) setServerKey(d);
+          if (!cancelled) setPointsInfo(d);
         })
         .catch(() => {});
     };
     load();
-    const onServerKeyChanged = () => load();
-    window.addEventListener('soulchat-server-key-changed', onServerKeyChanged);
+    const onPts = () => load();
+    window.addEventListener('soulchat-points-changed', onPts);
     return () => {
       cancelled = true;
-      window.removeEventListener('soulchat-server-key-changed', onServerKeyChanged);
+      window.removeEventListener('soulchat-points-changed', onPts);
     };
   }, [multiUser]);
+
+  // 用户菜单：点击外部关闭
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [menuOpen]);
 
   const handleLogout = async () => {
     try {
@@ -297,44 +311,74 @@ export default function Sidebar({
       )}
 
       <div className="sidebar-footer">
-        <span className="key-status">
-          {multiUser
-            ? serverKey
-              ? serverKey.hasKey
-                ? '● 已连接'
-                : '○ 未配置 key'
-              : '…'
-            : apiCfg.key
-              ? '● 个人 Key'
-              : config
-                ? config.has_key
-                  ? '● 已连接'
-                  : '○ 未配置 key'
-                : '…'}
-        </span>
-        <div className="footer-actions">
-          <button className="theme-btn" title="API 设置" onClick={onOpenApiSettings}>
-            🔌
+      {multiUser && user ? (
+        <div className="user-card-wrap" ref={menuRef}>
+          <button className="user-card" onClick={() => setMenuOpen((o) => !o)} title="账户菜单">
+            <span className="user-avatar">👤</span>
+            <span className="user-meta">
+              <span className="user-name" title={user.username}>
+                {user.username}
+              </span>
+              {pointsInfo && (
+                <span className="user-points">{pointsInfo.balance} 积分</span>
+              )}
+            </span>
+            <span className="user-caret">{menuOpen ? '▾' : '▴'}</span>
           </button>
-          <button
-            className="theme-btn"
-            title={theme === 'black' ? '切换到白色主题' : '切换到黑色主题'}
-            onClick={onToggleTheme}
-          >
-            {theme === 'black' ? '☀️' : '🌙'}
-          </button>
+          {menuOpen && (
+            <div className="user-menu">
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  onOpenAccount();
+                }}
+              >
+                💰 积分与 API
+              </button>
+              {pointsInfo && pointsInfo.is_admin && (
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onOpenStats();
+                  }}
+                >
+                  📊 用量统计
+                </button>
+              )}
+              <button onClick={onToggleTheme}>
+                {theme === 'black' ? '☀️ 浅色主题' : '🌙 深色主题'}
+              </button>
+              <button className="danger" onClick={handleLogout}>
+                🚪 退出登录
+              </button>
+            </div>
+          )}
         </div>
-      </div>
-      {multiUser && user && (
-        <div className="user-row">
-          <span className="user-name" title={user.username}>
-            👤 {user.username}
-          </span>
-          <button className="logout-btn" onClick={handleLogout}>
-            退出
-          </button>
-        </div>
+      ) : (
+        !multiUser && (
+          <>
+            <span className="key-status">
+              {apiCfg.key
+                ? '● 个人 Key'
+                : config
+                  ? config.has_key
+                    ? '● 已连接'
+                    : '○ 未配置 key'
+                  : '…'}
+            </span>
+            <div className="footer-actions">
+              <button
+                className="theme-btn"
+                title={theme === 'black' ? '切换到白色主题' : '切换到黑色主题'}
+                onClick={onToggleTheme}
+              >
+                {theme === 'black' ? '☀️' : '🌙'}
+              </button>
+            </div>
+          </>
+        )
       )}
+      </div>
 
       {groupModalOpen && (
         <div className="modal-overlay" onClick={() => setGroupModalOpen(false)}>

@@ -1,5 +1,5 @@
 // 登录 / 注册页（仅多用户模式）：延续 Apple 极简黑白双主题风格。
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../auth.jsx';
 
 const USERNAME_RE = /^[A-Za-z0-9\u4e00-\u9fa5_-]{3,20}$/;
@@ -9,8 +9,22 @@ export default function AuthPage({ theme, onToggleTheme }) {
   const [mode, setMode] = useState('login'); // 'login' | 'register'
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // 邀请链接：?invite=CODE → 自动切到注册并带上邀请码
+  useEffect(() => {
+    try {
+      const code = new URLSearchParams(window.location.search).get('invite');
+      if (code && code.trim()) {
+        setInviteCode(code.trim().toUpperCase());
+        setMode('register');
+      }
+    } catch {
+      /* 忽略 */
+    }
+  }, []);
 
   const switchMode = (m) => {
     setMode(m);
@@ -32,7 +46,7 @@ export default function AuthPage({ theme, onToggleTheme }) {
     setBusy(true);
     try {
       if (mode === 'login') await login(u, password);
-      else await register(u, password);
+      else await register(u, password, inviteCode || undefined);
       // 成功：AuthProvider 的 user 状态更新，App 守卫自动放行进主界面
     } catch (err) {
       setError((err && err.message) || '请求失败，请稍后再试');
@@ -97,7 +111,12 @@ export default function AuthPage({ theme, onToggleTheme }) {
             {busy ? '请稍候…' : mode === 'login' ? '登录' : '注册'}
           </button>
         </form>
-        {mode === 'register' && <p className="auth-tip">注册成功后自动登录。</p>}
+        {mode === 'register' && (
+          <p className="auth-tip">
+            注册成功后自动登录。
+            {inviteCode && <> 🎁 通过邀请链接注册，额外获赠积分。</>}
+          </p>
+        )}
       </div>
     </div>
   );

@@ -82,8 +82,8 @@ export function AuthProvider({ children }) {
     return u;
   }, []);
 
-  const register = useCallback(async (username, password) => {
-    const res = await authPost('/api/auth/register', { username, password });
+  const register = useCallback(async (username, password, inviteCode) => {
+    const res = await authPost('/api/auth/register', { username, password, inviteCode });
     if (!res.ok) {
       let msg;
       if (res.status === 409) {

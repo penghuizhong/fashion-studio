@@ -227,4 +227,11 @@ export const api = {
   getPointsLedger: (limit = 20) => get(`/api/points/ledger?limit=${limit}`),
   adminGrantPoints: (data) => post('/api/admin/points/grant', data),
   adminListUsers: (q = '') => get(`/api/admin/users?q=${encodeURIComponent(q)}`),
+  // 邀请
+  getInvite: () => get('/api/invite'),
+  // 用量统计（管理员）
+  adminStatsOverview: () => get('/api/admin/stats/overview'),
+  adminStatsDaily: (days = 30) => get(`/api/admin/stats/daily?days=${days}`),
+  adminStatsModels: () => get('/api/admin/stats/models'),
+  adminStatsTopUsers: (limit = 10) => get(`/api/admin/stats/top-users?limit=${limit}`),
 };
