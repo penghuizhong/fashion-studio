@@ -1,5 +1,11 @@
 # SoulChat 更新日志
 
+## v1.13.1（2026-10-05）设置弹窗黑屏根因修复
+
+- 根因：`SettingsModal` 里 `useEffect(..., [tab, reviewStatus, isAdmin])` 的依赖数组在渲染时求值，但 `const isAdmin` 在它之后才声明，导致 `ReferenceError: Cannot access 'isAdmin' before initialization`（压缩后为 `et`），整个 React 树卸载 → 黑屏
+- 修：将 `isAdmin`/`TABS` 声明移到该 `useEffect` 之前；保留 v1.13.0 的 `SettingsErrorBoundary`（以后再崩会显示错误而不是黑屏）
+- 回归 41/41 + 40/40
+
 ## v1.13.0（2026-10-05）收藏 tab + 图鉴养成门槛 + 设置弹窗黑屏修复
 
 - **我的收藏**：AI 生成角色卡现在自动保存（新表 `saved_cards`），发现页新增「我的收藏」tab——列表展示、预览、领养（标记已领养）、删除；生成成功 toast 提示"已保存到收藏"

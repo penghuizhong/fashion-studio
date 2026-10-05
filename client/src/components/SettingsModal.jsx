@@ -251,6 +251,17 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       setReviewLoading(false);
     }
   };
+  const tabsRef = useRef(null);
+
+  const isAdmin = !!(pointsInfo && pointsInfo.is_admin);
+  const TABS = [
+    { id: 'points', icon: 'coins', label: '积分' },
+    { id: 'api', icon: 'plug', label: 'API' },
+    { id: 'invite', icon: 'gift', label: '邀请' },
+  ];
+  if (isAdmin) TABS.push({ id: 'stats', icon: 'chart', label: '统计' });
+  if (isAdmin) TABS.push({ id: 'review', icon: 'shield', label: '审核' });
+
   useEffect(() => {
     if (tab === 'review' && isAdmin) loadReview(reviewStatus);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -269,16 +280,6 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       showToast((e && e.message) || '操作失败');
     }
   };
-  const tabsRef = useRef(null);
-
-  const isAdmin = !!(pointsInfo && pointsInfo.is_admin);
-  const TABS = [
-    { id: 'points', icon: 'coins', label: '积分' },
-    { id: 'api', icon: 'plug', label: 'API' },
-    { id: 'invite', icon: 'gift', label: '邀请' },
-  ];
-  if (isAdmin) TABS.push({ id: 'stats', icon: 'chart', label: '统计' });
-  if (isAdmin) TABS.push({ id: 'review', icon: 'shield', label: '审核' });
 
   useEffect(() => {
     api.getConfig().then((c) => setVersion((c && c.version) || '')).catch(() => {});
