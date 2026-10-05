@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS points_ledger(
   created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON points_ledger(user_id, id);
+-- ---- 邀请系统 ----
+-- users.invite_code / users.invited_by 在迁移块中按需添加（老库兼容）
 `;
 
 let _db = null;
@@ -116,10 +118,41 @@ export function getDb() {
     if (!userCols.includes('points_balance')) _db.exec('ALTER TABLE users ADD COLUMN points_balance INTEGER DEFAULT 0');
     if (!userCols.includes('billing_mode')) _db.exec("ALTER TABLE users ADD COLUMN billing_mode TEXT DEFAULT 'points'");
     if (!userCols.includes('is_admin')) _db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
+    // 邀请系统
+    if (!userCols.includes('invite_code')) _db.exec('ALTER TABLE users ADD COLUMN invite_code TEXT');
+    if (!userCols.includes('invited_by')) _db.exec('ALTER TABLE users ADD COLUMN invited_by TEXT');
+    // 账本：记录 token 用量与模型（用量统计用，可空）
+    const ledgerCols = _db.prepare('PRAGMA table_info(points_ledger)').all().map((c) => c.name);
+    if (!ledgerCols.includes('tokens_input')) _db.exec('ALTER TABLE points_ledger ADD COLUMN tokens_input INTEGER');
+    if (!ledgerCols.includes('tokens_output')) _db.exec('ALTER TABLE points_ledger ADD COLUMN tokens_output INTEGER');
+    if (!ledgerCols.includes('model')) _db.exec('ALTER TABLE points_ledger ADD COLUMN model TEXT');
     // 首个注册用户自动成为管理员（只执行一次）
     const firstUser = _db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
     if (firstUser) {
       _db.prepare('UPDATE users SET is_admin = 1 WHERE id = ? AND is_admin = 0').run(firstUser.id);
+    }
+    // 邀请码唯一索引 + 老用户补发邀请码（8 位大写字母数字，去掉易混淆字符）
+    _db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_invite_code ON users(invite_code)');
+    const noCode = _db.prepare("SELECT id FROM users WHERE invite_code IS NULL OR invite_code = ''").all();
+    if (noCode.length) {
+      const used = new Set(
+        _db.prepare('SELECT invite_code FROM users WHERE invite_code IS NOT NULL').all().map((r) => r.invite_code)
+      );
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      const mk = () => {
+        let s = '';
+        for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+        return s;
+      };
+      const upd = _db.prepare('UPDATE users SET invite_code = ? WHERE id = ?');
+      _db.transaction((rows) => {
+        for (const r of rows) {
+          let code = mk();
+          while (used.has(code)) code = mk();
+          used.add(code);
+          upd.run(code, r.id);
+        }
+      })(noCode);
     }
     // 老用户一次性迁移：有托管 Key 的保持 byok，否则走积分；统一补 500 注册积分（幂等）
     const needBonus = _db
