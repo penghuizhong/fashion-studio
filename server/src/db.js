@@ -306,6 +306,7 @@ export function getDb() {
       grant(needBonus);
     }
     // v1.10 一次性迁移：memory_md 条目 → memory_facts（只迁还没有 facts 的角色）
+    // v1.12.1 修正：先去掉 HTML 注释块（模板说明文字），避免注释被拆成 facts
     const migChars = _db
       .prepare(
         `SELECT id, memory_md FROM characters
@@ -320,7 +321,8 @@ export function getDb() {
       );
       _db.transaction((rows) => {
         for (const c of rows) {
-          const lines = String(c.memory_md)
+          const noComment = String(c.memory_md).replace(/<!--[\s\S]*?-->/g, '');
+          const lines = noComment
             .split('\n')
             .map((s) => s.trim())
             .filter((s) => s && !s.startsWith('#'));
@@ -331,6 +333,15 @@ export function getDb() {
         }
       })(migChars);
       console.log(`[db] 记忆迁移：${migChars.length} 个角色的 memory_md 已拆为 facts 条目`);
+    }
+    // v1.12.1 清理：删除此前迁移误拆模板注释产生的 facts（FTS 触发器自动清理索引）
+    try {
+      const del = _db
+        .prepare(`DELETE FROM memory_facts WHERE fact LIKE '%此文本框保留做兼容%' OR fact LIKE '<!--%'`)
+        .run();
+      if (del.changes) console.log(`[db] 清理模板注释 facts：${del.changes} 条`);
+    } catch (e) {
+      console.warn('[db] 注释 facts 清理失败:', e.message);
     }
   } catch (e) {
     console.warn('[db] 迁移失败:', e.message);

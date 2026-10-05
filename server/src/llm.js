@@ -311,13 +311,14 @@ return null;
 
 // v1.10 条目级记忆提取：返回 { user_md: 全文或null(无变化), facts: [{op, text, importance, supersedes_id}] }
 // existingFacts: [{id, fact}] 已有相关事实，供 LLM 做 ADD/SUPERSEDE/NOOP 判断
-const FACTS_SYSTEM = `你是记忆整理助手。根据当前 user_md、已有相关记忆事实和最近对话，输出 JSON。
+export const FACTS_SYSTEM = `你是记忆整理助手。根据当前 user_md、已有相关记忆事实和最近对话，输出 JSON。
 只返回 JSON：{"user_md": "全文（无变化则为 null）", "facts": [{"op": "ADD/SUPERSEDE/NOOP", "text": "事实描述", "importance": 1-5, "supersedes_id": 数字或null}]}，不要输出其他文字。
 要求：
-1. user_md：关于用户的稳定事实（称呼、偏好、重要事项），条列简洁；无新信息时返回 null，不要重写。
-2. facts：本轮新出现的、值得长期记住的事实，每条一句话。事件/约定类带日期时间（现在是 {now}，格式如 10月5日 19:30）；偏好类事实不需要时间。
-3. 对照已有事实去重：语义重复 → NOOP；新事实推翻旧事实 → SUPERSEDE 并给出 supersedes_id（旧事实 id）；否则 ADD。
-4. 没有值得记的新事实时 facts 为空数组。`;
+1. user_md：关于用户的长期稳定画像（称呼、身份、长期偏好、特点），条列简洁，不带时间；无新信息时返回 null，不要重写。
+2. facts：本轮新出现的具体事件、约定或变化，每条一句话，带日期时间（现在是 {now}，格式如 10月5日 19:30）。
+3. 互斥：同一条信息只记录在一处。长期画像只进 user_md，具体事件只进 facts；已在 user_md 里的画像不要再写成 facts，避免两边重复。
+4. 对照已有事实去重：语义重复 → NOOP；新事实推翻旧事实 → SUPERSEDE 并给出 supersedes_id（旧事实 id）；否则 ADD。
+5. 没有值得记的新事实时 facts 为空数组。`;
 export async function extractFacts({ userMd, existingFacts, rounds, model, apiKey, baseUrl, onUsage, signal }) {
 const cfg = getConfig();
 const today = new Date().toISOString().slice(0, 10);
