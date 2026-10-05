@@ -5,9 +5,9 @@ import Icon from './icons.jsx';
 
 const TABS = [
   { id: 'chat', label: '对话', icon: 'chat' },
-  { id: 'soul', label: 'soul', icon: 'book' },
-  { id: 'user', label: 'user', icon: 'user' },
-  { id: 'memory', label: 'memory', icon: 'menu' },
+  { id: 'soul', label: '灵魂', icon: 'book' },
+  { id: 'user', label: '档案', icon: 'user' },
+  { id: 'memory', label: '记忆', icon: 'history' },
 ];
 
 const FILE_FIELD = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
