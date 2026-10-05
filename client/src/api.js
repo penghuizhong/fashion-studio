@@ -220,6 +220,11 @@ export const api = {
   getFileVersions: (id, file, limit = 20) =>
     get(`/api/characters/${id}/file-versions?file=${encodeURIComponent(file)}&limit=${limit}`),
 
+  // v1.10 意图识别：灵魂修改建议
+  getSuggestions: (characterId) => get(`/api/characters/${characterId}/suggestions`),
+  applySuggestion: (id) => post(`/api/suggestions/${id}/apply`, {}),
+  dismissSuggestion: (id) => post(`/api/suggestions/${id}/dismiss`, {}),
+
   listConversations: (characterId) => get(`/api/characters/${characterId}/conversations`),
   createConversation: (characterId, data = {}) => post(`/api/characters/${characterId}/conversations`, data),
   renameConversation: (id, title) => put(`/api/conversations/${id}`, { title }),

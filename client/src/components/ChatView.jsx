@@ -24,6 +24,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // v1.10 意图识别：待确认的灵魂修改建议
+  const [suggestions, setSuggestions] = useState([]);
   const taRef = useRef(null);
   const scrollRef = useRef(null);
   const abortRef = useRef(null);
@@ -69,6 +71,49 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, streamText, groupStreams, typing, errorMsg]);
+
+  // v1.10：轮询待确认的灵魂修改建议（仅单聊）
+  useEffect(() => {
+    if (isGroup || !characterId) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    let timer = null;
+    const poll = async () => {
+      try {
+        const list = await api.getSuggestions(characterId);
+        if (!cancelled) setSuggestions(Array.isArray(list) ? list : []);
+      } catch {
+        /* 忽略，后台静默重试 */
+      }
+    };
+    poll();
+    timer = setInterval(poll, 15000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [characterId, isGroup, conversationId]);
+
+  const handleApplySuggestion = async (id) => {
+    try {
+      await api.applySuggestion(id);
+      setSuggestions((prev) => prev.filter((s) => s.id !== id));
+      showToast('已写入灵魂');
+    } catch (e) {
+      showToast(e.message || '写入失败');
+    }
+  };
+
+  const handleDismissSuggestion = async (id) => {
+    try {
+      await api.dismissSuggestion(id);
+    } catch {
+      /* 忽略 */
+    }
+    setSuggestions((prev) => prev.filter((s) => s.id !== id));
+  };
 
   const autoGrow = () => {
     const el = taRef.current;
@@ -348,6 +393,21 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
       </div>
 
       <div className="composer">
+        {!isGroup && suggestions.length > 0 && (
+          <div className="suggestion-nudge">
+            <div className="suggestion-text">
+              💡 检测到你想给「{character ? character.name : 'TA'}」加个设定：「{suggestions[0].proposed}」
+            </div>
+            <div className="suggestion-actions">
+              <button className="btn small primary" onClick={() => handleApplySuggestion(suggestions[0].id)}>
+                写入灵魂
+              </button>
+              <button className="btn small secondary" onClick={() => handleDismissSuggestion(suggestions[0].id)}>
+                忽略
+              </button>
+            </div>
+          </div>
+        )}
         <div className="input-wrap">
           <textarea
             ref={taRef}
