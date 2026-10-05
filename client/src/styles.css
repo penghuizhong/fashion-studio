@@ -2592,20 +2592,36 @@ textarea {
 
 /* ---------- 发现角色 ---------- */
 .discover {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  background: var(--bg);
+}
+.discover-inner {
   max-width: 1080px;
   margin: 0 auto;
-  padding: 20px 16px 80px;
-  position: relative;
+  padding: 14px 16px 80px;
 }
 .discover-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.discover-header-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 10px 16px;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 4px;
 }
-.discover-header h2 {
+.discover-header-inner h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: 17px;
 }
 .discover-sub {
   margin: 0 0 16px;

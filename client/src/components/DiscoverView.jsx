@@ -131,13 +131,16 @@ export default function DiscoverView({
   // 年龄门未过：占位页
   if (!ageOk) {
     return (
-      <div className="discover discover-gate-wrap">
+      <div className="discover">
         <header className="discover-header">
-          <button className="menu-btn icon-btn" title="打开侧边栏" onClick={onOpenSidebar}>
-            ☰
-          </button>
-          <h2>发现角色</h2>
+          <div className="discover-header-inner">
+            <button className="menu-btn icon-btn" title="打开侧边栏" onClick={onOpenSidebar}>
+              ☰
+            </button>
+            <h2>发现角色</h2>
+          </div>
         </header>
+        <div className="discover-inner">
         <div className="discover-gate">
           <div className="gate-card">
           <div className="gate-emoji">🧭</div>
@@ -172,6 +175,7 @@ export default function DiscoverView({
           </div>
         )}
         </div>
+        </div>
       </div>
     );
   }
@@ -179,11 +183,14 @@ export default function DiscoverView({
   return (
     <div className="discover">
       <header className="discover-header">
-        <button className="menu-btn icon-btn" title="打开侧边栏" onClick={onOpenSidebar}>
-          ☰
-        </button>
-        <h2>发现角色</h2>
+        <div className="discover-header-inner">
+          <button className="menu-btn icon-btn" title="打开侧边栏" onClick={onOpenSidebar}>
+            ☰
+          </button>
+          <h2>发现角色</h2>
+        </div>
       </header>
+      <div className="discover-inner">
       <p className="discover-sub">官方预设，一键领养即聊；也可以让 AI 为你定制一张</p>
 
       <div className="discover-search">
@@ -349,6 +356,7 @@ export default function DiscoverView({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
