@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, formatTime, getApiConfig } from '../api.js';
 import { useAuth } from '../auth.jsx';
+import Icon from './icons.jsx';
+import ProfilePanel from './ProfilePanel.jsx';
 
 export default function Sidebar({
   characters,
@@ -14,8 +16,7 @@ export default function Sidebar({
   onCharacterCreated,
   onConversationDeleted,
   onConversationsChanged,
-  onOpenAccount,
-  onOpenStats,
+  onOpenSettingsModal,
   onToggleSidebar,
   showToast,
 }) {
@@ -216,11 +217,11 @@ export default function Sidebar({
         </button>
       </div>
 
-      <button className="new-char-btn" onClick={() => setModalOpen(true)}>
-        <span className="new-char-plus">＋</span> 新建角色
+      <button className="nav-row" onClick={() => setModalOpen(true)}>
+        <Icon name="plus" size={18} /> 新建角色
       </button>
-      <button className="new-char-btn ghost" onClick={() => setGroupModalOpen(true)}>
-        <span className="new-char-plus">👥</span> 新建群聊
+      <button className="nav-row" onClick={() => setGroupModalOpen(true)}>
+        <Icon name="users" size={18} /> 新建群聊
       </button>
 
       <div className="char-list">
@@ -313,8 +314,8 @@ export default function Sidebar({
       <div className="sidebar-footer">
       {multiUser && user ? (
         <div className="user-card-wrap" ref={menuRef}>
-          <button className="user-card" onClick={() => setMenuOpen((o) => !o)} title="账户菜单">
-            <span className="user-avatar">👤</span>
+          <button className="user-row" onClick={() => setMenuOpen((o) => !o)} title="账户">
+            <span className="profile-avatar sm">{(user.username || '?').slice(0, 1).toUpperCase()}</span>
             <span className="user-meta">
               <span className="user-name" title={user.username}>
                 {user.username}
@@ -323,35 +324,19 @@ export default function Sidebar({
                 <span className="user-points">{pointsInfo.balance} 积分</span>
               )}
             </span>
-            <span className="user-caret">{menuOpen ? '▾' : '▴'}</span>
           </button>
           {menuOpen && (
-            <div className="user-menu">
-              <button
-                onClick={() => {
-                  setMenuOpen(false);
-                  onOpenAccount();
-                }}
-              >
-                💰 积分与 API
-              </button>
-              {pointsInfo && pointsInfo.is_admin && (
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onOpenStats();
-                  }}
-                >
-                  📊 用量统计
-                </button>
-              )}
-              <button onClick={onToggleTheme}>
-                {theme === 'black' ? '☀️ 浅色主题' : '🌙 深色主题'}
-              </button>
-              <button className="danger" onClick={handleLogout}>
-                🚪 退出登录
-              </button>
-            </div>
+            <ProfilePanel
+              user={user}
+              pointsInfo={pointsInfo}
+              theme={theme}
+              onSelect={(tab) => {
+                setMenuOpen(false);
+                onOpenSettingsModal(tab);
+              }}
+              onToggleTheme={onToggleTheme}
+              onLogout={handleLogout}
+            />
           )}
         </div>
       ) : (
@@ -368,11 +353,11 @@ export default function Sidebar({
             </span>
             <div className="footer-actions">
               <button
-                className="theme-btn"
+                className="icon-btn"
                 title={theme === 'black' ? '切换到白色主题' : '切换到黑色主题'}
                 onClick={onToggleTheme}
               >
-                {theme === 'black' ? '☀️' : '🌙'}
+                <Icon name={theme === 'black' ? 'sun' : 'moon'} size={18} />
               </button>
             </div>
           </>

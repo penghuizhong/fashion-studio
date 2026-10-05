@@ -2,13 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import ChatView from './components/ChatView.jsx';
 import SettingsView from './components/SettingsView.jsx';
-import AccountView from './components/AccountView.jsx';
-import StatsView from './components/StatsView.jsx';
+import SettingsModal from './components/SettingsModal.jsx';
 import AuthPage from './components/AuthPage.jsx';
 import { useAuth } from './auth.jsx';
 import { api } from './api.js';
 
-// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'settings', characterId } | { type: 'account' } | { type: 'stats' }
+// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'settings', characterId }
 
 export default function App() {
   const { multiUser, user, authReady } = useAuth();
@@ -17,6 +16,8 @@ export default function App() {
   const [view, setView] = useState({ type: 'empty' });
   const [toast, setToast] = useState(null);
   const [convRefresh, setConvRefresh] = useState(0);
+  // 设置弹窗：{ open, tab }
+  const [settingsModal, setSettingsModal] = useState({ open: false, tab: 'points' });
   const toastTimer = useRef(null);
 
   // 侧边栏显隐：桌面端默认展开并记忆偏好；移动端默认收起为抽屉
@@ -165,12 +166,8 @@ export default function App() {
         convRefresh={convRefresh}
         theme={theme}
         onToggleTheme={toggleTheme}
-        onOpenAccount={() => {
-          setView({ type: 'account' });
-          if (window.innerWidth <= 768) setSidebarOpen(false);
-        }}
-        onOpenStats={() => {
-          setView({ type: 'stats' });
+        onOpenSettingsModal={(tab) => {
+          setSettingsModal({ open: true, tab: tab || 'points' });
           if (window.innerWidth <= 768) setSidebarOpen(false);
         }}
         onSelectConversation={handleSelectConversation}
@@ -221,13 +218,14 @@ export default function App() {
             <p>从左侧选择角色或群聊开始，也可以新建角色、发起群聊。</p>
           </div>
         )}
-        {view.type === 'account' && (
-          <AccountView onOpenSidebar={() => setSidebarOpen(true)} showToast={showToast} />
-        )}
-        {view.type === 'stats' && (
-          <StatsView onOpenSidebar={() => setSidebarOpen(true)} showToast={showToast} />
-        )}
       </main>
+      {settingsModal.open && (
+        <SettingsModal
+          initialTab={settingsModal.tab}
+          onClose={() => setSettingsModal((s) => ({ ...s, open: false }))}
+          showToast={showToast}
+        />
+      )}
       {toast && (
         <div className="toast" key={toast.id}>
           {toast.text}
