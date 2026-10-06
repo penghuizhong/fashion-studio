@@ -316,13 +316,16 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                           >
                             恢复内置模板
                           </button>
-                          <span className="dirty-hint">{rpDirty ? '● 有未保存的修改' : ''}</span>
-                          <button className="btn primary" onClick={saveRoleplay} disabled={rpSaving || !rpDirty}>
-                            {rpSaving ? '保存中…' : '保存扮演设置'}
-                          </button>
                         </div>
                       </>
                     )}
+                    {/* v1.16.3: 保存按钮移出 roleplayMode 条件，关闭时也能保存 */}
+                    <div className="settings-actions">
+                      <span className="dirty-hint">{rpDirty ? '● 有未保存的修改' : ''}</span>
+                      <button className="btn primary" onClick={saveRoleplay} disabled={rpSaving || !rpDirty}>
+                        {rpSaving ? '保存中…' : '保存扮演设置'}
+                      </button>
+                    </div>
                   </div>
                 )}
                 <textarea
