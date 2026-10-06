@@ -1345,20 +1345,24 @@ async function runMulti() {
     await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB37 });
     const g0 = await req('GET', '/api/admin/settings', undefined, { jar: jarA37 });
     const badModel = await req('PUT', '/api/admin/settings', { worker_model: 'no-such-model' }, { jar: jarA37 });
-    const forbidden = await req('PUT', '/api/admin/settings', { worker_model: 'qwen3.8-flash' }, { jar: jarB37 });
-    const set1 = await req('PUT', '/api/admin/settings', { worker_model: 'qwen3.8-flash', chat_default_model: '' }, { jar: jarA37 });
+    const forbidden = await req('PUT', '/api/admin/settings', { worker_model: 'qwen/qwen3.8-flash' }, { jar: jarB37 });
+    const set1 = await req('PUT', '/api/admin/settings', { worker_model: 'qwen/qwen3.8-flash', chat_default_model: '' }, { jar: jarA37 });
     const g1 = await req('GET', '/api/admin/settings', undefined, { jar: jarA37 });
     // getWorkerModel 应返回管理员配置的模型
     const { getWorkerModel } = await import('../src/points.js');
     const wm = getWorkerModel();
     // 清理：恢复自动
     await req('PUT', '/api/admin/settings', { worker_model: '', chat_default_model: '' }, { jar: jarA37 });
+    // v1.15.1 诊断：CI 偶发 set=400 时打出表内容（含不可见字符）
+    const { getDb: getDb37 } = await import('../src/db.js');
+    const models37 = getDb37().prepare('SELECT model_id, is_active FROM points_models').all();
+    const modelsStr = JSON.stringify(models37.map((r) => [r.model_id, r.is_active]));
     ok(
       'M37. 管理员读写模型配置；非法模型 → 400；非管理员 → 403；getWorkerModel 生效',
       g0.status === 200 && 'worker_model' in (g0.json || {}) &&
         badModel.status === 400 && forbidden.status === 403 &&
-        set1.status === 200 && g1.json.worker_model === 'qwen3.8-flash' && wm === 'qwen3.8-flash',
-      `get=${g0.status} bad=${badModel.status} forbid=${forbidden.status} set=${set1.status} wm=${wm}`
+        set1.status === 200 && g1.json.worker_model === 'qwen/qwen3.8-flash' && wm === 'qwen/qwen3.8-flash',
+      `get=${g0.status} bad=${badModel.status} forbid=${forbidden.status} set=${set1.status} wm=${wm} models=${modelsStr} setBody=${JSON.stringify(set1.json)}`
     );
   }
 
