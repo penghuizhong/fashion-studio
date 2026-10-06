@@ -332,7 +332,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     <div className="chat">
       <header className="chat-header">
         <div className="chat-header-main">
-          <button className="menu-btn icon-btn" title="打开侧边栏" onClick={onOpenSidebar}>
+          <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
             ☰
           </button>
           <span className="chat-avatar">{headerAvatar}</span>

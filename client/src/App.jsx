@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import ChatView from './components/ChatView.jsx';
 import DiscoverView from './components/DiscoverView.jsx';
+import HomeEmpty from './components/HomeEmpty.jsx';
 import CharacterSettingsModal from './components/CharacterSettingsModal.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import AuthPage from './components/AuthPage.jsx';
@@ -336,17 +337,15 @@ export default function App() {
           />
         )}
         {view.type === 'empty' && (
-          <div className="empty-state">
-            <button className="menu-btn icon-btn" title="打开侧边栏" onClick={() => setSidebarOpen(true)}>
-              ☰
-            </button>
-            <div className="empty-logo">💬</div>
-            <h2>SoulChat</h2>
-            <p>从左侧选择角色或群聊开始，也可以去发现页领养官方角色。</p>
-            <button className="btn-ghost" onClick={handleOpenDiscover}>
-              🧭 去发现角色
-            </button>
-          </div>
+          <HomeEmpty
+            user={user}
+            config={config}
+            onOpenSidebar={() => setSidebarOpen(true)}
+            onOpenDiscover={handleOpenDiscover}
+            onAdopted={handleAdopted}
+            onRequireLogin={handleRequireLogin}
+            showToast={showToast}
+          />
         )}
       </main>
       {settingsModal.open && (

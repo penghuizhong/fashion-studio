@@ -176,7 +176,7 @@ export default function DiscoverView({
       <div className="discover">
         <header className="discover-header">
           <div className="discover-header-inner">
-            <button className="menu-btn icon-btn" title="打开侧边栏" onClick={onOpenSidebar}>
+            <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
               ☰
             </button>
             <h2>发现角色</h2>
@@ -227,7 +227,7 @@ export default function DiscoverView({
     <div className="discover">
       <header className="discover-header">
         <div className="discover-header-inner">
-          <button className="menu-btn icon-btn" title="打开侧边栏" onClick={onOpenSidebar}>
+          <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
             ☰
           </button>
           <h2>发现角色</h2>
