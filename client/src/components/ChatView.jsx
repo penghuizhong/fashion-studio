@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, formatFullTime } from '../api.js';
 import GroupSettingsModal from './GroupSettingsModal.jsx';
 import Icon from './icons.jsx';
+import Avatar from './Avatar.jsx';
 
 // v1.13.3 轻量 markdown 渲染（聊天消息用）：只处理加粗/代码块/换行
 // 先转义 HTML 防 XSS；代码块先提取避免内部 ** 被误处理
@@ -325,7 +326,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   const pct = contextInfo && contextInfo.budget ? Math.min(100, (contextInfo.used / contextInfo.budget) * 100) : 0;
   const hot = pct > 80;
 
-  const headerAvatar = isGroup ? '👥' : character ? character.avatar || '✨' : '✨';
+  const headerAvatarSrc = isGroup ? null : character ? character.avatar : null;
   const headerName = isGroup ? '群聊' : character ? character.name : '…';
 
   return (
@@ -335,7 +336,11 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
             ☰
           </button>
-          <span className="chat-avatar">{headerAvatar}</span>
+          {isGroup ? (
+            <span className="chat-avatar">👥</span>
+          ) : (
+            <Avatar src={headerAvatarSrc} size={32} className="chat-avatar" />
+          )}
           <span className="chat-char-name">{headerName}</span>
           <span className="chat-divider">·</span>
           {renaming ? (
@@ -384,7 +389,9 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         {loading && <div className="loading-hint">加载中…</div>}
         {!loading && messages.length === 0 && !sending && (
           <div className="chat-empty">
-            <div className="chat-empty-avatar">{isGroup ? '👥' : headerAvatar}</div>
+            <div className="chat-empty-avatar">
+              {isGroup ? '👥' : <Avatar src={headerAvatarSrc} size={64} />}
+            </div>
             <p>
               {isGroup ? (
                 <>
@@ -406,7 +413,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           <div key={m.id} className={`msg-row ${m.role === 'user' ? 'user' : 'assistant'}`}>
             {isGroup && m.role === 'assistant' && (
               <div className="msg-speaker">
-                <span className="msg-speaker-avatar">{m.character_avatar || '✨'}</span>
+                <Avatar src={m.character_avatar} size={24} className="msg-speaker-avatar" />
                 <span className="msg-speaker-name">{m.character_name || '某人'}</span>
               </div>
             )}
@@ -425,7 +432,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             return (
               <div key={`stream-${cid}`} className="msg-row assistant">
                 <div className="msg-speaker">
-                  <span className="msg-speaker-avatar">{(mem && mem.avatar) || '✨'}</span>
+                  <Avatar src={mem && mem.avatar} size={24} className="msg-speaker-avatar" />
                   <span className="msg-speaker-name">{(mem && mem.name) || '某人'}</span>
                 </div>
                 <div className="bubble streaming">
