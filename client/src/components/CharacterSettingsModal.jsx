@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, formatFullTime } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
+import AvatarPicker from './AvatarPicker.jsx';
 import MemoryFacts from './MemoryFacts.jsx';
 import { ROLEPLAY_TEMPLATE } from '../roleplayTemplate.js';
 
@@ -220,28 +221,10 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
               </label>
               <div>
                 <div className="field-label">头像</div>
-                <div className="avatar-grid">
-                  {[
-                    '/avatars/avatar-gen-1.png',
-                    '/avatars/avatar-gen-2.png',
-                    '/avatars/avatar-gen-3.png',
-                    '/avatars/avatar-gen-4.png',
-                    '/avatars/avatar-gen-5.png',
-                    '/avatars/avatar-gen-6.png',
-                    '/avatars/avatar-gen-7.png',
-                    '/avatars/avatar-gen-8.png',
-                  ].map((a) => (
-                    <button
-                      key={a}
-                      className={`avatar-option${settings.avatar === a ? ' selected' : ''}`}
-                      onClick={() => setS('avatar')({ target: { value: a } })}
-                      title="选择头像"
-                      type="button"
-                    >
-                      <img src={a} alt="头像" />
-                    </button>
-                  ))}
-                </div>
+                <AvatarPicker
+                  value={settings.avatar}
+                  onChange={(a) => setS('avatar')({ target: { value: a } })}
+                />
               </div>
               <label>
                 温度：{Number(settings.temperature).toFixed(2)}

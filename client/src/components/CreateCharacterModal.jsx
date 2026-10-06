@@ -2,19 +2,9 @@
 import { useState } from 'react';
 import { api, isMultiUserMode } from '../api.js';
 import Modal from './Modal.jsx';
+import AvatarPicker from './AvatarPicker.jsx';
+import { AVATAR_LIST } from '../avatars.js';
 import { ROLEPLAY_TEMPLATE } from '../roleplayTemplate.js';
-
-// 8 张 AI 预设头像
-const AVATARS = [
-  '/avatars/avatar-gen-1.png', // 古风剑客
-  '/avatars/avatar-gen-2.png', // 古风仙女
-  '/avatars/avatar-gen-3.png', // 二次元少女
-  '/avatars/avatar-gen-4.png', // 二次元少年
-  '/avatars/avatar-gen-5.png', // 猫耳娘
-  '/avatars/avatar-gen-6.png', // 运动系
-  '/avatars/avatar-gen-7.png', // 治愈系
-  '/avatars/avatar-gen-8.png', // 赛博
-];
 
 // 灵魂预设模板（6 个常用）
 const SOUL_TEMPLATES = {
@@ -38,7 +28,7 @@ const SOUL_TEMPLATE_TEXT = {
 
 export default function CreateCharacterModal({ onClose, onCreated, showToast }) {
   const [name, setName] = useState('');
-  const [avatar, setAvatar] = useState(AVATARS[0]);
+  const [avatar, setAvatar] = useState(AVATAR_LIST[0]);
   const [soul, setSoul] = useState('');
   const [userMd, setUserMd] = useState('');
   const [roleplayMode, setRoleplayMode] = useState(false);
@@ -130,18 +120,7 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
 
       <div>
         <div className="field-label">头像</div>
-        <div className="avatar-grid">
-          {AVATARS.map((a) => (
-            <button
-              key={a}
-              className={`avatar-option${avatar === a ? ' selected' : ''}`}
-              onClick={() => setAvatar(a)}
-              title="选择头像"
-            >
-              <img src={a} alt="头像" />
-            </button>
-          ))}
-        </div>
+        <AvatarPicker value={avatar} onChange={setAvatar} />
       </div>
 
       <div>
