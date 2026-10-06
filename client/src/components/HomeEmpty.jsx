@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api, isMultiUserMode } from '../api.js';
 import Icon from './icons.jsx';
+import Avatar from './Avatar.jsx';
 
 export default function HomeEmpty({
   user,
@@ -98,7 +99,7 @@ export default function HomeEmpty({
                   onClick={() => adopt(c, c.id)}
                   disabled={!!adoptingId}
                 >
-                  <span className="home-hot-avatar">{c.avatar || '🤖'}</span>
+                  <Avatar src={c.avatar} size={56} className="home-hot-avatar" />
                   <span className="home-hot-name">{c.name}</span>
                   <span className="home-hot-tag">{c.tagline || ''}</span>
                   {adoptingId === c.id && <span className="home-hot-loading">领养中…</span>}
@@ -138,7 +139,7 @@ export default function HomeEmpty({
           {card && (
             <div className="home-gen-result">
               <div className="home-gen-card">
-                <span className="home-hot-avatar lg">{card.avatar || '🤖'}</span>
+                <Avatar src={card.avatar} size={64} className="home-hot-avatar" />
                 <div className="home-gen-meta">
                   <div className="home-hot-name">{card.name}</div>
                   <div className="home-hot-tag">{card.tagline || ''}</div>

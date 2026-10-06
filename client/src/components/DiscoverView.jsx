@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, isMultiUserMode } from '../api.js';
 import Icon from './icons.jsx';
+import Avatar from './Avatar.jsx';
 
 const AGE_KEY = 'soulchat-age-ok';
 const CAT_FALLBACK = {
@@ -450,7 +451,7 @@ function CardDetailModal({ card, categories, onClose, onAdopt, adopting, extraAc
         </div>
         <div className="card-detail">
           <div className="card-detail-top">
-            <span className="preset-avatar xl">{card.avatar || '🤖'}</span>
+            <Avatar src={card.avatar} size={72} className="preset-avatar" />
             <div>
               <div className="preset-tagline">{card.tagline}</div>
               <div className="preset-tags">
@@ -500,7 +501,7 @@ function CardDetailModal({ card, categories, onClose, onAdopt, adopting, extraAc
 function CardFace({ card, categories }) {
   return (
     <div className="preset-face">
-      <span className="preset-avatar">{card.avatar || '🤖'}</span>
+      <Avatar src={card.avatar} size={48} className="preset-avatar" />
       <div className="preset-meta">
         <div className="preset-name">{card.name}</div>
         <div className="preset-tagline">{card.tagline}</div>
@@ -824,7 +825,7 @@ function PublishModal({ categories, showToast, onClose, onDone }) {
             <option value="">请选择…</option>
             {chars.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.avatar || '🤖'} {c.name}
+                {c.name}
               </option>
             ))}
           </select>
@@ -932,7 +933,7 @@ function MyPublishedModal({ showToast, onClose }) {
           <div className="my-pub-list">
             {list.map((item) => (
               <div key={item.id} className="my-pub-row">
-                <span className="preset-avatar sm">{item.card.avatar || '🤖'}</span>
+                <Avatar src={item.card.avatar} size={36} className="preset-avatar" />
                 <div className="my-pub-meta">
                   <div className="my-pub-name">{item.card.name}</div>
                   <div className="my-pub-sub">
