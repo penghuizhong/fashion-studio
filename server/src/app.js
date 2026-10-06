@@ -861,7 +861,8 @@ export function createApp() {
 
   app.post('/api/characters', (req, res) => {
     // v1.16.0: 新建角色弹窗改版，支持 soul_md / user_md / roleplay_mode
-    const { name, avatar, temperature, soul_md, user_md, roleplay_mode } = req.body || {};
+    // v1.16.4: 支持 roleplay_prompt（空=用内置模板）
+    const { name, avatar, temperature, soul_md, user_md, roleplay_mode, roleplay_prompt } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'name 不能为空' });
     const id = randomUUID();
     const t = now();
@@ -876,11 +877,12 @@ export function createApp() {
       model: '',
       temperature: temperature ?? 0.8,
       roleplay_mode: roleplay_mode ? 1 : 0,
+      roleplay_prompt: roleplay_prompt && String(roleplay_prompt).trim() ? String(roleplay_prompt).trim() : null,
       created_at: t,
       updated_at: t,
     };
     db.prepare(
-      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,roleplay_mode,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)'
+      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,roleplay_mode,roleplay_prompt,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
     ).run(
       row.id,
       row.user_id,
@@ -892,6 +894,7 @@ export function createApp() {
       row.model,
       row.temperature,
       row.roleplay_mode,
+      row.roleplay_prompt,
       row.created_at,
       row.updated_at
     );
