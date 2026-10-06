@@ -3,6 +3,8 @@ import { api, formatTime, getApiConfig } from '../api.js';
 import { useAuth } from '../auth.jsx';
 import Icon from './icons.jsx';
 import ProfilePanel from './ProfilePanel.jsx';
+import CreateCharacterModal from './CreateCharacterModal.jsx';
+import Avatar from './Avatar.jsx';
 
 export default function Sidebar({
   characters,
@@ -27,8 +29,6 @@ export default function Sidebar({
   const [expanded, setExpanded] = useState({});
   const [convs, setConvs] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState({ name: '', avatar: '', temperature: '' });
-  const [creating, setCreating] = useState(false);
   // 多用户模式：当前用户
   const { multiUser, user, logout } = useAuth();
   // 用户卡片：积分余额 + 管理员标识 + 菜单
@@ -186,31 +186,6 @@ export default function Sidebar({
     }
   };
 
-  const handleCreateCharacter = async () => {
-    if (!form.name.trim()) {
-      showToast('请填写角色名字');
-      return;
-    }
-    setCreating(true);
-    try {
-      const payload = { name: form.name.trim() };
-      if (form.avatar.trim()) payload.avatar = form.avatar.trim();
-      if (form.temperature !== '' && !Number.isNaN(Number(form.temperature))) {
-        payload.temperature = Number(form.temperature);
-      }
-      const char = await api.createCharacter(payload);
-      setModalOpen(false);
-      setForm({ name: '', avatar: '', temperature: '' });
-      onCharacterCreated(char);
-    } catch (err) {
-      showToast(err.message || '创建失败');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const setField = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
@@ -258,7 +233,7 @@ export default function Sidebar({
                 onClick={() => toggleExpand(c.id)}
               >
                 <span className={`triangle ${isOpen ? 'open' : ''}`}>▸</span>
-                <span className="char-avatar">{c.avatar || '✨'}</span>
+                <Avatar src={c.avatar} size={36} className="char-avatar" />
                 <span className="char-name">{c.name}</span>
                 <span className="conv-badge" title="对话数">
                   {c.conversation_count || 0}
@@ -417,7 +392,7 @@ export default function Sidebar({
                     checked={groupForm.memberIds.includes(c.id)}
                     onChange={() => toggleGroupMember(c.id)}
                   />
-                  <span className="member-avatar">{c.avatar || '✨'}</span>
+                  <Avatar src={c.avatar} size={28} className="member-avatar" />
                   <span>{c.name}</span>
                 </label>
               ))}
@@ -435,41 +410,11 @@ export default function Sidebar({
       )}
 
       {modalOpen && (
-        <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3>新建角色</h3>
-              <button className="modal-close" title="关闭" onClick={() => setModalOpen(false)}>
-                ✕
-              </button>
-            </div>
-            <label>
-              名字 <span className="req">*</span>
-              <input value={form.name} onChange={setField('name')} placeholder="例如：小狐狸阿璃" />
-            </label>
-            <label>
-              头像 emoji
-              <input value={form.avatar} onChange={setField('avatar')} placeholder="🦊（可选）" />
-            </label>
-            <label>
-              温度（0~1）
-              <input
-                value={form.temperature}
-                onChange={setField('temperature')}
-                placeholder="留空用默认"
-                inputMode="decimal"
-              />
-            </label>
-            <div className="modal-actions">
-              <button className="btn secondary" onClick={() => setModalOpen(false)}>
-                取消
-              </button>
-              <button className="btn primary" onClick={handleCreateCharacter} disabled={creating}>
-                {creating ? '创建中…' : '创建'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <CreateCharacterModal
+          onClose={() => setModalOpen(false)}
+          onCreated={onCharacterCreated}
+          showToast={showToast}
+        />
       )}
     </aside>
   );

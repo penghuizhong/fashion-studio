@@ -1,6 +1,7 @@
 // 群聊设置：改群名、增删成员
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import Modal from './Modal.jsx';
 
 export default function GroupSettingsModal({ group, onClose, onSaved, showToast }) {
   const [name, setName] = useState((group && group.title) || '');
@@ -40,37 +41,35 @@ export default function GroupSettingsModal({ group, onClose, onSaved, showToast 
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h3>群聊设置</h3>
-          <button className="modal-close" title="关闭" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-        <label>
-          群名
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="群聊名称" />
-        </label>
-        <div className="member-picker">
-          <div className="member-picker-title">成员（至少 2 个，最多 8 个）</div>
-          {allChars.map((c) => (
-            <label key={c.id} className="member-option">
-              <input type="checkbox" checked={memberIds.includes(c.id)} onChange={() => toggle(c.id)} />
-              <span className="member-avatar">{c.avatar || '✨'}</span>
-              <span>{c.name}</span>
-            </label>
-          ))}
-        </div>
-        <div className="modal-actions">
+    <Modal
+      title="群聊设置"
+      size="s"
+      onClose={onClose}
+      footer={
+        <>
           <button className="btn secondary" onClick={onClose}>
             取消
           </button>
           <button className="btn primary" onClick={save} disabled={saving}>
             {saving ? '保存中…' : '保存'}
           </button>
-        </div>
+        </>
+      }
+    >
+      <label>
+        群名
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="群聊名称" />
+      </label>
+      <div className="member-picker">
+        <div className="member-picker-title">成员（至少 2 个，最多 8 个）</div>
+        {allChars.map((c) => (
+          <label key={c.id} className="member-option">
+            <input type="checkbox" checked={memberIds.includes(c.id)} onChange={() => toggle(c.id)} />
+            <span className="member-avatar">{c.avatar || '✨'}</span>
+            <span>{c.name}</span>
+          </label>
+        ))}
       </div>
-    </div>
+    </Modal>
   );
 }

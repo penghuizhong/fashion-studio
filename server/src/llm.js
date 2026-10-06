@@ -426,6 +426,32 @@ return (json.choices && json.choices[0] && json.choices[0].message && json.choic
 }
 
 // AI 生成角色卡：返回 { card, usage }；mock 模式返回固定示例卡
+// v1.16.0: 只生成 soul_md（新建角色弹窗的 AI 生成灵魂用，比整卡生成省 token）
+export async function generateSoulMd({ desc, model, apiKey, baseUrl, signal }) {
+  const cfg = getConfig();
+  if (cfg.mockLlm) {
+    return {
+      soul_md:
+        '## 身份\n' + desc + '\n## 性格\n温柔耐心，善解人意。\n## 说话风格\n自然亲切，句子简短。\n## 关系\n初次见面，保持友好，慢慢熟悉。',
+      usage: null,
+    };
+  }
+  const messages = [
+    {
+      role: 'system',
+      content:
+        '你是角色设定助手。根据用户的一句话描述，生成一段角色"灵魂设定"（soul_md），用 markdown 写，包含 ## 身份 / ## 性格 / ## 说话风格 / ## 关系 四个小节，每节 2-4 条，简洁具体，只输出设定正文。',
+    },
+    { role: 'user', content: desc },
+  ];
+  const { json, usage } = await postJson({ model, temperature: 0.9, apiKey, baseUrl, signal, messages });
+  const text =
+    (json && json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
+  const soul = String(text).trim();
+  if (!soul) throw new Error('生成结果为空');
+  return { soul_md: soul, usage };
+}
+
 export async function generateCardJson({ desc, model, apiKey, baseUrl, signal }) {
   const cfg = getConfig();
   if (cfg.mockLlm) {
