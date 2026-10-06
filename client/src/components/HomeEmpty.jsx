@@ -1,9 +1,11 @@
-// v1.14 首页空状态：热门角色横滑 + AI 生成胶囊
+// v1.16.6 首页角色墙：Top 6-8 领养数卡片轻轻浮动 + 拼图卡进发现页 + 底部 AI 生成输入框
 // 新用户 10 秒开聊：挑一张现成的，或一句话生成一个
 import { useEffect, useState } from 'react';
 import { api, isMultiUserMode } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
+
+const WALL_COUNT = 8;
 
 export default function HomeEmpty({
   user,
@@ -15,7 +17,8 @@ export default function HomeEmpty({
   showToast,
 }) {
   const loggedIn = !isMultiUserMode() || !!user;
-  const [hotCards, setHotCards] = useState([]);
+  const [wallCards, setWallCards] = useState([]);
+  const [collageCards, setCollageCards] = useState([]);
   const [adoptingId, setAdoptingId] = useState(null);
   // AI 生成
   const [prompt, setPrompt] = useState('');
@@ -25,7 +28,13 @@ export default function HomeEmpty({
   useEffect(() => {
     api
       .getPresetCards()
-      .then((d) => setHotCards(((d && d.cards) || []).slice(0, 4)))
+      .then((d) => {
+        const cards = (d && d.cards) || [];
+        // 按领养数排序（后端已排好），取前 8 张上墙
+        setWallCards(cards.slice(0, WALL_COUNT));
+        // 拼图卡用接下来的 4 张
+        setCollageCards(cards.slice(WALL_COUNT, WALL_COUNT + 4));
+      })
       .catch(() => {});
   }, []);
 
@@ -86,98 +95,113 @@ export default function HomeEmpty({
         <span className="home-logo">SoulChat</span>
       </header>
 
-      <div className="home-body">
+      <div className="home-body wall-body">
         <h1 className="home-title">今天想和谁聊天？</h1>
 
-        {hotCards.length > 0 && (
-          <div className="home-hot">
-            <div className="home-hot-row">
-              {hotCards.map((c) => (
-                <button
-                  key={c.id}
-                  className="home-hot-card"
-                  onClick={() => adopt(c, c.id)}
-                  disabled={!!adoptingId}
-                >
-                  <Avatar src={c.avatar} size={56} className="home-hot-avatar" />
-                  <span className="home-hot-name">{c.name}</span>
-                  <span className="home-hot-tag">{c.tagline || ''}</span>
-                  {adoptingId === c.id && <span className="home-hot-loading">领养中…</span>}
-                </button>
-              ))}
-            </div>
+        {/* 角色墙：Top 领养数卡片浮动 */}
+        {wallCards.length > 0 && (
+          <div className="char-wall">
+            {wallCards.map((c, i) => (
+              <button
+                key={c.id}
+                className={`wall-card float-${i % 4}`}
+                style={{ animationDelay: `${(i % 8) * 0.7}s` }}
+                onClick={() => adopt(c, c.id)}
+                disabled={!!adoptingId}
+              >
+                <Avatar src={c.avatar} size={72} className="wall-avatar" />
+                <span className="wall-name">{c.name}</span>
+                <span className="wall-tag">{c.tagline || ''}</span>
+                {c.adopt_count > 0 && <span className="wall-count">{c.adopt_count} 人领养</span>}
+                {adoptingId === c.id && <span className="wall-loading">领养中…</span>}
+              </button>
+            ))}
+            {/* 拼图卡：进发现页 */}
+            {collageCards.length >= 4 && (
+              <button
+                className="wall-card wall-collage float-2"
+                style={{ animationDelay: '1.4s' }}
+                onClick={onOpenDiscover}
+              >
+                <span className="collage-grid">
+                  {collageCards.map((c) => (
+                    <Avatar key={c.id} src={c.avatar} size={36} />
+                  ))}
+                </span>
+                <span className="wall-name">发现更多</span>
+                <span className="collage-arrow">
+                  <Icon name="chevronRight" size={16} />
+                </span>
+              </button>
+            )}
           </div>
         )}
 
-        <div className="home-gen">
-          <div className="home-gen-capsule">
-            <input
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') generate();
-              }}
-              placeholder="描述你想要的角色，AI 为你生成…"
-              maxLength={500}
-              disabled={generating}
-            />
-            <button
-              className="home-gen-btn"
-              onClick={generate}
-              disabled={generating || !prompt.trim()}
-              title="生成角色"
-            >
-              {generating ? <span className="spin">⏳</span> : '✨'}
-            </button>
-          </div>
-          <p className="home-gen-hint">
-            {isMultiUserMode()
-              ? 'AI 生成按实际用量扣积分，失败不扣'
-              : '使用你自己的 Key 生成，不扣平台积分'}
-          </p>
-
-          {card && (
-            <div className="home-gen-result">
-              <div className="home-gen-card">
-                <Avatar src={card.avatar} size={64} className="home-hot-avatar" />
-                <div className="home-gen-meta">
-                  <div className="home-hot-name">{card.name}</div>
-                  <div className="home-hot-tag">{card.tagline || ''}</div>
-                  {card.greeting && (
-                    <div className="home-gen-greeting">
-                      「{card.greeting.slice(0, 60)}{card.greeting.length > 60 ? '…' : ''}」
-                    </div>
-                  )}
-                </div>
-              </div>
-              {genResult.cost && (
-                <div className="home-gen-cost">
-                  本次消耗 {genResult.cost.points} 积分（{genResult.cost.tokens_input}+
-                  {genResult.cost.tokens_output} tokens）
-                </div>
-              )}
-              <div className="home-gen-actions">
-                <button
-                  className="btn primary"
-                  disabled={!!adoptingId}
-                  onClick={() => adopt(card, null, genResult.saved_id)}
-                >
-                  {adoptingId ? '领养中…' : '领养开聊'}
-                </button>
-                <button className="btn secondary" onClick={generate} disabled={generating}>
-                  换一张
-                </button>
-                <button className="btn secondary" onClick={() => setGenResult(null)}>
-                  收起
-                </button>
+        {/* 生成结果卡 */}
+        {card && (
+          <div className="home-gen-result">
+            <div className="home-gen-card">
+              <Avatar src={card.avatar} size={64} className="home-hot-avatar" />
+              <div className="home-gen-meta">
+                <div className="home-hot-name">{card.name}</div>
+                <div className="home-hot-tag">{card.tagline || ''}</div>
+                {card.greeting && (
+                  <div className="home-gen-greeting">
+                    「{card.greeting.slice(0, 60)}{card.greeting.length > 60 ? '…' : ''}」
+                  </div>
+                )}
               </div>
             </div>
-          )}
-        </div>
+            {genResult.cost && (
+              <div className="home-gen-cost">
+                本次消耗 {genResult.cost.points} 积分（{genResult.cost.tokens_input}+
+                {genResult.cost.tokens_output} tokens）
+              </div>
+            )}
+            <div className="home-gen-actions">
+              <button
+                className="btn primary"
+                disabled={!!adoptingId}
+                onClick={() => adopt(card, null, genResult.saved_id)}
+              >
+                {adoptingId ? '领养中…' : '领养开聊'}
+              </button>
+              <button className="btn secondary" onClick={generate} disabled={generating}>
+                换一张
+              </button>
+              <button className="btn secondary" onClick={() => setGenResult(null)}>
+                收起
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
-        <button className="btn-ghost home-discover" onClick={onOpenDiscover}>
-          <Icon name="compass" size={16} /> 或去发现页逛逛
-        </button>
+      {/* 底部 AI 生成输入框（缩小版） */}
+      <div className="home-gen-bottom">
+        <div className="home-gen-capsule small">
+          <input
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') generate();
+            }}
+            placeholder="描述你想要的角色，AI 为你生成…"
+            maxLength={500}
+            disabled={generating}
+          />
+          <button
+            className="home-gen-btn"
+            onClick={generate}
+            disabled={generating || !prompt.trim()}
+            title="生成角色"
+          >
+            {generating ? <span className="spin">⏳</span> : '✨'}
+          </button>
+        </div>
+        <p className="home-gen-hint">
+          {isMultiUserMode() ? 'AI 生成按实际用量扣积分，失败不扣' : '使用你自己的 Key 生成，不扣平台积分'}
+        </p>
       </div>
     </div>
   );

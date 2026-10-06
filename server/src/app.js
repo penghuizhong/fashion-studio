@@ -303,8 +303,22 @@ export function createApp() {
 
   // ---------- 角色卡 ----------
   // 预设卡列表（公开：未登录可浏览，用于拉新）
+  // v1.16.6: 返回领养数，首页角色墙按领养数取 Top 6-8
   app.get('/api/character-cards/presets', (req, res) => {
-    res.json({ categories: CARD_CATEGORIES, cards: getPresetCards() });
+    const cards = getPresetCards();
+    let counts = {};
+    try {
+      const rows = db
+        .prepare("SELECT card_key, COUNT(*) AS n FROM user_collection WHERE card_key LIKE 'preset:%' GROUP BY card_key")
+        .all();
+      for (const r of rows) counts[r.card_key] = r.n;
+    } catch (e) {}
+    const withCount = cards.map((c) => ({
+      ...c,
+      adopt_count: counts['preset:' + c.id] || 0,
+    }));
+    withCount.sort((a, b) => b.adopt_count - a.adopt_count);
+    res.json({ categories: CARD_CATEGORIES, cards: withCount });
   });
 
   // 一键领养：preset_id 或 card（二选一）→ 建角色 + 建对话 + 开场白作为首条消息
