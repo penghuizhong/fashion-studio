@@ -1888,6 +1888,10 @@ textarea {
   border-color: var(--accent, #5b8def);
   transform: scale(1.04);
 }
+.avatar-more {
+  width: 100%;
+  margin-top: 4px;
+}
 .avatar-custom {
   width: 100%;
   font-size: 14px;
