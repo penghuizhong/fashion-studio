@@ -620,6 +620,38 @@ async function runSingle() {
     );
     const empty = await req('POST', '/api/character-cards/generate', { prompt: '' });
     ok('25b. generate 空 prompt → 400', empty.status === 400, `status=${empty.status}`);
+
+    // v1.16.0: 灵魂生成接口
+    const sr = await req('POST', '/api/soul/generate', { prompt: '一只会讲冷笑话的猫耳女仆' });
+    ok(
+      '25c. POST /api/soul/generate（mock）→ 200：返回 soul_md',
+      sr.status === 200 && sr.json && typeof sr.json.soul_md === 'string' && sr.json.soul_md.length > 10,
+      `status=${sr.status} len=${sr.json && sr.json.soul_md && sr.json.soul_md.length}`
+    );
+    const sEmpty = await req('POST', '/api/soul/generate', { prompt: '' });
+    ok('25d. soul/generate 空 prompt → 400', sEmpty.status === 400, `status=${sEmpty.status}`);
+
+    // v1.16.0: 新建角色支持 soul_md / user_md / roleplay_mode
+    const cr = await req('POST', '/api/characters', {
+      name: '测试魂',
+      avatar: '/avatars/avatar-gen-5.png',
+      soul_md: '## 身份\n猫耳女仆',
+      user_md: '叫我主人',
+      roleplay_mode: 1,
+    });
+    const created = cr.json || {};
+    const dbRow = getDb()
+      .prepare('SELECT soul_md, user_md, roleplay_mode, avatar FROM characters WHERE id = ?')
+      .get(created.id);
+    ok(
+      '25e. POST /api/characters → soul/user_md/roleplay_mode/avatar 落库',
+      cr.status === 201 &&
+        dbRow && dbRow.soul_md.includes('猫耳女仆') &&
+        dbRow.user_md === '叫我主人' &&
+        Number(dbRow.roleplay_mode) === 1 &&
+        dbRow.avatar === '/avatars/avatar-gen-5.png',
+      `status=${cr.status} rp=${dbRow && dbRow.roleplay_mode}`
+    );
   }
 
   // 26. 广场发布（单用户模式直接上架）：建角色 → 发布 → my-published；空卖点/敏感词 → 400
