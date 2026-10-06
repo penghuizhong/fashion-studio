@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { getConfig, getVersion, assertMultiUserConfig } from './config.js';
 import { getDb } from './db.js';
 import { ah, apiErrorHandler } from './asyncHandler.js';
-import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, generateCardJson } from './llm.js';
+import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, generateCardJson, generateSoulMd } from './llm.js';
 import {
   getPresetCards,
   getPresetCard,
@@ -777,6 +777,72 @@ export function createApp() {
     })
   );
 
+  // v1.16.0: AI 生成灵魂设定（新建角色弹窗用）：成功后按真实用量扣积分，失败不扣
+  app.post(
+    '/api/soul/generate',
+    generateLimiter,
+    ah(async (req, res) => {
+      const desc = String((req.body && req.body.prompt) || '').trim();
+      if (!desc) return res.status(400).json({ error: '请先用一句话描述你想要的角色' });
+      if (desc.length > 500) return res.status(400).json({ error: '描述太长了，请控制在 500 字以内' });
+
+      const creds = llmCreds(req, cfg, requestApiKey);
+      const uid = uidOf(req);
+      let usePoints = false;
+      let model = '';
+      let apiKey = creds.apiKey;
+      let baseUrl = creds.baseUrl;
+
+      if (cfg.multiUser && uid) {
+        const u = db.prepare('SELECT billing_mode, points_balance FROM users WHERE id = ?').get(uid);
+        if (u && (u.billing_mode || 'points') === 'points') {
+          model = getWorkerModel();
+          if (!model) return res.status(503).json({ error: '平台暂无可用模型' });
+          if (!cfg.apiKey && !cfg.mockLlm) return res.status(503).json({ error: '平台模型服务暂未开通，请联系管理员' });
+          if (!cfg.mockLlm && (u.points_balance || 0) < 1)
+            return res.status(402).json({ error: '积分不足：请联系管理员充值，或在「API 设置」中切换为自带 Key 模式' });
+          usePoints = true;
+          apiKey = cfg.apiKey;
+          baseUrl = cfg.baseUrl;
+        }
+      }
+      if (!model) {
+        model = creds.workerModel || creds.chatModel;
+        if (!apiKey && !cfg.mockLlm) return res.status(401).json({ error: NO_KEY_MESSAGE });
+      }
+
+      const ac = new AbortController();
+      req.on('close', () => ac.abort());
+      let result;
+      try {
+        result = await generateSoulMd({ desc, model, apiKey, baseUrl, signal: ac.signal });
+      } catch (e) {
+        return res.status(502).json({ error: String((e && e.message) || e).slice(0, 300) });
+      }
+
+      let cost = null;
+      if (usePoints && !cfg.mockLlm) {
+        const usage = result.usage || {
+          input: estimateTokens(desc),
+          output: estimateTokens(result.soul_md),
+        };
+        const pts = calcPoints(model, usage);
+        let balance;
+        try {
+          balance = deductPoints(uid, pts, 'soul_generate', null, null, {
+            tokensInput: usage.input,
+            tokensOutput: usage.output,
+            model,
+          });
+        } catch (e) {
+          return res.status(402).json({ error: '积分不足，本次生成不计费' });
+        }
+        cost = { points: pts, model, tokens_input: usage.input, tokens_output: usage.output, balance };
+      }
+      res.json({ soul_md: result.soul_md, cost });
+    })
+  );
+
   // ---------- characters ----------
   app.get('/api/characters', (req, res) => {
     const uid = uidOf(req);
@@ -794,7 +860,8 @@ export function createApp() {
   });
 
   app.post('/api/characters', (req, res) => {
-    const { name, avatar, temperature } = req.body || {};
+    // v1.16.0: 新建角色弹窗改版，支持 soul_md / user_md / roleplay_mode
+    const { name, avatar, temperature, soul_md, user_md, roleplay_mode } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'name 不能为空' });
     const id = randomUUID();
     const t = now();
@@ -803,16 +870,17 @@ export function createApp() {
       user_id: uidOf(req),
       name: String(name).trim(),
       avatar: avatar || '🤖',
-      soul_md: DEFAULT_SOUL,
-      user_md: DEFAULT_USER_MD,
+      soul_md: soul_md && String(soul_md).trim() ? String(soul_md) : DEFAULT_SOUL,
+      user_md: user_md && String(user_md).trim() ? String(user_md) : DEFAULT_USER_MD,
       memory_md: DEFAULT_MEMORY_MD,
       model: '',
       temperature: temperature ?? 0.8,
+      roleplay_mode: roleplay_mode ? 1 : 0,
       created_at: t,
       updated_at: t,
     };
     db.prepare(
-      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)'
+      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,roleplay_mode,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)'
     ).run(
       row.id,
       row.user_id,
@@ -823,6 +891,7 @@ export function createApp() {
       row.memory_md,
       row.model,
       row.temperature,
+      row.roleplay_mode,
       row.created_at,
       row.updated_at
     );
