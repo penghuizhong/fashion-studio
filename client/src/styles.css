@@ -2435,6 +2435,7 @@ textarea {
   font-size: 14px;
   cursor: pointer;
   text-align: left;
+  white-space: nowrap;
 }
 
 .user-menu button:hover {
