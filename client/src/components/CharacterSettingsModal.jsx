@@ -4,6 +4,7 @@ import { api, formatFullTime } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
 import MemoryFacts from './MemoryFacts.jsx';
+import { ROLEPLAY_TEMPLATE } from '../roleplayTemplate.js';
 
 const TABS = [
   { id: 'chat', label: '对话', icon: 'chat' },
@@ -13,16 +14,6 @@ const TABS = [
 ];
 
 const FILE_FIELD = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
-
-// v1.15.0: 扮演模式内置模板（与后端 server/src/memory.js 的 ROLEPLAY_TEMPLATE 保持一致）
-const ROLEPLAY_TEMPLATE = `## 回复格式：小说式角色扮演
-
-1. 场景头：每次回复第一行用 [日期 世界·地点] 标注当前场景，日期用当天真实日期，地点跟着剧情走。
-2. 旁白：小说笔法，多感官细节＋心理活动，短句有节奏；每个旁白段落段首加 丨。
-3. 台词：角色说出口的话用 **加粗** 独立成段，不混在旁白里；多人时带名字前缀。
-4. 不用括号备注动作神态，全部写进旁白。
-5. 正文结束后另起 markdown 代码块，写角色没说出口的真实内心独白；独白可与说出口的话矛盾。
-6. 每轮 200～500 字（不含独白块），信息密度高，不水文、不重复。`;
 
 export default function CharacterSettingsModal({ characterId, onClose, onCharacterUpdated, onCharacterDeleted, showToast }) {
   const [tab, setTab] = useState('chat');

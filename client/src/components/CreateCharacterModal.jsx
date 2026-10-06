@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { api, isMultiUserMode } from '../api.js';
 import Modal from './Modal.jsx';
+import { ROLEPLAY_TEMPLATE } from '../roleplayTemplate.js';
 
 // 8 张 AI 预设头像
 const AVATARS = [
@@ -41,6 +42,7 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
   const [soul, setSoul] = useState('');
   const [userMd, setUserMd] = useState('');
   const [roleplayMode, setRoleplayMode] = useState(false);
+  const [roleplayPrompt, setRoleplayPrompt] = useState('');
   const [creating, setCreating] = useState(false);
   // AI 生成灵魂
   const [genDesc, setGenDesc] = useState('');
@@ -88,6 +90,10 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
         avatar: effectiveAvatar,
         roleplay_mode: roleplayMode ? 1 : 0,
       };
+      // v1.16.4: 新建时可自定义扮演指令（空=用内置模板）
+      if (roleplayMode && roleplayPrompt.trim()) {
+        payload.roleplay_prompt = roleplayPrompt.trim();
+      }
       if (soul.trim()) payload.soul_md = soul;
       if (userMd.trim()) payload.user_md = userMd;
       const char = await api.createCharacter(payload);
@@ -195,11 +201,34 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
         />
       </div>
 
-      <label className="roleplay-toggle">
-        <input type="checkbox" checked={roleplayMode} onChange={(e) => setRoleplayMode(e.target.checked)} />
-        <span className="roleplay-toggle-label">小说式扮演模式</span>
-        <span className="roleplay-toggle-desc">自动追加回复格式指令</span>
-      </label>
+      <div>
+        <label className="roleplay-toggle">
+          <input type="checkbox" checked={roleplayMode} onChange={(e) => setRoleplayMode(e.target.checked)} />
+          <span className="roleplay-toggle-label">小说式扮演模式</span>
+          <span className="roleplay-toggle-desc">自动追加回复格式指令</span>
+        </label>
+        {roleplayMode && (
+          <>
+            <div className="field-label-row" style={{ marginTop: 10 }}>
+              <span className="field-label">扮演指令（可选）</span>
+              <button
+                className="btn secondary small"
+                type="button"
+                onClick={() => setRoleplayPrompt(ROLEPLAY_TEMPLATE)}
+              >
+                一键填入内置模板
+              </button>
+            </div>
+            <textarea
+              className="md-editor roleplay-editor"
+              value={roleplayPrompt}
+              onChange={(e) => setRoleplayPrompt(e.target.value)}
+              placeholder="留空则使用内置小说式模板；也可自定义…"
+              spellCheck={false}
+            />
+          </>
+        )}
+      </div>
     </Modal>
   );
 }
