@@ -2760,6 +2760,10 @@ textarea {
   text-align: left;
   transition: background 0.15s ease;
   min-height: 44px;
+  white-space: nowrap;
+}
+.profile-item span {
+  white-space: nowrap;
 }
 
 .profile-item:hover {
