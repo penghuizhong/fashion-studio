@@ -281,6 +281,7 @@ export const api = {
   // 角色卡
   getPresetCards: () => get('/api/character-cards/presets'),
   adoptCharacterCard: (data) => post('/api/character-cards/adopt', data),
+  generateSoul: (data) => post('/api/soul/generate', data),
   generateCharacterCard: (data) => post('/api/character-cards/generate', data),
   getSavedCards: () => get('/api/saved-cards'),
   deleteSavedCard: (id) => del(`/api/saved-cards/${id}`),

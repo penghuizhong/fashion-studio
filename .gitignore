@@ -4,3 +4,6 @@ server/data/
 client/dist/
 .DS_Store
 *.log
+# v1.16.0: 头像 PNG 由 client/avatar-src/*.b64 解码生成（构建产物，不进仓库）
+client/public/avatars/*.png
+!client/public/avatars/.gitkeep

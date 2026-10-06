@@ -12,8 +12,9 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prebuild": "sh ../scripts/decode-avatars.sh"
   },
   "type": "module",
-  "version": "1.15.2"
+  "version": "1.16.0"
 }
