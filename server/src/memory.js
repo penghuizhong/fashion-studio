@@ -22,6 +22,24 @@ export function nowBeijingStr() {
   }
 }
 
+// v1.15.0: 扮演模式内置模板（小说式角色扮演格式指令）
+// 用户未自定义时用此模板；前端有一份相同文本用于展示/编辑/恢复默认
+export const ROLEPLAY_TEMPLATE = `## 回复格式：小说式角色扮演
+
+1. 场景头：每次回复第一行用 [日期 世界·地点] 标注当前场景，日期用当天真实日期，地点跟着剧情走。
+2. 旁白：小说笔法，多感官细节＋心理活动，短句有节奏；每个旁白段落段首加 丨。
+3. 台词：角色说出口的话用 **加粗** 独立成段，不混在旁白里；多人时带名字前缀。
+4. 不用括号备注动作神态，全部写进旁白。
+5. 正文结束后另起 markdown 代码块，写角色没说出口的真实内心独白；独白可与说出口的话矛盾。
+6. 每轮 200～500 字（不含独白块），信息密度高，不水文、不重复。`;
+
+// 取角色生效的扮演提示词：开且自定义非空用自定义，开且空用内置，关则返回空
+export function roleplayPromptOf(character) {
+  if (!character || !character.roleplay_mode) return '';
+  const custom = String(character.roleplay_prompt || '').trim();
+  return custom || ROLEPLAY_TEMPLATE;
+}
+
 // 粗略 token 估算：CJK 字符 1.5 字符/token，其余 4 字符/token
 export function estimateTokens(text) {
 const s = String(text?? '');
@@ -86,6 +104,8 @@ ANTI_HALLU.replaceAll('{name}', character.name || ''),
 `# 角色设定\n${character.soul_md || ''}`,
 `# 关于用户\n${character.user_md || ''}`,
 ];
+const rpSingle = roleplayPromptOf(character);
+if (rpSingle) sysParts.push(`# 回复格式要求\n${rpSingle}`);
 // v1.10：memory_md 不再全文注入（已迁移为 facts 条目），改为按需检索
 const facts = retrieveFacts(character.id, conversationId, query, 8);
 if (facts.length) sysParts.push(`# 相关记忆\n${facts.map((f) => `- ${f.fact}`).join('\n')}`);
@@ -179,6 +199,8 @@ ANTI_HALLU.replaceAll('{name}', character.name || ''),
 `# 角色设定\n${character.soul_md || ''}`,
 `# 关于用户\n${character.user_md || ''}`,
 ];
+const rpGroup = roleplayPromptOf(character);
+if (rpGroup) sysParts.push(`# 回复格式要求\n${rpGroup}`);
 const gfacts = retrieveFacts(character.id, conversationId, query, 8);
 if (gfacts.length) sysParts.push(`# 相关记忆\n${gfacts.map((f) => `- ${f.fact}`).join('\n')}`);
 if (summaryText) sysParts.push(summaryText);

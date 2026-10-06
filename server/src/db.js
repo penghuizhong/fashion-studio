@@ -242,8 +242,8 @@ export function getDb() {
     if (modelCount === 0) {
       const now = new Date().toISOString();
       const seed = [
-        ['qwen3.8-flash', 'Qwen3.8 Flash', '快速便宜，日常聊天首选', 200, 600, 0],
-        ['gemini/gemini-3.8-flash', 'Gemini 3.8 Flash', '快速便宜，日常聊天首选', 200, 600, 1],
+        ['qwen/qwen3.8-flash', 'Qwen3.8 Flash', '快速便宜，日常聊天首选', 200, 600, 0],
+        ['google/gemini-3.8-flash', 'Gemini 3.8 Flash', '快速便宜，日常聊天首选', 200, 600, 1],
         ['openai/gpt-6-luna', 'GPT-6 Luna', '旗舰模型，效果最强，消耗较高', 2500, 10000, 2],
       ];
       const ins = _db.prepare(
@@ -347,6 +347,10 @@ export function getDb() {
       console.log(`[db] 记忆迁移：${migChars.length} 个角色的 memory_md 已拆为 facts 条目`);
     }
     // v1.12.1 清理：删除此前迁移误拆模板注释产生的 facts（FTS 触发器自动清理索引）
+    // v1.15.0: 扮演模式开关（按角色）：roleplay_mode 开关，roleplay_prompt 自定义提示词（NULL=用内置模板）
+    const charCols = _db.prepare('PRAGMA table_info(characters)').all().map((c) => c.name);
+    if (!charCols.includes('roleplay_mode')) _db.exec('ALTER TABLE characters ADD COLUMN roleplay_mode INTEGER NOT NULL DEFAULT 0');
+    if (!charCols.includes('roleplay_prompt')) _db.exec('ALTER TABLE characters ADD COLUMN roleplay_prompt TEXT');
     try {
       const del = _db
         .prepare(`DELETE FROM memory_facts WHERE fact LIKE '%此文本框保留做兼容%' OR fact LIKE '<!--%'`)

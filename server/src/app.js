@@ -838,20 +838,30 @@ export function createApp() {
   app.put('/api/characters/:id', (req, res) => {
     const c = getChar(req.params.id, req);
     if (!c) return char404(res);
-    const { name, avatar, temperature } = req.body || {};
+    const { name, avatar, temperature, roleplay_mode, roleplay_prompt } = req.body || {};
     const next = {
       name: name !== undefined ? String(name).trim() : c.name,
       avatar: avatar !== undefined ? avatar : c.avatar,
       model: c.model,
       temperature: temperature !== undefined ? temperature : c.temperature,
+      // v1.15.0: 扮演模式开关 + 自定义提示词（null/空串 = 用内置模板）
+      roleplay_mode: roleplay_mode !== undefined ? (roleplay_mode ? 1 : 0) : (c.roleplay_mode || 0),
+      roleplay_prompt:
+        roleplay_prompt !== undefined
+          ? (String(roleplay_prompt).trim() ? String(roleplay_prompt) : null)
+          : c.roleplay_prompt || null,
       updated_at: now(),
     };
     if (!next.name) return res.status(400).json({ error: 'name 不能为空' });
-    db.prepare('UPDATE characters SET name=?, avatar=?, model=?, temperature=?, updated_at=? WHERE id=?').run(
+    db.prepare(
+      'UPDATE characters SET name=?, avatar=?, model=?, temperature=?, roleplay_mode=?, roleplay_prompt=?, updated_at=? WHERE id=?'
+    ).run(
       next.name,
       next.avatar,
       next.model,
       next.temperature,
+      next.roleplay_mode,
+      next.roleplay_prompt,
       next.updated_at,
       c.id
     );
