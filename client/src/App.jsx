@@ -152,13 +152,20 @@ export default function App() {
     if (window.innerWidth <= 768) setSidebarOpen(false);
   }, []);
 
+  // v1.16.1: 创建角色后直接进入聊天，不再弹角色设置
   const handleCharacterCreated = useCallback(
     async (char) => {
       await refreshCharacters();
-      setCharSettingsModal({ open: true, characterId: char.id });
+      try {
+        const conv = await api.createConversation(char.id, {});
+        handleSelectConversation(char.id, conv.id, false);
+      } catch (e) {
+        // 建会话失败则回退到空状态
+        setView({ type: 'empty' });
+      }
       showToast('角色已创建 🎉');
     },
-    [refreshCharacters, showToast]
+    [refreshCharacters, showToast, handleSelectConversation]
   );
 
   const handleCharacterDeleted = useCallback(

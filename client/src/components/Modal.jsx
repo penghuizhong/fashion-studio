@@ -2,7 +2,9 @@
 // 所有弹窗共用：统一遮罩/圆角/标题栏/尺寸/手机端底部上滑
 // 用法：<Modal title="标题" size="m" onClose={fn}>内容</Modal>
 // size: s=340px（确认框） m=480px（新建角色/用户资料） l=640px（设置/角色设置）
+// v1.16.1: 用 Portal 渲染到 body，避免被侧边栏 backdrop-filter 锁住 fixed 定位
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Icon from './icons.jsx';
 
 export default function Modal({
@@ -23,7 +25,7 @@ export default function Modal({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       className="modal-overlay"
       onClick={() => {
@@ -48,6 +50,7 @@ export default function Modal({
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

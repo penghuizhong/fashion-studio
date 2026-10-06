@@ -5,6 +5,7 @@ import Icon from './icons.jsx';
 import ProfilePanel from './ProfilePanel.jsx';
 import CreateCharacterModal from './CreateCharacterModal.jsx';
 import Avatar from './Avatar.jsx';
+import Modal from './Modal.jsx';
 
 export default function Sidebar({
   characters,
@@ -366,47 +367,45 @@ export default function Sidebar({
       </div>
 
       {groupModalOpen && (
-        <div className="modal-overlay" onClick={() => setGroupModalOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3>新建群聊</h3>
-              <button className="modal-close" title="关闭" onClick={() => setGroupModalOpen(false)}>
-                ✕
-              </button>
-            </div>
-            <label>
-              群名
-              <input
-                value={groupForm.name}
-                onChange={(e) => setGroupForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="留空用成员名自动生成"
-              />
-            </label>
-            <div className="member-picker">
-              <div className="member-picker-title">选择成员（至少 2 个）</div>
-              {characters.length === 0 && <div className="versions-empty">还没有角色，先去新建角色</div>}
-              {characters.map((c) => (
-                <label key={c.id} className="member-option">
-                  <input
-                    type="checkbox"
-                    checked={groupForm.memberIds.includes(c.id)}
-                    onChange={() => toggleGroupMember(c.id)}
-                  />
-                  <Avatar src={c.avatar} size={28} className="member-avatar" />
-                  <span>{c.name}</span>
-                </label>
-              ))}
-            </div>
-            <div className="modal-actions">
+        <Modal
+          title="新建群聊"
+          size="s"
+          onClose={() => setGroupModalOpen(false)}
+          footer={
+            <>
               <button className="btn secondary" onClick={() => setGroupModalOpen(false)}>
                 取消
               </button>
               <button className="btn primary" onClick={handleCreateGroup} disabled={creatingGroup}>
                 {creatingGroup ? '建群中…' : `建群（${groupForm.memberIds.length} 人）`}
               </button>
-            </div>
+            </>
+          }
+        >
+          <label>
+            群名
+            <input
+              value={groupForm.name}
+              onChange={(e) => setGroupForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="留空用成员名自动生成"
+            />
+          </label>
+          <div className="member-picker">
+            <div className="member-picker-title">选择成员（至少 2 个）</div>
+            {characters.length === 0 && <div className="versions-empty">还没有角色，先去新建角色</div>}
+            {characters.map((c) => (
+              <label key={c.id} className="member-option">
+                <input
+                  type="checkbox"
+                  checked={groupForm.memberIds.includes(c.id)}
+                  onChange={() => toggleGroupMember(c.id)}
+                />
+                <Avatar src={c.avatar} size={28} className="member-avatar" />
+                <span>{c.name}</span>
+              </label>
+            ))}
           </div>
-        </div>
+        </Modal>
       )}
 
       {modalOpen && (

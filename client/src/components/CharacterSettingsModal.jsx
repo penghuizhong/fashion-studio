@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, formatFullTime } from '../api.js';
 import Icon from './icons.jsx';
+import Avatar from './Avatar.jsx';
 import MemoryFacts from './MemoryFacts.jsx';
 
 const TABS = [
@@ -200,7 +201,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
       <div className="settings-modal char-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="角色设置">
         <div className="settings-head">
           <span className="char-modal-title">
-            <span className="char-modal-avatar">{character ? character.avatar || '✨' : '✨'}</span>
+            <Avatar src={character ? character.avatar : ''} size={32} className="char-modal-avatar" />
             <h3>{character ? character.name : '加载中…'}</h3>
           </span>
           <button className="icon-btn" title="关闭" onClick={onClose}>
@@ -226,10 +227,31 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                 名字
                 <input value={settings.name} onChange={setS('name')} />
               </label>
-              <label>
-                头像 emoji
-                <input value={settings.avatar} onChange={setS('avatar')} placeholder="🦊" />
-              </label>
+              <div>
+                <div className="field-label">头像</div>
+                <div className="avatar-grid">
+                  {[
+                    '/avatars/avatar-gen-1.png',
+                    '/avatars/avatar-gen-2.png',
+                    '/avatars/avatar-gen-3.png',
+                    '/avatars/avatar-gen-4.png',
+                    '/avatars/avatar-gen-5.png',
+                    '/avatars/avatar-gen-6.png',
+                    '/avatars/avatar-gen-7.png',
+                    '/avatars/avatar-gen-8.png',
+                  ].map((a) => (
+                    <button
+                      key={a}
+                      className={`avatar-option${settings.avatar === a ? ' selected' : ''}`}
+                      onClick={() => setS('avatar')({ target: { value: a } })}
+                      title="选择头像"
+                      type="button"
+                    >
+                      <img src={a} alt="头像" />
+                    </button>
+                  ))}
+                </div>
+              </div>
               <label>
                 温度：{Number(settings.temperature).toFixed(2)}
                 <input

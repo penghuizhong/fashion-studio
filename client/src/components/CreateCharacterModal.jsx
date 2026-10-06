@@ -38,7 +38,6 @@ const SOUL_TEMPLATE_TEXT = {
 export default function CreateCharacterModal({ onClose, onCreated, showToast }) {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState(AVATARS[0]);
-  const [customAvatar, setCustomAvatar] = useState('');
   const [soul, setSoul] = useState('');
   const [userMd, setUserMd] = useState('');
   const [roleplayMode, setRoleplayMode] = useState(false);
@@ -48,7 +47,7 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
   const [generating, setGenerating] = useState(false);
   const [showGen, setShowGen] = useState(false);
 
-  const effectiveAvatar = customAvatar.trim() || avatar;
+  const effectiveAvatar = avatar;
 
   const applyTemplate = (key) => {
     if (key && SOUL_TEMPLATE_TEXT[key]) {
@@ -129,24 +128,14 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
           {AVATARS.map((a) => (
             <button
               key={a}
-              className={`avatar-option${!customAvatar.trim() && avatar === a ? ' selected' : ''}`}
-              onClick={() => {
-                setAvatar(a);
-                setCustomAvatar('');
-              }}
+              className={`avatar-option${avatar === a ? ' selected' : ''}`}
+              onClick={() => setAvatar(a)}
               title="选择头像"
             >
               <img src={a} alt="头像" />
             </button>
           ))}
         </div>
-        <input
-          className="avatar-custom"
-          value={customAvatar}
-          onChange={(e) => setCustomAvatar(e.target.value)}
-          placeholder="或自定 emoji，例如 🦊"
-          maxLength={8}
-        />
       </div>
 
       <div>
