@@ -13,6 +13,16 @@ const TABS = [
 
 const FILE_FIELD = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
 
+// v1.15.0: 扮演模式内置模板（与后端 server/src/memory.js 的 ROLEPLAY_TEMPLATE 保持一致）
+const ROLEPLAY_TEMPLATE = `## 回复格式：小说式角色扮演
+
+1. 场景头：每次回复第一行用 [日期 世界·地点] 标注当前场景，日期用当天真实日期，地点跟着剧情走。
+2. 旁白：小说笔法，多感官细节＋心理活动，短句有节奏；每个旁白段落段首加 丨。
+3. 台词：角色说出口的话用 **加粗** 独立成段，不混在旁白里；多人时带名字前缀。
+4. 不用括号备注动作神态，全部写进旁白。
+5. 正文结束后另起 markdown 代码块，写角色没说出口的真实内心独白；独白可与说出口的话矛盾。
+6. 每轮 200～500 字（不含独白块），信息密度高，不水文、不重复。`;
+
 export default function CharacterSettingsModal({ characterId, onClose, onCharacterUpdated, onCharacterDeleted, showToast }) {
   const [tab, setTab] = useState('chat');
   const [character, setCharacter] = useState(null);
@@ -20,6 +30,11 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
   const [files, setFiles] = useState({ soul_md: '', user_md: '', memory_md: '' });
   const [draft, setDraft] = useState('');
   const [dirty, setDirty] = useState(false);
+  // v1.15.0: 扮演模式
+  const [roleplayMode, setRoleplayMode] = useState(false);
+  const [roleplayPrompt, setRoleplayPrompt] = useState(null); // null=用内置模板
+  const [rpDirty, setRpDirty] = useState(false);
+  const [rpSaving, setRpSaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [versions, setVersions] = useState([]);
 
@@ -42,6 +57,9 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
           user_md: (f && f.user_md) || char.user_md || '',
           memory_md: (f && f.memory_md) || char.memory_md || '',
         });
+        setRoleplayMode(!!char.roleplay_mode);
+        setRoleplayPrompt(char.roleplay_prompt || null);
+        setRpDirty(false);
       } catch (err) {
         if (!cancelled) showToast(err.message || '加载失败');
       }
@@ -103,6 +121,26 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
       showToast(err.message || '保存失败');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // v1.15.0: 保存扮演模式（文本框内容与内置模板一致则存 null，吃未来模板升级）
+  const saveRoleplay = async () => {
+    setRpSaving(true);
+    try {
+      const custom = (roleplayPrompt || '').trim();
+      await api.updateCharacter(characterId, {
+        roleplay_mode: roleplayMode ? 1 : 0,
+        roleplay_prompt: custom && custom !== ROLEPLAY_TEMPLATE ? custom : null,
+      });
+      setRoleplayPrompt(custom && custom !== ROLEPLAY_TEMPLATE ? custom : null);
+      setRpDirty(false);
+      await onCharacterUpdated();
+      showToast('扮演模式已保存');
+    } catch (err) {
+      showToast(err.message || '保存失败');
+    } finally {
+      setRpSaving(false);
     }
   };
 
@@ -220,6 +258,51 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
           ) : (
             tab !== 'chat' && (
               <>
+                {tab === 'soul' && (
+                  <div className="roleplay-section">
+                    <label className="roleplay-toggle">
+                      <input
+                        type="checkbox"
+                        checked={roleplayMode}
+                        onChange={(e) => {
+                          setRoleplayMode(e.target.checked);
+                          setRpDirty(true);
+                        }}
+                      />
+                      <span className="roleplay-toggle-label">小说式扮演模式</span>
+                      <span className="roleplay-toggle-desc">自动追加回复格式指令</span>
+                    </label>
+                    {roleplayMode && (
+                      <>
+                        <textarea
+                          className="md-editor roleplay-editor"
+                          value={roleplayPrompt ?? ROLEPLAY_TEMPLATE}
+                          onChange={(e) => {
+                            setRoleplayPrompt(e.target.value);
+                            setRpDirty(true);
+                          }}
+                          spellCheck={false}
+                          placeholder="回复格式指令…"
+                        />
+                        <div className="settings-actions">
+                          <button
+                            className="btn secondary small"
+                            onClick={() => {
+                              setRoleplayPrompt(null);
+                              setRpDirty(true);
+                            }}
+                          >
+                            恢复内置模板
+                          </button>
+                          <span className="dirty-hint">{rpDirty ? '● 有未保存的修改' : ''}</span>
+                          <button className="btn primary" onClick={saveRoleplay} disabled={rpSaving || !rpDirty}>
+                            {rpSaving ? '保存中…' : '保存扮演设置'}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 <textarea
                 className="md-editor"
                 value={draft}

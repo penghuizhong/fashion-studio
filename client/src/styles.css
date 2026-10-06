@@ -1835,6 +1835,42 @@ textarea {
   display: none;
 }
 
+/* v1.15.0: 扮演模式 */
+.roleplay-section {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+.roleplay-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.roleplay-toggle input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent, #5b8def);
+  cursor: pointer;
+}
+.roleplay-toggle-label {
+  font-size: 15px;
+  font-weight: 600;
+}
+.roleplay-toggle-desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+.roleplay-editor {
+  margin-top: 12px;
+  min-height: 220px;
+  font-size: 13px;
+}
+
 /* v1.14: 加大版汉堡按钮 */
 .menu-btn-lg {
   width: 44px !important;
