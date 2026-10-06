@@ -98,43 +98,51 @@ export default function HomeEmpty({
       <div className="home-body wall-body">
         <h1 className="home-title">今天想和谁聊天？</h1>
 
-        {/* 角色墙：Top 领养数卡片浮动 */}
+        {/* 角色圆墙：Top 领养数卡片在圆内轻轻漂移（鱼缸式） */}
         {wallCards.length > 0 && (
-          <div className="char-wall">
-            {wallCards.map((c, i) => (
-              <button
-                key={c.id}
-                className={`wall-card float-${i % 4}`}
-                style={{ animationDelay: `${(i % 8) * 0.7}s` }}
-                onClick={() => adopt(c, c.id)}
-                disabled={!!adoptingId}
-              >
-                <Avatar src={c.avatar} size={72} className="wall-avatar" />
-                <span className="wall-name">{c.name}</span>
-                <span className="wall-tag">{c.tagline || ''}</span>
-                {c.adopt_count > 0 && <span className="wall-count">{c.adopt_count} 人领养</span>}
-                {adoptingId === c.id && <span className="wall-loading">领养中…</span>}
-              </button>
-            ))}
-            {/* 拼图卡：进发现页 */}
-            {collageCards.length >= 4 && (
-              <button
-                className="wall-card wall-collage float-2"
-                style={{ animationDelay: '1.4s' }}
-                onClick={onOpenDiscover}
-              >
-                <span className="collage-grid">
-                  {collageCards.map((c) => (
-                    <Avatar key={c.id} src={c.avatar} size={36} />
-                  ))}
+          <div className="circle-wall">
+            <div className="circle-center">
+              <img src="/favicon.png" alt="SoulChat" />
+            </div>
+            {wallCards.map((c, i) => {
+              const angle = (i / wallCards.length) * 360 - 90;
+              const rad = (angle * Math.PI) / 180;
+              const R = 36;
+              const x = 50 + R * Math.cos(rad);
+              const y = 50 + R * Math.sin(rad);
+              return (
+                <span
+                  key={c.id}
+                  className="orbit-slot"
+                  style={{ left: `${x}%`, top: `${y}%` }}
+                >
+                  <button
+                    className={`orbit-card drift-${i % 4}`}
+                    style={{ animationDelay: `${(i % 8) * 0.8}s` }}
+                    onClick={() => adopt(c, c.id)}
+                    disabled={!!adoptingId}
+                  >
+                    <Avatar src={c.avatar} size={56} className="orbit-avatar" />
+                    <span className="orbit-name">{c.name}</span>
+                    {adoptingId === c.id && <span className="orbit-loading">…</span>}
+                  </button>
                 </span>
-                <span className="wall-name">发现更多</span>
-                <span className="collage-arrow">
-                  <Icon name="chevronRight" size={16} />
-                </span>
-              </button>
-            )}
+              );
+            })}
           </div>
+        )}
+
+        {/* 拼图条：进发现页 */}
+        {collageCards.length >= 4 && (
+          <button className="wall-collage-strip" onClick={onOpenDiscover}>
+            <span className="collage-row">
+              {collageCards.map((c) => (
+                <Avatar key={c.id} src={c.avatar} size={32} />
+              ))}
+            </span>
+            <span className="collage-label">发现更多角色</span>
+            <Icon name="chevronRight" size={16} />
+          </button>
         )}
 
         {/* 生成结果卡 */}
