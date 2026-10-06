@@ -847,9 +847,11 @@ export function createApp() {
       // v1.15.0: 扮演模式开关 + 自定义提示词（null/空串 = 用内置模板）
       roleplay_mode: roleplay_mode !== undefined ? (roleplay_mode ? 1 : 0) : (c.roleplay_mode || 0),
       roleplay_prompt:
-        roleplay_prompt !== undefined
-          ? (String(roleplay_prompt).trim() ? String(roleplay_prompt) : null)
-          : c.roleplay_prompt || null,
+        roleplay_prompt === undefined
+          ? c.roleplay_prompt || null
+          : roleplay_prompt === null
+            ? null // v1.15.2 修复：String(null)==="null" 会误存字符串，必须显式判空
+            : String(roleplay_prompt).trim() || null,
       updated_at: now(),
     };
     if (!next.name) return res.status(400).json({ error: 'name 不能为空' });

@@ -351,6 +351,13 @@ export function getDb() {
     const charCols = _db.prepare('PRAGMA table_info(characters)').all().map((c) => c.name);
     if (!charCols.includes('roleplay_mode')) _db.exec('ALTER TABLE characters ADD COLUMN roleplay_mode INTEGER NOT NULL DEFAULT 0');
     if (!charCols.includes('roleplay_prompt')) _db.exec('ALTER TABLE characters ADD COLUMN roleplay_prompt TEXT');
+    // v1.15.2 修复：清理之前 bug 误存的字符串 "null"（String(null) 的产物），恢复为 NULL（用内置模板）
+    try {
+      const fixed = _db.prepare("UPDATE characters SET roleplay_prompt = NULL WHERE roleplay_prompt = 'null'").run();
+      if (fixed.changes) console.log(`[db] 清理 roleplay_prompt 误存的 "null" 字符串：${fixed.changes} 条`);
+    } catch (e) {
+      console.warn('[db] roleplay_prompt 清理失败:', e.message);
+    }
     try {
       const del = _db
         .prepare(`DELETE FROM memory_facts WHERE fact LIKE '%此文本框保留做兼容%' OR fact LIKE '<!--%'`)
