@@ -134,9 +134,40 @@ body: JSON.stringify({
 });
 if (!res.ok) {
 const text = await res.text().catch(() => '');
-throw new Error(`LLM 请求失败 HTTP ${res.status}: ${text.slice(0, 200)}`);
+const err = new Error(`LLM 请求失败 HTTP ${res.status}: ${text.slice(0, 200)}`);
+err.status = res.status;
+throw err;
 }
 return res;
+}
+
+// v1.17.2: 上游错误转用户友好文案，不把原始 JSON 甩给用户看
+export function friendlyLlmError(e) {
+const status = e && (e.status || e.statusCode);
+if (status === 429) return '上游限流了，休息几秒再试一次';
+if (status === 402) return '积分不足，请充值或切换模型';
+if (status === 401 || status === 403) return 'API 授权失败，请检查 Key 配置';
+if (status === 404) return '模型不存在或已下架，换个模型试试';
+if (status >= 500) return '上游服务暂时不可用，稍后再试';
+return '生成失败，换句话试试';
+}
+// v1.17.2: 429 自动重试（指数退避），瞬时限流对用户透明
+export async function withRetry(fn, { retries = 2, baseMs = 2000 } = {}) {
+let last;
+for (let i = 0; i <= retries; i++) {
+try {
+return await fn();
+} catch (e) {
+last = e;
+const status = e && (e.status || e.statusCode);
+if (status === 429 && i < retries) {
+await new Promise((r) => setTimeout(r, baseMs * (i + 1)));
+continue;
+}
+throw e;
+}
+}
+throw last;
 }
 
 // 非流式调用的便捷封装：返回 { json, usage }（usage 可能为 null）

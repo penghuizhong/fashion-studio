@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { getConfig, getVersion, assertMultiUserConfig } from './config.js';
 import { getDb } from './db.js';
 import { ah, apiErrorHandler } from './asyncHandler.js';
-import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, generateCardJson, generateSoulMd } from './llm.js';
+import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, generateCardJson, generateSoulMd, friendlyLlmError, withRetry } from './llm.js';
 import {
   getPresetCards,
   getPresetCard,
@@ -1430,16 +1430,19 @@ export function createApp() {
           // v1.17.1: 内容过滤兜底——被拦截时换无审查模型重试，绝不呈现半截输出
           const doGroupStream = async (model) => {
             let text = '';
-            const r = await chatStream({
-              messages: apiMessages,
-              model,
-              temperature: ch.temperature ?? 0.8,
-              ...llmOpts,
-              onToken: (delta) => {
-                text += delta;
-                send('token', { character_id: ch.id, text: delta });
-              },
-            });
+            // v1.17.2: 429 自动重试，瞬时限流用户无感
+            const r = await withRetry(() =>
+              chatStream({
+                messages: apiMessages,
+                model,
+                temperature: ch.temperature ?? 0.8,
+                ...llmOpts,
+                onToken: (delta) => {
+                  text += delta;
+                  send('token', { character_id: ch.id, text: delta });
+                },
+              })
+            );
             return { text, usage: r.usage, finishReason: r.finishReason };
           };
           let gr = await doGroupStream(chatModel);
@@ -1528,7 +1531,7 @@ export function createApp() {
         }
       });
     } catch (e) {
-      send('error', { message: String((e && e.message) || e) });
+      send('error', { message: friendlyLlmError(e) });
     } finally {
       res.end();
     }
@@ -1590,16 +1593,19 @@ export function createApp() {
       let finalModel = chatModel;
       const doStream = async (model) => {
         let text = '';
-        const r = await chatStream({
-          messages: apiMessages,
-          model,
-          temperature: char.temperature ?? 0.8,
-          ...llmOpts,
-          onToken: (delta) => {
-            text += delta;
-            send('token', { text: delta });
-          },
-        });
+        // v1.17.2: 429 自动重试，瞬时限流用户无感
+        const r = await withRetry(() =>
+          chatStream({
+            messages: apiMessages,
+            model,
+            temperature: char.temperature ?? 0.8,
+            ...llmOpts,
+            onToken: (delta) => {
+              text += delta;
+              send('token', { text: delta });
+            },
+          })
+        );
         return { text, usage: r.usage, finishReason: r.finishReason };
       };
       let r = await doStream(chatModel);
@@ -1664,7 +1670,7 @@ export function createApp() {
         }
       });
     } catch (e) {
-      send('error', { message: String((e && e.message) || e) });
+      send('error', { message: friendlyLlmError(e) });
     } finally {
       res.end();
     }
