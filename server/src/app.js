@@ -36,6 +36,7 @@ import {
   summarizeOld,
   runMemoryPipeline,
 } from './memory.js';
+import { JAILBREAK_PRESETS, jailbreakPresetList } from './jailbreakPresets.js';
 import {
   listPointsModels,
   getWorkerModel,
@@ -304,6 +305,11 @@ export function createApp() {
   // ---------- 角色卡 ----------
   // 预设卡列表（公开：未登录可浏览，用于拉新）
   // v1.16.6: 返回领养数，首页角色墙按领养数取 Top 6-8
+  // v1.17.0: 破限预设插件库（给前端下拉框）
+  app.get('/api/jailbreak-presets', (req, res) => {
+    res.json({ presets: jailbreakPresetList() });
+  });
+
   app.get('/api/character-cards/presets', (req, res) => {
     const cards = getPresetCards();
     let counts = {};
@@ -876,7 +882,7 @@ export function createApp() {
   app.post('/api/characters', (req, res) => {
     // v1.16.0: 新建角色弹窗改版，支持 soul_md / user_md / roleplay_mode
     // v1.16.4: 支持 roleplay_prompt（空=用内置模板）
-    const { name, avatar, temperature, soul_md, user_md, roleplay_mode, roleplay_prompt } = req.body || {};
+    const { name, avatar, temperature, soul_md, user_md, roleplay_mode, roleplay_prompt, jailbreak_preset } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'name 不能为空' });
     const id = randomUUID();
     const t = now();
@@ -892,11 +898,12 @@ export function createApp() {
       temperature: temperature ?? 0.8,
       roleplay_mode: roleplay_mode ? 1 : 0,
       roleplay_prompt: roleplay_prompt && String(roleplay_prompt).trim() ? String(roleplay_prompt).trim() : null,
+      jailbreak_preset: jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] ? jailbreak_preset : null,
       created_at: t,
       updated_at: t,
     };
     db.prepare(
-      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,roleplay_mode,roleplay_prompt,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,roleplay_mode,roleplay_prompt,jailbreak_preset,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
     ).run(
       row.id,
       row.user_id,
@@ -909,6 +916,7 @@ export function createApp() {
       row.temperature,
       row.roleplay_mode,
       row.roleplay_prompt,
+      row.jailbreak_preset,
       row.created_at,
       row.updated_at
     );
@@ -924,7 +932,7 @@ export function createApp() {
   app.put('/api/characters/:id', (req, res) => {
     const c = getChar(req.params.id, req);
     if (!c) return char404(res);
-    const { name, avatar, temperature, roleplay_mode, roleplay_prompt } = req.body || {};
+    const { name, avatar, temperature, roleplay_mode, roleplay_prompt, jailbreak_preset } = req.body || {};
     const next = {
       name: name !== undefined ? String(name).trim() : c.name,
       avatar: avatar !== undefined ? avatar : c.avatar,
@@ -938,11 +946,18 @@ export function createApp() {
           : roleplay_prompt === null
             ? null // v1.15.2 修复：String(null)==="null" 会误存字符串，必须显式判空
             : String(roleplay_prompt).trim() || null,
+      // v1.17.0: 破限预设（null=关闭；非法 key 存 null）
+      jailbreak_preset:
+        jailbreak_preset === undefined
+          ? c.jailbreak_preset || null
+          : jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset]
+            ? jailbreak_preset
+            : null,
       updated_at: now(),
     };
     if (!next.name) return res.status(400).json({ error: 'name 不能为空' });
     db.prepare(
-      'UPDATE characters SET name=?, avatar=?, model=?, temperature=?, roleplay_mode=?, roleplay_prompt=?, updated_at=? WHERE id=?'
+      'UPDATE characters SET name=?, avatar=?, model=?, temperature=?, roleplay_mode=?, roleplay_prompt=?, jailbreak_preset=?, updated_at=? WHERE id=?'
     ).run(
       next.name,
       next.avatar,
@@ -950,6 +965,7 @@ export function createApp() {
       next.temperature,
       next.roleplay_mode,
       next.roleplay_prompt,
+      next.jailbreak_preset,
       next.updated_at,
       c.id
     );
@@ -1382,7 +1398,7 @@ export function createApp() {
         if (res.destroyed) break;
         const ch = members.find((m) => m.id === sid);
         if (!ch) continue;
-        const groupCtx = buildGroupContext(members, conv.id, content);
+        const groupCtx = buildGroupContext(members, conv.id, content, chatModel);
         if (!ctxInfo) {
           ctxInfo = { used: groupCtx.usedTokens, budget: groupCtx.budget };
           send('context', ctxInfo);
@@ -1529,7 +1545,7 @@ export function createApp() {
     const send = sseInit(res);
 
     try {
-      const { apiMessages, usedTokens, budget } = buildContext(char, conv.id, content);
+      const { apiMessages, usedTokens, budget } = buildContext(char, conv.id, content, chatModel);
       send('context', { used: usedTokens, budget });
       let full = '';
       const { usage } = await chatStream({
