@@ -196,6 +196,8 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [hasServerKey, setHasServerKey] = useState(false);
   const [pullSeq, setPullSeq] = useState(0);
   const [billingMode, setBillingMode] = useState('points');
+  // v1.16.8: 积分模式的模型选择框用独立 state，不再与 API tab 的 form.model 共用
+  const [pointsModel, setPointsModel] = useState('');
   const [pointsInfo, setPointsInfo] = useState(null);
   const [ledger, setLedger] = useState([]);
   const [invite, setInvite] = useState(null);
@@ -303,9 +305,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
           setPointsInfo(p);
           setBillingMode((p && p.billing_mode) || 'points');
           const wl = (p.models || []).map((m) => m.id);
-          if (wl.length && !wl.includes((k && k.chatModel) || '')) {
-            setForm((f) => ({ ...f, model: wl[0] }));
-          }
+          setPointsModel(wl.includes((k && k.chatModel) || '') ? k.chatModel : wl[0] || '');
         }
         if (inv) setInvite(inv);
         setLedger((await api.getPointsLedger(30).catch(() => [])) || []);
@@ -415,13 +415,15 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     }
   };
 
-  const save = async () => {
+  // v1.16.8: mode 显式传入，避免 setBillingMode 后立刻 save 读到过期 state
+  const save = async (mode) => {
+    const m = mode || billingMode;
     setLoading(true);
     try {
-      await api.setBillingMode(billingMode);
-      if (billingMode === 'points') {
-        const wl = ((pointsInfo && pointsInfo.models) || []).map((m) => m.id);
-        const model = wl.includes(form.model.trim()) ? form.model.trim() : wl[0] || '';
+      await api.setBillingMode(m);
+      if (m === 'points') {
+        const wl = ((pointsInfo && pointsInfo.models) || []).map((mi) => mi.id);
+        const model = wl.includes(pointsModel.trim()) ? pointsModel.trim() : wl[0] || '';
         await api.saveUserApiKey({ chatModel: model });
         showToast('已切换为平台积分模式', 2200);
       } else {
@@ -637,10 +639,10 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   )}
                   <label>
                     聊天模型
-                    <ModelPicker value={form.model} onChange={(v) => setForm((f) => ({ ...f, model: v }))} models={wlModels} placeholder="选择模型" />
+                    <ModelPicker value={pointsModel} onChange={setPointsModel} models={wlModels} placeholder="选择模型" />
                   </label>
                   <div className="save-row">
-                    <button className="btn primary" onClick={save} disabled={loading}>
+                    <button className="btn primary" onClick={() => save('points')} disabled={loading}>
                       {loading ? '保存中…' : '保存设置'}
                     </button>
                   </div>
@@ -713,7 +715,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
               <p className="key-desc small">后台模型负责群聊导演调度、记忆提取、对话摘要——用户看不到，用便宜的就行。</p>
               <div className="save-row">
                 <button className="btn secondary" onClick={clearServer} disabled={loading}>清除</button>
-                <button className="btn primary" onClick={() => { setBillingMode('byok'); save(); }} disabled={loading}>
+                <button className="btn primary" onClick={() => { setBillingMode('byok'); save('byok'); }} disabled={loading}>
                   {loading ? '保存中…' : '保存设置'}
                 </button>
               </div>
