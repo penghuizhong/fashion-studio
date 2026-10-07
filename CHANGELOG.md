@@ -1,5 +1,12 @@
 # SoulChat 更新日志
 
+## v1.17.1（2026-10-07）
+
+- 修复露骨话题输出"卡住"：根因是上游内容过滤器中途掐断流，而代码不看 `finish_reason`，把半截话当完整回复呈现
+- `chatStream` 开始捕获 `finish_reason`；`content_filter` 时积分模式自动换 Euryale/Cydonia 重试一次，前端 toast 提示并丢弃半截输出
+- 两次都被拦截时存友好提示（不存半截话）；计费按实际使用的模型
+- 回归 M42 覆盖 finish_reason 捕获
+
 ## v1.17.0（2026-10-07）
 
 - 破限预设插件化：新增 `server/src/jailbreakPresets.js` 预设库，角色级选用（`characters.jailbreak_preset`，NULL=关闭）

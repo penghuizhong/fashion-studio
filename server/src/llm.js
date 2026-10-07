@@ -163,6 +163,8 @@ const decoder = new TextDecoder();
 let buf = '';
 let full = '';
 let usage = null;
+// v1.17.1: 捕获 finish_reason，识别上游内容过滤（content_filter）导致的半截输出
+let finishReason = null;
 const handleLine = (line) => {
 const t = line.trim();
 if (!t.startsWith('data:')) return;
@@ -177,7 +179,9 @@ input: json.usage.prompt_tokens || 0,
 output: json.usage.completion_tokens || 0,
 };
 }
-const delta = json.choices && json.choices[0] && json.choices[0].delta && json.choices[0].delta.content;
+const choice = json.choices && json.choices[0];
+if (choice && choice.finish_reason) finishReason = choice.finish_reason;
+const delta = choice && choice.delta && choice.delta.content;
 if (delta) {
 full += delta;
 onToken(delta);
@@ -196,7 +200,7 @@ buf = lines.pop();
 for (const l of lines) handleLine(l);
 }
 if (buf.trim()) handleLine(buf);
-return { text: full, usage };
+return { text: full, usage, finishReason };
 }
 
 async function mockChatStream({ messages, onToken}) {
