@@ -489,18 +489,28 @@ export function mountAuthRoutes(app, authLimiter) {
     res.json({ ok: true });
   });
 
-  // v1.12 模型配置：GET /api/admin/settings → { worker_model, chat_default_model }
+  // v1.12 模型配置：GET /api/admin/settings → { worker_model, chat_default_model, filter_fallback_models }
   // worker_model：后台模型（群聊导演/记忆/摘要共用），'' = 自动选最便宜
   // chat_default_model：聊天默认模型，'' = 自动选最便宜
+  // filter_fallback_models：内容过滤回退链（数组，按优先级）；null = 未设置（用默认 Euryale→Cydonia），[] = 关闭回退
   app.get('/api/admin/settings', needMulti, needLogin, needAdmin, (req, res) => {
+    let fb = null;
+    try {
+      const raw = getSetting('filter_fallback_models', '');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) fb = arr;
+      }
+    } catch {}
     res.json({
       worker_model: getSetting('worker_model', ''),
       chat_default_model: getSetting('chat_default_model', ''),
+      filter_fallback_models: fb,
     });
   });
 
-  // v1.12 模型配置：PUT /api/admin/settings { worker_model?, chat_default_model? }
-  // 值必须为 '' 或已启用的积分模型 model_id
+  // v1.12 模型配置：PUT /api/admin/settings { worker_model?, chat_default_model?, filter_fallback_models? }
+  // 值必须为 '' 或已启用的积分模型 model_id；filter_fallback_models 为数组，每项须为已启用模型，[] = 关闭回退
   app.put('/api/admin/settings', needMulti, needLogin, needAdmin, (req, res) => {
     const b = req.body || {};
     const out = {};
@@ -512,6 +522,20 @@ export function mountAuthRoutes(app, authLimiter) {
       }
       setSetting(key, v);
       out[key] = v;
+    }
+    if (b.filter_fallback_models !== undefined) {
+      const arr = Array.isArray(b.filter_fallback_models) ? b.filter_fallback_models : [];
+      const clean = [];
+      for (const m of arr) {
+        const v = String(m || '').trim();
+        if (!v) continue;
+        if (!getPointsModel(v)) {
+          return res.status(400).json({ error: `模型 ${v} 不存在或未启用` });
+        }
+        if (!clean.includes(v)) clean.push(v);
+      }
+      setSetting('filter_fallback_models', JSON.stringify(clean));
+      out.filter_fallback_models = clean;
     }
     res.json({ ok: true, ...out });
   });

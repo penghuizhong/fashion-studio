@@ -214,12 +214,16 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [pmEditing, setPmEditing] = useState(null); // 正在编辑的行 id
   const [pmEditForm, setPmEditForm] = useState({});
   // v1.12 模型配置（管理员）：后台模型 / 聊天默认模型
-  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '' });
+  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null });
   const [modelCfgSaving, setModelCfgSaving] = useState(false);
   const loadModelCfg = async () => {
     try {
       const s = await api.adminGetSettings();
-      setModelCfg({ worker_model: (s && s.worker_model) || '', chat_default_model: (s && s.chat_default_model) || '' });
+      setModelCfg({
+        worker_model: (s && s.worker_model) || '',
+        chat_default_model: (s && s.chat_default_model) || '',
+        filter_fallback_models: (s && Array.isArray(s.filter_fallback_models)) ? s.filter_fallback_models : null,
+      });
     } catch {
       /* 非管理员或加载失败就保持默认 */
     }
@@ -227,7 +231,9 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const saveModelCfg = async () => {
     setModelCfgSaving(true);
     try {
-      await api.adminUpdateSettings(modelCfg);
+      const body = { ...modelCfg };
+      if (body.filter_fallback_models == null) delete body.filter_fallback_models;
+      await api.adminUpdateSettings(body);
       showToast('模型配置已保存');
     } catch (e) {
       showToast((e && e.message) || '保存失败');
@@ -861,6 +867,45 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                       ))}
                     </select>
                   </label>
+                  <label>
+                    过滤回退模型 1（优先）
+                    <select
+                      value={(modelCfg.filter_fallback_models && modelCfg.filter_fallback_models[0]) || ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setModelCfg((f) => {
+                          const arr = [...(f.filter_fallback_models || [])];
+                          if (v) arr[0] = v; else arr.splice(0, 1);
+                          return { ...f, filter_fallback_models: arr.filter(Boolean) };
+                        });
+                      }}
+                    >
+                      <option value="">不设置</option>
+                      {pmModels.filter((m) => m.is_active).map((m) => (
+                        <option key={m.model_id} value={m.model_id}>{m.name}（{m.model_id}）</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    过滤回退模型 2
+                    <select
+                      value={(modelCfg.filter_fallback_models && modelCfg.filter_fallback_models[1]) || ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setModelCfg((f) => {
+                          const arr = [...(f.filter_fallback_models || [])];
+                          if (v) arr[1] = v; else arr.splice(1, 1);
+                          return { ...f, filter_fallback_models: arr.filter(Boolean) };
+                        });
+                      }}
+                    >
+                      <option value="">不设置</option>
+                      {pmModels.filter((m) => m.is_active).map((m) => (
+                        <option key={m.model_id} value={m.model_id}>{m.name}（{m.model_id}）</option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="key-desc small">上游内容过滤拦截时，按顺序自动换模型重试一次；两个都选「不设置」并保存 = 关闭回退；不碰这里 = 默认 Euryale → Cydonia。</p>
                   <div className="key-input-row" style={{ marginTop: 8 }}>
                     <button className="btn primary" onClick={saveModelCfg} disabled={modelCfgSaving}>
                       {modelCfgSaving ? '保存中…' : '保存模型配置'}

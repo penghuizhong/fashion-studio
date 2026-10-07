@@ -185,20 +185,25 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     }, 4000);
   };
 
-  const send = async () => {
-    const content = input.trim();
+  const lastContentRef = useRef('');
+  const sendContent = async (rawContent, opts = {}) => {
+    const content = String(rawContent || '').trim();
     if (!content || sending) return;
+    lastContentRef.current = content;
     setInput('');
     requestAnimationFrame(() => {
       if (taRef.current) taRef.current.style.height = 'auto';
     });
-    const userMsg = {
-      id: `tmp-u-${Date.now()}`,
-      role: 'user',
-      content,
-      created_at: new Date().toISOString(),
-    };
-    setMessages((m) => [...m, userMsg]);
+    // v1.17.4: 重试不重复追加用户气泡（界面上已有一条）
+    if (!opts.skipUserBubble) {
+      const userMsg = {
+        id: `tmp-u-${Date.now()}`,
+        role: 'user',
+        content,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((m) => [...m, userMsg]);
+    }
     setSending(true);
     setStreamText('');
     setGroupStreams({});
@@ -304,6 +309,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     } catch (err) {
       if (err.name !== 'AbortError') {
         if (err.status === 429) setErrorMsg('请求太频繁了，休息几秒再试');
+        // v1.17.4: fetch 网络失败（iOS 抛 TypeError: Load failed）转中文，不显示英文原串
+        else if (err instanceof TypeError) setErrorMsg('网络连接中断，请检查网络后重试');
         else setErrorMsg(err.message || '网络错误');
       }
     } finally {
@@ -311,6 +318,13 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
       setTyping(null);
       abortRef.current = null;
     }
+  };
+
+  const send = () => sendContent(input);
+  // v1.17.4: 网络中断后的重试入口
+  const retrySend = () => {
+    if (sending || !lastContentRef.current) return;
+    sendContent(lastContentRef.current, { skipUserBubble: true });
   };
 
   const handleKeyDown = (e) => {
@@ -469,7 +483,10 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         )}
         {errorMsg && !sending && (
           <div className="msg-row assistant">
-            <div className="bubble error-bubble">⚠️ {errorMsg}</div>
+            <div className="bubble error-bubble">
+              ⚠️ {errorMsg}
+              <button className="btn secondary small" style={{ marginLeft: 8 }} onClick={retrySend}>重试</button>
+            </div>
           </div>
         )}
       </div>
