@@ -280,6 +280,7 @@ export const api = {
   adminStatsTopUsers: (limit = 10) => get(`/api/admin/stats/top-users?limit=${limit}`),
   // 角色卡
   getPresetCards: () => get('/api/character-cards/presets'),
+  getJailbreakPresets: () => get('/api/jailbreak-presets'),
   adoptCharacterCard: (data) => post('/api/character-cards/adopt', data),
   generateSoul: (data) => post('/api/soul/generate', data),
   generateCharacterCard: (data) => post('/api/character-cards/generate', data),

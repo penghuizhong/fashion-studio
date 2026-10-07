@@ -26,12 +26,16 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
   // v1.15.0: 扮演模式
   const [roleplayMode, setRoleplayMode] = useState(false);
   const [roleplayPrompt, setRoleplayPrompt] = useState(null); // null=用内置模板
+  // v1.17.0: 破限预设插件化（null=关闭）
+  const [jailbreakPreset, setJailbreakPreset] = useState(null);
+  const [jbPresets, setJbPresets] = useState([]);
   const [rpDirty, setRpDirty] = useState(false);
   const [rpSaving, setRpSaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [versions, setVersions] = useState([]);
 
   useEffect(() => {
+    api.getJailbreakPresets().then((d) => setJbPresets((d && d.presets) || [])).catch(() => {});
     let cancelled = false;
     (async () => {
       try {
@@ -52,6 +56,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
         });
         setRoleplayMode(!!char.roleplay_mode);
         setRoleplayPrompt(char.roleplay_prompt || null);
+        setJailbreakPreset(char.jailbreak_preset || null);
         setRpDirty(false);
       } catch (err) {
         if (!cancelled) showToast(err.message || '加载失败');
@@ -125,6 +130,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
       await api.updateCharacter(characterId, {
         roleplay_mode: roleplayMode ? 1 : 0,
         roleplay_prompt: custom && custom !== ROLEPLAY_TEMPLATE ? custom : null,
+        jailbreak_preset: jailbreakPreset || null,
       });
       setRoleplayPrompt(custom && custom !== ROLEPLAY_TEMPLATE ? custom : null);
       setRpDirty(false);
@@ -293,6 +299,45 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                         </div>
                       </>
                     )}
+                    {/* v1.17.0: 破限模式（插件化） */}
+                    <div className="jailbreak-section">
+                      <label className="roleplay-toggle">
+                        <input
+                          type="checkbox"
+                          checked={!!jailbreakPreset}
+                          onChange={(e) => {
+                            setJailbreakPreset(e.target.checked ? (jbPresets[0] && jbPresets[0].key) || null : null);
+                            setRpDirty(true);
+                          }}
+                        />
+                        <span className="roleplay-toggle-label">破限模式</span>
+                        <span className="roleplay-toggle-desc">减少 AI 拒绝，角色扮演更放得开</span>
+                      </label>
+                      {jailbreakPreset && (
+                        <>
+                          {jbPresets.length > 1 && (
+                            <select
+                              className="jb-select"
+                              value={jailbreakPreset}
+                              onChange={(e) => {
+                                setJailbreakPreset(e.target.value || null);
+                                setRpDirty(true);
+                              }}
+                            >
+                              {jbPresets.map((p) => (
+                                <option key={p.key} value={p.key}>
+                                  {p.name}（{p.description}）
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          <p className="jb-warning">
+                            🔞 温馨提示：破限模式会大幅减少 AI 的拒绝，但回复可能包含成人向内容，请确认你已年满 18
+                            岁。破限指令约 0.5KB，按正常对话计费；在原生无审查模型（如 Euryale）上不会重复注入。
+                          </p>
+                        </>
+                      )}
+                    </div>
                     {/* v1.16.3: 保存按钮移出 roleplayMode 条件，关闭时也能保存 */}
                     <div className="settings-actions">
                       <span className="dirty-hint">{rpDirty ? '● 有未保存的修改' : ''}</span>
