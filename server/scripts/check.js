@@ -1467,6 +1467,46 @@ async function runMulti() {
     );
   }
 
+  // M43. v1.17.2 429 自动重试 + 友好错误文案
+  {
+    const { withRetry, friendlyLlmError } = await import('../src/llm.js');
+    let calls2 = 0;
+    const flaky2 = async () => {
+      calls2++;
+      if (calls2 < 3) {
+        const e = new Error('x');
+        e.status = 429;
+        throw e;
+      }
+      return 'ok2';
+    };
+    const r2 = await withRetry(flaky2, { retries: 3, baseMs: 10 });
+    const always429 = async () => {
+      const e = new Error('x');
+      e.status = 429;
+      throw e;
+    };
+    let threw = null;
+    try {
+      await withRetry(always429, { retries: 1, baseMs: 10 });
+    } catch (e) {
+      threw = e;
+    }
+    const e429 = new Error('x'); e429.status = 429;
+    const e500 = new Error('x'); e500.status = 500;
+    const eOther = new Error('raw json here');
+    ok(
+      'M43. withRetry 429 重试后成功/耗尽抛出/friendlyLlmError 映射',
+      r2 === 'ok2' && calls2 === 3 &&
+        threw && threw.status === 429 &&
+        friendlyLlmError(e429) === '上游限流了，休息几秒再试一次' &&
+        friendlyLlmError(e500) === '上游服务暂时不可用，稍后再试' &&
+        friendlyLlmError(eOther) === '生成失败，换句话试试' &&
+        !friendlyLlmError(eOther).includes('raw json'),
+      `r2=${r2} calls2=${calls2} threw=${!!threw}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
