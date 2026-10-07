@@ -23,7 +23,6 @@ if (MODE === 'multi') {
 process.env.DATA_DIR = fs.mkdtempSync(
   path.join(os.tmpdir(), MODE === 'multi' ? 'soulchat-check-multi-' : 'soulchat-check-')
 );
-
 const { createApp } = await import('../src/app.js');
 const { estimateTokens, summarizeOld, runMemoryPipeline, retrieveFacts } = await import('../src/memory.js');
 const { getDb } = await import('../src/db.js');
@@ -1504,6 +1503,153 @@ async function runMulti() {
         friendlyLlmError(eOther) === '生成失败，换句话试试' &&
         !friendlyLlmError(eOther).includes('raw json'),
       `r2=${r2} calls2=${calls2} threw=${!!threw}`
+    );
+  }
+
+  // M44. v1.17.3 回退链可配置 + 单聊账本记实际模型
+  {
+    const { getFilterFallbackModels, pickFilterFallbackModel } = await import('../src/app.js');
+    const db = getDb();
+    db.prepare("DELETE FROM sys_settings WHERE key = 'filter_fallback_models'").run();
+
+    // 1. 默认链
+    const def = getFilterFallbackModels();
+    const defOk = JSON.stringify(def) === JSON.stringify(['sao10k/l3.3-euryale-70b', 'thedrummer/cydonia-24b-v4.1']);
+
+    // 2. 管理员自定义顺序（PUT/GET /api/admin/settings）
+    const put1 = await req('PUT', '/api/admin/settings', { filter_fallback_models: ['thedrummer/cydonia-24b-v4.1', 'deepseek/deepseek-v3.2'] }, { jar: jarAdminM });
+    const get1 = await req('GET', '/api/admin/settings', undefined, { jar: jarAdminM });
+    const custom = getFilterFallbackModels();
+    const pickA = pickFilterFallbackModel('deepseek/deepseek-v3.2'); // 当前 deepseek → 链首 cydonia
+    const pickB = pickFilterFallbackModel('thedrummer/cydonia-24b-v4.1'); // 当前 cydonia → 跳过，取 deepseek
+
+    // 3. 非法模型拒绝
+    const bad = await req('PUT', '/api/admin/settings', { filter_fallback_models: ['no/such-model'] }, { jar: jarAdminM });
+
+    // 4. 显式 [] = 关闭回退
+    const putEmpty = await req('PUT', '/api/admin/settings', { filter_fallback_models: [] }, { jar: jarAdminM });
+    const pickNone = pickFilterFallbackModel('deepseek/deepseek-v3.2');
+
+    // 5. 恢复默认
+    db.prepare("DELETE FROM sys_settings WHERE key = 'filter_fallback_models'").run();
+    const def2 = getFilterFallbackModels();
+
+    // 6. 端到端：伪造上游（首次 content_filter，第二次正常），验证账本记回退后模型
+    // 删代理 + resetDispatcher()，让 llm 直连本地伪造服务器
+    for (const k of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'ALL_PROXY', 'all_proxy']) delete process.env[k];
+    const { resetDispatcher } = await import('../src/llm.js');
+    resetDispatcher();
+    const http = await import('node:http');
+    let n = 0;
+    const fake = http.createServer((rq, rs) => {
+      n++;
+      rs.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      if (n === 1) {
+        rs.write('data: {"choices":[{"delta":{"content":"半截"},"finish_reason":null}]}\n\n');
+        rs.write('data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}\n\n');
+      } else {
+        rs.write('data: {"choices":[{"delta":{"content":"你好"},"finish_reason":null}]}\n\n');
+        rs.write('data: {"choices":[{"delta":{},"finish_reason":"stop","usage":{"prompt_tokens":10,"output_tokens":5}}]}\n\n');
+      }
+      rs.write('data: [DONE]\n\n');
+      rs.end();
+    });
+    await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+    const port = fake.address().port;
+    const oldBase = process.env.OPENROUTER_BASE_URL;
+    const oldKey = process.env.OPENROUTER_API_KEY;
+    const oldMock = process.env.MOCK_LLM;
+    process.env.OPENROUTER_BASE_URL = `http://127.0.0.1:${port}`;
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    process.env.MOCK_LLM = '';
+    let e2eModel = null; let e2eFilterRetry = false;
+    try {
+      const chR = await req('POST', '/api/characters', { name: 'M44角色' }, { jar: jarAdminM });
+      const chId = chR.json && chR.json.id;
+      const cvR = await req('POST', `/api/characters/${chId}/conversations`, {}, { jar: jarAdminM });
+      const cvId = cvR.json && cvR.json.id;
+      const ck = jarAdminM.header();
+      const sseRes = await fetch(base + `/api/conversations/${cvId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-chat-model': 'deepseek/deepseek-v3.2', ...(ck ? { Cookie: ck } : {}) },
+        body: JSON.stringify({ content: 'hi' }),
+      });
+      const text = await sseRes.text();
+      e2eFilterRetry = text.includes('filter_retry');
+      const row = db.prepare("SELECT model FROM points_ledger WHERE user_id = (SELECT id FROM users WHERE username = 'testuserA') AND reason = 'chat' ORDER BY id DESC LIMIT 1").get();
+      e2eModel = row && row.model;
+    } finally {
+      if (oldBase === undefined) delete process.env.OPENROUTER_BASE_URL; else process.env.OPENROUTER_BASE_URL = oldBase;
+      if (oldKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = oldKey;
+      process.env.MOCK_LLM = oldMock;
+      fake.close();
+    }
+    ok(
+      'M44. 回退链可配置/非法拒绝/[]关闭/默认恢复/账本记回退模型',
+      defOk &&
+        put1.status === 200 &&
+        JSON.stringify(get1.json.filter_fallback_models) === JSON.stringify(['thedrummer/cydonia-24b-v4.1', 'deepseek/deepseek-v3.2']) &&
+        JSON.stringify(custom) === JSON.stringify(['thedrummer/cydonia-24b-v4.1', 'deepseek/deepseek-v3.2']) &&
+        pickA === 'thedrummer/cydonia-24b-v4.1' &&
+        pickB === 'deepseek/deepseek-v3.2' &&
+        bad.status === 400 &&
+        putEmpty.status === 200 && pickNone === null &&
+        JSON.stringify(def2) === JSON.stringify(def) &&
+        e2eFilterRetry && e2eModel === 'sao10k/l3.3-euryale-70b',
+      `def=${JSON.stringify(def)} pickA=${pickA} pickB=${pickB} pickNone=${pickNone} e2eModel=${e2eModel} filterRetry=${e2eFilterRetry}`
+    );
+  }
+
+  // M45. v1.17.4 SSE 心跳：上游慢响应期间客户端能收到 : ping（防 idle 断连）
+  {
+    const http = await import('node:http');
+    const { resetDispatcher } = await import('../src/llm.js');
+    resetDispatcher();
+    // 伪造上游：首字节延迟 400ms，模拟慢模型
+    const fake = http.createServer((rq, rs) => {
+      rs.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      setTimeout(() => {
+        rs.write('data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}\n\n');
+        rs.write('data: {"choices":[{"delta":{},"finish_reason":"stop","usage":{"prompt_tokens":5,"output_tokens":2}}]}\n\n');
+        rs.write('data: [DONE]\n\n');
+        rs.end();
+      }, 400);
+    });
+    await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+    const port = fake.address().port;
+    const oldBase = process.env.OPENROUTER_BASE_URL;
+    const oldKey = process.env.OPENROUTER_API_KEY;
+    const oldMock = process.env.MOCK_LLM;
+    const oldKa = process.env.SSE_KEEPALIVE_MS;
+    process.env.OPENROUTER_BASE_URL = `http://127.0.0.1:${port}`;
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    process.env.MOCK_LLM = '';
+    process.env.SSE_KEEPALIVE_MS = '100';
+    let sawPing = false;
+    try {
+      const chR = await req('POST', '/api/characters', { name: 'M45角色' }, { jar: jarAdminM });
+      const chId = chR.json && chR.json.id;
+      const cvR = await req('POST', `/api/characters/${chId}/conversations`, {}, { jar: jarAdminM });
+      const cvId = cvR.json && cvR.json.id;
+      const ck = jarAdminM.header();
+      const sseRes = await fetch(base + `/api/conversations/${cvId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-chat-model': 'deepseek/deepseek-v3.2', ...(ck ? { Cookie: ck } : {}) },
+        body: JSON.stringify({ content: 'hi' }),
+      });
+      const text = await sseRes.text();
+      sawPing = text.includes(': ping');
+    } finally {
+      if (oldBase === undefined) delete process.env.OPENROUTER_BASE_URL; else process.env.OPENROUTER_BASE_URL = oldBase;
+      if (oldKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = oldKey;
+      process.env.MOCK_LLM = oldMock;
+      if (oldKa === undefined) delete process.env.SSE_KEEPALIVE_MS; else process.env.SSE_KEEPALIVE_MS = oldKa;
+      fake.close();
+    }
+    ok(
+      'M45. SSE 心跳：慢上游期间收到 : ping',
+      sawPing,
+      `sawPing=${sawPing}`
     );
   }
 
