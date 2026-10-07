@@ -966,14 +966,16 @@ async function runMulti() {
     );
   }
 
-  // M14. 积分：注册奖励改首聊发放 → 新用户余额 0；默认 points 模式，白名单 3 模型
+  // M14. 积分：注册奖励改首聊发放 → 新用户余额 0；默认 points 模式，白名单 6 模型（v1.16.9 新增 3 个 RP 模型）
   {
     const p = await req('GET', '/api/points', undefined, { jar: jarB });
+    const ids = Array.isArray(p.json.models) ? p.json.models.map((m) => m.id) : [];
     ok(
-      'M14. GET /api/points → balance 0（奖励首聊发）/ billing_mode=points / 3 个白名单模型',
+      'M14. GET /api/points → balance 0（奖励首聊发）/ billing_mode=points / 6 个白名单模型',
       p.status === 200 && p.json && p.json.balance === 0 &&
         p.json.billing_mode === 'points' &&
-        Array.isArray(p.json.models) && p.json.models.length === 3,
+        Array.isArray(p.json.models) && p.json.models.length === 6 &&
+        ids.includes('sao10k/l3.3-euryale-70b') && ids.includes('thedrummer/cydonia-24b-v4.1') && ids.includes('deepseek/deepseek-v3.2'),
       JSON.stringify(p.json)
     );
   }
