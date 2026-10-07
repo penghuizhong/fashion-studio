@@ -1400,6 +1400,35 @@ async function runMulti() {
     );
   }
 
+  // M41. v1.17.0 破限预设插件化：列表/角色选用/非法 key 清洗/模型匹配
+  {
+    const jarA41 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarA41 });
+    const presets = await req('GET', '/api/jailbreak-presets', undefined, { jar: jarA41 });
+    const keys = presets.status === 200 ? (presets.json.presets || []).map((p) => p.key) : [];
+    // 角色启用破限
+    const setJb = await req('PUT', `/api/characters/${charA}`, { jailbreak_preset: 'deepseek-rp-light' }, { jar: jarA41 });
+    const got = await req('GET', `/api/characters/${charA}`, undefined, { jar: jarA41 });
+    // 非法 key 被清洗为 null
+    const setBad = await req('PUT', `/api/characters/${charA}`, { jailbreak_preset: 'no-such-preset' }, { jar: jarA41 });
+    const got2 = await req('GET', `/api/characters/${charA}`, undefined, { jar: jarA41 });
+    // 注入逻辑：目标模型生效、非目标模型不注入、未启用不注入
+    const { jailbreakPromptOf } = await import('../src/jailbreakPresets.js');
+    const jbOnMatch = jailbreakPromptOf({ jailbreak_preset: 'deepseek-rp-light' }, 'deepseek/deepseek-v3.2');
+    const jbOnMismatch = jailbreakPromptOf({ jailbreak_preset: 'deepseek-rp-light' }, 'sao10k/l3.3-euryale-70b');
+    const jbOff = jailbreakPromptOf({ jailbreak_preset: null }, 'deepseek/deepseek-v3.2');
+    // 恢复关闭
+    await req('PUT', `/api/characters/${charA}`, { jailbreak_preset: null }, { jar: jarA41 });
+    ok(
+      'M41. 破限预设：列表/选用/非法key清洗/模型匹配注入',
+      presets.status === 200 && keys.includes('deepseek-rp-light') &&
+        setJb.status === 200 && (got.json.jailbreak_preset === 'deepseek-rp-light') &&
+        (got2.json.jailbreak_preset === null || got2.json.jailbreak_preset === undefined) &&
+        jbOnMatch.length > 0 && jbOnMismatch === '' && jbOff === '',
+      `presets=${presets.status} keys=${keys.join(',')} set=${setJb.status} got=${got.json.jailbreak_preset} bad=${got2.json.jailbreak_preset}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
