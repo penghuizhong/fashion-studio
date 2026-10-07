@@ -1835,6 +1835,33 @@ textarea {
   display: none;
 }
 
+/* v1.17.0: 破限模式 */
+.jailbreak-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+.jb-select {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 14px;
+}
+.jb-warning {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(229, 72, 77, 0.08);
+  border: 1px solid rgba(229, 72, 77, 0.25);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
 /* v1.16.7: 首页角色圆墙（鱼缸式漂移） */
 .home-empty {
   display: flex;
