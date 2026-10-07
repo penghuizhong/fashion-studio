@@ -216,6 +216,17 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         (ev, data) => {
           if (ev === 'context') {
             setContextInfo(data);
+          } else if (ev === 'filter_retry') {
+            // v1.17.1: 上游内容过滤，自动换模型重试——丢弃半截输出，不卡住
+            const cid = data && data.character_id;
+            if (isGroup && cid) {
+              accByChar[cid] = '';
+              setGroupStreams((s) => ({ ...s, [cid]: '' }));
+            } else {
+              acc = '';
+              setStreamText('');
+            }
+            showToast('内容被上游拦截，正在换模型重试…', 2500);
           } else if (ev === 'turn_start') {
             const cid = data && data.character_id;
             accByChar[cid] = '';
