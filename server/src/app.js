@@ -167,6 +167,23 @@ export function createApp() {
     return typeof h === 'string' ? h.trim() : '';
   }
 
+  // ---------- v1.17.1: 上游内容过滤兜底 ----------
+  // 被上游拦截（finish_reason=content_filter）时自动换无审查模型重试一次，
+  // 绝不把半截输出当完整回复呈现。仅积分模式（白名单可控）做自动重试。
+  const FILTER_FALLBACK_MODELS = ['sao10k/l3.3-euryale-70b', 'thedrummer/cydonia-24b-v4.1'];
+  function pickFilterFallbackModel(currentModel) {
+    let rows = [];
+    try {
+      rows = db.prepare('SELECT model_id FROM points_models WHERE is_active=1').all().map((r) => r.model_id);
+    } catch {}
+    for (const m of FILTER_FALLBACK_MODELS) {
+      if (m !== currentModel && rows.includes(m)) return m;
+    }
+    return null;
+  }
+  const FILTER_NOTICE =
+    '（刚才的回复被上游模型的内容过滤器拦截了，没能完整生成 😢 换个说法再试一次，或者切换到 Euryale、Cydonia 这类无审查模型会更放得开。）';
+
   // ---------- 积分计费（多用户模式） ----------
   // 解析用户计费方式，返回 { usePoints, userId, balance, chatModel, workerModel, llmOpts }；
   // 积分不足或平台未开通时返回 { error }（调用方直接 402，不落库用户消息）。
@@ -1408,18 +1425,38 @@ export function createApp() {
         send('turn_start', { character_id: ch.id, character_name: ch.name, character_avatar: ch.avatar });
         let full = '';
         let turnUsage = null;
+        let turnModel = chatModel;
         try {
-          const r = await chatStream({
-            messages: apiMessages,
-            model: chatModel,
-            temperature: ch.temperature ?? 0.8,
-            ...llmOpts,
-            onToken: (delta) => {
-              full += delta;
-              send('token', { character_id: ch.id, text: delta });
-            },
-          });
-          turnUsage = r.usage;
+          // v1.17.1: 内容过滤兜底——被拦截时换无审查模型重试，绝不呈现半截输出
+          const doGroupStream = async (model) => {
+            let text = '';
+            const r = await chatStream({
+              messages: apiMessages,
+              model,
+              temperature: ch.temperature ?? 0.8,
+              ...llmOpts,
+              onToken: (delta) => {
+                text += delta;
+                send('token', { character_id: ch.id, text: delta });
+              },
+            });
+            return { text, usage: r.usage, finishReason: r.finishReason };
+          };
+          let gr = await doGroupStream(chatModel);
+          if (gr.finishReason === 'content_filter' && usePoints) {
+            const fb = pickFilterFallbackModel(chatModel);
+            if (fb) {
+              send('filter_retry', { character_id: ch.id, model: fb });
+              gr = await doGroupStream(fb);
+              turnModel = fb;
+            }
+          }
+          if (gr.finishReason === 'content_filter') {
+            full = FILTER_NOTICE;
+          } else {
+            full = gr.text;
+          }
+          turnUsage = gr.usage;
         } catch (e) {
           send('error', { character_id: ch.id, message: `${ch.name} 回复失败：${String((e && e.message) || e)}` });
           continue;
@@ -1433,13 +1470,13 @@ export function createApp() {
         // 积分扣费（按发言轮次）
         if (usePoints && !cfg.mockLlm) {
           const u = turnUsage || { input: usedTokens, output: outTokens };
-          const pts = calcPoints(chatModel, u);
+          const pts = calcPoints(turnModel, u);
           if (pts > 0) {
             try {
               pointsBalance = deductPoints(bill.userId, pts, 'group_chat', 'conversation', conv.id, {
                 tokensInput: u.input,
                 tokensOutput: u.output,
-                model: chatModel,
+                model: turnModel,
               });
             } catch (e) {
               console.warn('[points] 扣费失败:', e.message);
@@ -1547,17 +1584,39 @@ export function createApp() {
     try {
       const { apiMessages, usedTokens, budget } = buildContext(char, conv.id, content, chatModel);
       send('context', { used: usedTokens, budget });
+      // v1.17.1: 内容过滤兜底——被拦截时换无审查模型重试，绝不呈现半截输出
       let full = '';
-      const { usage } = await chatStream({
-        messages: apiMessages,
-        model: chatModel,
-        temperature: char.temperature ?? 0.8,
-        ...llmOpts,
-        onToken: (delta) => {
-          full += delta;
-          send('token', { text: delta });
-        },
-      });
+      let usage = null;
+      let finalModel = chatModel;
+      const doStream = async (model) => {
+        let text = '';
+        const r = await chatStream({
+          messages: apiMessages,
+          model,
+          temperature: char.temperature ?? 0.8,
+          ...llmOpts,
+          onToken: (delta) => {
+            text += delta;
+            send('token', { text: delta });
+          },
+        });
+        return { text, usage: r.usage, finishReason: r.finishReason };
+      };
+      let r = await doStream(chatModel);
+      if (r.finishReason === 'content_filter' && usePoints) {
+        const fb = pickFilterFallbackModel(chatModel);
+        if (fb) {
+          send('filter_retry', { model: fb });
+          r = await doStream(fb);
+          finalModel = fb;
+        }
+      }
+      if (r.finishReason === 'content_filter') {
+        full = FILTER_NOTICE; // 仍被拦截：存友好提示，不存半截话
+      } else {
+        full = r.text;
+      }
+      usage = r.usage;
       const asst = db
         .prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)')
         .run(conv.id, 'assistant', full, estimateTokens(full), now());
@@ -1569,7 +1628,7 @@ export function createApp() {
       // 积分扣费（主聊天；无真实用量时回退到估算值）
       if (usePoints && !cfg.mockLlm) {
         const u = usage || { input: usedTokens, output: outTokens };
-        const pts = calcPoints(chatModel, u);
+        const pts = calcPoints(finalModel, u);
         if (pts > 0) {
           try {
             pointsBalance = deductPoints(bill.userId, pts, 'chat', 'conversation', conv.id, {
