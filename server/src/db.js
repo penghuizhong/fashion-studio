@@ -367,6 +367,8 @@ export function getDb() {
     const charCols = _db.prepare('PRAGMA table_info(characters)').all().map((c) => c.name);
     if (!charCols.includes('roleplay_mode')) _db.exec('ALTER TABLE characters ADD COLUMN roleplay_mode INTEGER NOT NULL DEFAULT 0');
     if (!charCols.includes('roleplay_prompt')) _db.exec('ALTER TABLE characters ADD COLUMN roleplay_prompt TEXT');
+    // v1.17.0: 破限预设插件化，角色级选用（NULL=关闭）
+    if (!charCols.includes('jailbreak_preset')) _db.exec('ALTER TABLE characters ADD COLUMN jailbreak_preset TEXT');
     // v1.15.2 修复：清理之前 bug 误存的字符串 "null"（String(null) 的产物），恢复为 NULL（用内置模板）
     try {
       const fixed = _db.prepare("UPDATE characters SET roleplay_prompt = NULL WHERE roleplay_prompt = 'null'").run();

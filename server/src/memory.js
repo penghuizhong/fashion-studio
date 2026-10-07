@@ -1,6 +1,7 @@
 import { getConfig} from './config.js';
 import { getDb} from './db.js';
 import { summarizeText, classifyTurn, extractFacts } from './llm.js';
+import { jailbreakPromptOf } from './jailbreakPresets.js';
 
 // v1.13.4: 当前北京时间（拼进 system prompt，模型知道今天几号）
 // 用 Intl 按 Asia/Shanghai 算，不依赖服务器系统时区
@@ -93,7 +94,7 @@ export const ANTI_HALLU = `你是 {name}。回答时只依据以及本次对话�
 // 组装发给 LLM 的 messages：系统块（含角色名）→ 摘要 → 最近 20 轮原文
 // 超预算时优先从最早的原文轮开始丢，摘要与三文件保留
 // query：本轮用户消息，用于检索相关记忆事实；不传则取本轮最新用户消息
-export function buildContext(character, conversationId, query) {
+export function buildContext(character, conversationId, query, modelId) {
 const cfg = getConfig();
 const budget = cfg.contextBudget;
 const db = getDb();
@@ -106,6 +107,9 @@ ANTI_HALLU.replaceAll('{name}', character.name || ''),
 ];
 const rpSingle = roleplayPromptOf(character);
 if (rpSingle) sysParts.push(`# 回复格式要求\n${rpSingle}`);
+// v1.17.0: 破限预设插件化（放末尾，离生成位置最近）
+const jbSingle = jailbreakPromptOf(character, modelId);
+if (jbSingle) sysParts.push(jbSingle);
 // v1.10：memory_md 不再全文注入（已迁移为 facts 条目），改为按需检索
 const facts = retrieveFacts(character.id, conversationId, query, 8);
 if (facts.length) sysParts.push(`# 相关记忆\n${facts.map((f) => `- ${f.fact}`).join('\n')}`);
@@ -157,7 +161,7 @@ content: r.content,
 // 群聊上下文：共享历史（带说话人标签）只组装一次；
 // 返回 buildFor(character) 按角色拼出完整 apiMessages（各角色 soul/user/检索记忆不同）
 // query：本轮用户消息，用于检索相关记忆事实；不传则取本轮最新用户消息
-export function buildGroupContext(members, conversationId, query) {
+export function buildGroupContext(members, conversationId, query, modelId) {
 const cfg = getConfig();
 const budget = cfg.contextBudget;
 const db = getDb();
@@ -201,6 +205,9 @@ ANTI_HALLU.replaceAll('{name}', character.name || ''),
 ];
 const rpGroup = roleplayPromptOf(character);
 if (rpGroup) sysParts.push(`# 回复格式要求\n${rpGroup}`);
+// v1.17.0: 破限预设插件化（放末尾，离生成位置最近）
+const jbGroup = jailbreakPromptOf(character, modelId);
+if (jbGroup) sysParts.push(jbGroup);
 const gfacts = retrieveFacts(character.id, conversationId, query, 8);
 if (gfacts.length) sysParts.push(`# 相关记忆\n${gfacts.map((f) => `- ${f.fact}`).join('\n')}`);
 if (summaryText) sysParts.push(summaryText);

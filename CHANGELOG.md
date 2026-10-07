@@ -1,5 +1,14 @@
 # SoulChat 更新日志
 
+## v1.17.0（2026-10-07）
+
+- 破限预设插件化：新增 `server/src/jailbreakPresets.js` 预设库，角色级选用（`characters.jailbreak_preset`，NULL=关闭）
+- 首个预设 `deepseek-rp-light`：专为 DeepSeek V3.2 调优的中文 RP 轻量破限（510 字节），只在目标模型上注入，原生无审查模型自动跳过
+- 注入点：单聊/群聊 system prompt 末尾（离生成位置最近）
+- 角色设置灵魂 tab 新增"破限模式"开关 + 🔞 温馨提示（成人向内容提醒、token 计费说明）
+- 新接口 `GET /api/jailbreak-presets`；`POST/PATCH /api/characters` 支持 `jailbreak_preset`（非法 key 清洗为 null）
+- 回归 M41 覆盖：列表/选用/非法 key 清洗/模型匹配注入
+
 ## v1.16.10（2026-10-07）
 
 - 回归测试 M14 跟随 v1.16.9 更新：白名单模型数断言 3→6，并校验三个 RP 模型 ID
