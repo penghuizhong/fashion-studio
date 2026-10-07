@@ -1429,6 +1429,44 @@ async function runMulti() {
     );
   }
 
+  // M42. v1.17.1 finish_reason 捕获：content_filter 半截流被识别
+  {
+    const http = await import('node:http');
+    // 重新导入 llm.js 以绕过已构建的代理 dispatcher（直连本地伪造 SSE 服务器）
+    for (const k of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']) delete process.env[k];
+    const { chatStream } = await import(`../src/llm.js?m42=${Date.now()}`);
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"半截话"},"finish_reason":null}]}\n\n');
+      res.write('data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}\n\n');
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    const oldMock = process.env.MOCK_LLM;
+    process.env.MOCK_LLM = '';
+    let got = '';
+    let r;
+    try {
+      r = await chatStream({
+        messages: [{ role: 'user', content: 'hi' }],
+        model: 'test/model',
+        baseUrl: `http://127.0.0.1:${port}`,
+        apiKey: 'test-key',
+        onToken: (d) => { got += d; },
+      });
+    } finally {
+      process.env.MOCK_LLM = oldMock;
+      server.close();
+    }
+    ok(
+      'M42. chatStream 捕获 finish_reason=content_filter',
+      r && r.finishReason === 'content_filter' && got === '半截话',
+      `finishReason=${r && r.finishReason} text=${got}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
