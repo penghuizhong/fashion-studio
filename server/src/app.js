@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { getConfig, getVersion, assertMultiUserConfig } from './config.js';
-import { getDb } from './db.js';
+import { getDb, getSetting } from './db.js';
 import { ah, apiErrorHandler } from './asyncHandler.js';
 import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, generateCardJson, generateSoulMd, friendlyLlmError, withRetry } from './llm.js';
 import {
@@ -53,6 +53,31 @@ import {
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
 const FILE_FIELDS = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
+
+// ---------- v1.17.3: 内容过滤回退链（可配置，不再硬编码） ----------
+// 默认链：Euryale → Cydonia；管理员可在设置→统计→模型配置里自定义顺序。
+// sys_settings.filter_fallback_models 存 JSON 数组；未设置用默认，显式 [] = 关闭回退。
+const DEFAULT_FILTER_FALLBACK_MODELS = ['sao10k/l3.3-euryale-70b', 'thedrummer/cydonia-24b-v4.1'];
+export function getFilterFallbackModels() {
+  let raw = '';
+  try { raw = getSetting('filter_fallback_models', ''); } catch {}
+  if (!raw) return [...DEFAULT_FILTER_FALLBACK_MODELS];
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) return arr.filter((m) => typeof m === 'string' && m.trim()).map((m) => m.trim());
+  } catch {}
+  return [...DEFAULT_FILTER_FALLBACK_MODELS];
+}
+export function pickFilterFallbackModel(currentModel) {
+  let rows = [];
+  try {
+    rows = getDb().prepare('SELECT model_id FROM points_models WHERE is_active=1').all().map((r) => r.model_id);
+  } catch {}
+  for (const m of getFilterFallbackModels()) {
+    if (m !== currentModel && rows.includes(m)) return m;
+  }
+  return null;
+}
 
 export function createApp() {
   const cfg = getConfig();
@@ -170,19 +195,9 @@ export function createApp() {
   // ---------- v1.17.1: 上游内容过滤兜底 ----------
   // 被上游拦截（finish_reason=content_filter）时自动换无审查模型重试一次，
   // 绝不把半截输出当完整回复呈现。仅积分模式（白名单可控）做自动重试。
-  const FILTER_FALLBACK_MODELS = ['sao10k/l3.3-euryale-70b', 'thedrummer/cydonia-24b-v4.1'];
-  function pickFilterFallbackModel(currentModel) {
-    let rows = [];
-    try {
-      rows = db.prepare('SELECT model_id FROM points_models WHERE is_active=1').all().map((r) => r.model_id);
-    } catch {}
-    for (const m of FILTER_FALLBACK_MODELS) {
-      if (m !== currentModel && rows.includes(m)) return m;
-    }
-    return null;
-  }
+  // v1.17.3: 回退链可配置（sys_settings.filter_fallback_models，JSON 数组，按优先级排序）
   const FILTER_NOTICE =
-    '（刚才的回复被上游模型的内容过滤器拦截了，没能完整生成 😢 换个说法再试一次，或者切换到 Euryale、Cydonia 这类无审查模型会更放得开。）';
+    '（刚才的回复被上游模型的内容过滤器拦截了，没能完整生成 😢 换个说法再试一次，或者切换到无审查模型会更放得开。）';
 
   // ---------- 积分计费（多用户模式） ----------
   // 解析用户计费方式，返回 { usePoints, userId, balance, chatModel, workerModel, llmOpts }；
@@ -1365,6 +1380,12 @@ export function createApp() {
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(t, conv.id);
 
     const send = sseInit(res);
+    // v1.17.4: SSE 心跳（注释帧，客户端忽略），防中间设备掐 idle 连接；finally 里清理
+    // 间隔可配（SSE_KEEPALIVE_MS，默认 20000；测试可调小）
+    const kaMs = Math.max(50, parseInt(process.env.SSE_KEEPALIVE_MS || '20000', 10) || 20000);
+    const kaTimer = setInterval(() => {
+      if (!res.destroyed) { try { res.write(': ping\n\n'); } catch {} }
+    }, kaMs);
 
     try {
       // 1. 定发言顺序：@点名 > 导演决策 > fallback（最久没说话的先回）
@@ -1533,6 +1554,7 @@ export function createApp() {
     } catch (e) {
       send('error', { message: friendlyLlmError(e) });
     } finally {
+      clearInterval(kaTimer);
       res.end();
     }
   }
@@ -1583,6 +1605,12 @@ export function createApp() {
     }
 
     const send = sseInit(res);
+    // v1.17.4: SSE 心跳（注释帧，客户端忽略），防中间设备掐 idle 连接；finally 里清理
+    // 间隔可配（SSE_KEEPALIVE_MS，默认 20000；测试可调小）
+    const kaMs = Math.max(50, parseInt(process.env.SSE_KEEPALIVE_MS || '20000', 10) || 20000);
+    const kaTimer = setInterval(() => {
+      if (!res.destroyed) { try { res.write(': ping\n\n'); } catch {} }
+    }, kaMs);
 
     try {
       const { apiMessages, usedTokens, budget } = buildContext(char, conv.id, content, chatModel);
@@ -1640,7 +1668,7 @@ export function createApp() {
             pointsBalance = deductPoints(bill.userId, pts, 'chat', 'conversation', conv.id, {
               tokensInput: u.input,
               tokensOutput: u.output,
-              model: chatModel,
+              model: finalModel, // v1.17.3: 记实际使用的模型（含回退），之前误记 chatModel
             });
           } catch (e) {
             console.warn('[points] 扣费失败:', e.message);
@@ -1672,6 +1700,7 @@ export function createApp() {
     } catch (e) {
       send('error', { message: friendlyLlmError(e) });
     } finally {
+      clearInterval(kaTimer);
       res.end();
     }
   }));

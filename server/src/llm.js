@@ -86,11 +86,25 @@ return undefined;
 }
 // 供 app.js 复用：带代理设置的 fetch（模型列表等透传请求用）
 export function llmFetch(url, init) {
-return fetch(url, { ...(dispatcher ? { dispatcher } : {}), ...init});
+const d = getDispatcher();
+return fetch(url, { ...(d ? { dispatcher: d } : {}), ...init});
 }
 
-const dispatcher = buildDispatcher();
-if (dispatcher) console.log('[llm] 已启用 HTTP 代理');
+// v1.17.3: dispatcher 懒初始化（import 时不再立即构建），测试可调 resetDispatcher() 重建
+let _dispatcher = null;
+let _dispatcherInit = false;
+function getDispatcher() {
+if (!_dispatcherInit) {
+_dispatcherInit = true;
+_dispatcher = buildDispatcher();
+if (_dispatcher) console.log('[llm] 已启用 HTTP 代理');
+}
+return _dispatcher;
+}
+export function resetDispatcher() {
+_dispatcher = null;
+_dispatcherInit = false;
+}
 
 const EXTRACT_SYSTEM = `你是记忆整理助手。根据当前 user.md、memory.md 和最近对话，输出两个文件的全文重写版本。
 要求：
@@ -130,7 +144,7 @@ body: JSON.stringify({
   // 流式时让 OpenRouter 在最后一个 chunk 返回真实用量（计费用）
   ...(stream ? { stream_options: { include_usage: true } } : {}),
 }),
-...(dispatcher ? { dispatcher } : {}),
+...(getDispatcher() ? { dispatcher: getDispatcher() } : {}),
 });
 if (!res.ok) {
 const text = await res.text().catch(() => '');
