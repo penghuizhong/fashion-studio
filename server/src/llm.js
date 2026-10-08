@@ -200,6 +200,27 @@ try { opts.onUsage(usage); } catch { /* 计费回调异常不影响主流程 */ 
 return { json, usage };
 }
 
+// v1.18.0: AI 生成对话标题（首轮结束后调用，走最便宜的 worker 模型；不计费，系统开销）
+export async function genTitle({ userText, asstText, model, apiKey, baseUrl, signal }) {
+const cfg = getConfig();
+if (cfg.mockLlm) return '';
+const { json } = await postJson({
+model,
+temperature: 0.3,
+apiKey,
+baseUrl,
+signal,
+// onUsage 不传：标题生成不向用户计费
+messages: [
+{ role: 'system', content: '你是一个对话标题生成器。根据用户和AI的首轮对话，生成一个10字以内的中文标题，只输出标题本身，不要引号、不要标点、不要解释。' },
+{ role: 'user', content: `用户：${String(userText || '').slice(0, 300)}\nAI：${String(asstText || '').slice(0, 300)}` },
+],
+});
+const ch = json && json.choices && json.choices[0] && json.choices[0].message;
+const t = String((ch && (ch.content || '')) || '').trim().replace(/^["「『【\s]+|["」』】\s]+$/g, '');
+return t.slice(0, 14);
+}
+
 // 流式聊天：每收到 delta 就调 onToken；返回 { text, usage }（usage 为真实用量，可能为 null）
 export async function chatStream({ messages, model, temperature, onToken, apiKey, baseUrl, signal }) {
 const cfg = getConfig();

@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { getConfig, getVersion, assertMultiUserConfig } from './config.js';
 import { getDb, getSetting } from './db.js';
 import { ah, apiErrorHandler } from './asyncHandler.js';
-import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, generateCardJson, generateSoulMd, friendlyLlmError, withRetry } from './llm.js';
+import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, generateCardJson, generateSoulMd, friendlyLlmError, withRetry, genTitle } from './llm.js';
 import {
   getPresetCards,
   getPresetCard,
@@ -1346,6 +1346,13 @@ export function createApp() {
   });
 
   // ---------- 聊天 SSE ----------
+  // v1.18.0: 对话标题规则（B）——无意义开场白（问候/测试）不直接当标题，留"新对话"占位等 AI 生成
+  const GREETING_RE = /^(你好|您好|hi+|hello|嘿|嗨|哈喽|在吗|在么|在不在|test|测试|111|222|…|\.|。|！|!|？|\?|\s)+$/i;
+  function ruleTitle(content) {
+    const c = String(content || '').trim().replace(/\s+/g, ' ');
+    if (!c || GREETING_RE.test(c)) return '新对话';
+    return c.slice(0, 18);
+  }
   // ---------- 群聊消息 SSE：导演决策 → 按角色串行流式 ----------
   async function handleGroupMessage(req, res, conv, cfg) {
     // 凭证：多用户模式用用户托管 key（忽略请求头），单用户模式保持请求头优先
@@ -1604,8 +1611,10 @@ export function createApp() {
     );
 
     let title = conv.title;
+    let titleAuto = false; // 首轮且用户没改过名：先规则标题，回复完再 AI 优化
     if (!title || title === '新对话') {
-      title = content.slice(0, 12);
+      titleAuto = true;
+      title = ruleTitle(content);
       db.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?').run(title, t, conv.id);
     } else {
       db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(t, conv.id);
@@ -1684,6 +1693,19 @@ export function createApp() {
       }
       if (usePoints) send('points', { balance: pointsBalance });
       if (bill.userId) checkInviteReward(bill.userId);
+      // v1.18.0: AI 生成标题（A）——仅首轮自动标题且回复正常时；15 秒超时兜底，失败保留规则标题
+      if (titleAuto && full && full !== FILTER_NOTICE && !cfg.mockLlm) {
+        try {
+          const tSignal = llmOpts.signal
+            ? AbortSignal.any([llmOpts.signal, AbortSignal.timeout(15000)])
+            : AbortSignal.timeout(15000);
+          const aiTitle = await genTitle({ userText: content, asstText: full, model: workerModel, apiKey: llmOpts.apiKey, baseUrl: llmOpts.baseUrl, signal: tSignal });
+          if (aiTitle) {
+            title = aiTitle;
+            db.prepare('UPDATE conversations SET title = ? WHERE id = ?').run(title, conv.id);
+          }
+        } catch (e) { console.warn('[title] AI 标题生成失败:', e.message); }
+      }
       send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens } });
       // 摘要 + v1.10 记忆流水线（意图识别/事件驱动）放后台，不阻塞 done；去掉请求级 signal
       const bgOpts = { ...llmOpts, signal: undefined };
