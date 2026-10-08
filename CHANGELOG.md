@@ -1,3 +1,6 @@
+## v1.17.10
+- 优化：上游请求统一带 `reasoning: { enabled: false }`，关掉 thinking 模型的推理过程。RP 不需要推理；thinking token 按输出计费，关掉后首字更快、更省积分（qwen3.7-plus 等待久的根因）。M48。
+
 ## v1.17.9
 - 修复：破限模式年龄确认用的 key 与发现页共用，已确认过的用户勾选时不弹窗。改用破限专用 `soulchat-jb-age-ok`，第一次勾选必弹。纯前端改动。
 
