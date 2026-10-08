@@ -1713,6 +1713,31 @@ async function runMulti() {
     );
   }
 
+  // M47. v1.17.7 生效模板公开接口 /api/prompt-templates（一键填入/恢复默认吃这个）
+  {
+    const { getRoleplayTemplate } = await import('../src/memory.js');
+    const db = getDb();
+    db.prepare("DELETE FROM sys_settings WHERE key='roleplay_template'").run();
+
+    // 1. 默认：返回内置模板（未登录也可读）
+    const t0 = await req('GET', '/api/prompt-templates');
+    // 2. 管理员覆盖后：返回覆盖后的
+    const put1 = await req('PUT', '/api/admin/settings', { roleplay_template: '覆盖模板C' }, { jar: jarAdminM });
+    const t1 = await req('GET', '/api/prompt-templates');
+    // 3. 清空恢复内置
+    const put2 = await req('PUT', '/api/admin/settings', { roleplay_template: '' }, { jar: jarAdminM });
+    const t2 = await req('GET', '/api/prompt-templates');
+    db.prepare("DELETE FROM sys_settings WHERE key='roleplay_template'").run();
+
+    ok(
+      'M47. 提示词模板公开接口：默认/覆盖/清空恢复',
+      t0.status === 200 && t0.json.roleplay_template === getRoleplayTemplate() && t0.json.roleplay_template.length > 50 &&
+        put1.status === 200 && t1.json.roleplay_template === '覆盖模板C' &&
+        put2.status === 200 && t2.json.roleplay_template === getRoleplayTemplate(),
+      `t0=${t0.status} t1=${t1.json.roleplay_template.slice(0, 6)} t2len=${t2.json.roleplay_template.length}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
