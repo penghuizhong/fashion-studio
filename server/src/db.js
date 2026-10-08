@@ -250,6 +250,11 @@ export function getDb() {
         _db.exec(`UPDATE users SET jailbreak_allowed = 1 WHERE id IN (SELECT DISTINCT user_id FROM characters WHERE jailbreak_preset IS NOT NULL AND jailbreak_preset != '')`);
       }
     } catch (e) { console.warn('[db] 破限白名单 grandfather 迁移失败:', e.message); }
+    // v1.20.0: API 提供商预设（协议与地址解耦；非敏感，明文存）
+    try {
+      const kCols = _db.prepare('PRAGMA table_info(user_api_keys)').all().map((c) => c.name);
+      if (!kCols.includes('provider')) _db.exec("ALTER TABLE user_api_keys ADD COLUMN provider TEXT DEFAULT 'custom'");
+    } catch (e) { console.warn('[db] provider 迁移失败:', e.message); }
     // 邀请系统
     if (!userCols.includes('invite_code')) _db.exec('ALTER TABLE users ADD COLUMN invite_code TEXT');
     if (!userCols.includes('invited_by')) _db.exec('ALTER TABLE users ADD COLUMN invited_by TEXT');
