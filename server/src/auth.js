@@ -705,7 +705,7 @@ export function mountAuthRoutes(app, authLimiter) {
     const map = new Map();
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-      map.set(d, { day: d, granted: 0, consumed: 0, newUsers: 0 });
+      map.set(d, { day: d, granted: 0, consumed: 0, newUsers: 0, apiCalls: 0 });
     }
     for (const r of rows) {
       if (map.has(r.day)) Object.assign(map.get(r.day), { granted: r.granted, consumed: r.consumed });
@@ -713,22 +713,51 @@ export function mountAuthRoutes(app, authLimiter) {
     for (const r of users) {
       if (map.has(r.day)) map.get(r.day).newUsers = r.n;
     }
+    // v1.19.0: 自带 Key 每日调用次数
+    try {
+      const apiRows = db
+        .prepare(
+          `SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM api_usage
+           WHERE created_at >= date('now', ?) GROUP BY day`
+        )
+        .all(`-${days} days`);
+      for (const r of apiRows) {
+        if (map.has(r.day)) map.get(r.day).apiCalls = r.n;
+      }
+    } catch {}
     res.json([...map.values()]);
   });
 
   // GET /api/admin/stats/models：模型用量分布
+  // v1.18.3: 加用途维度（reason），区分聊天/后台任务/AI 生成
   app.get('/api/admin/stats/models', needMulti, needLogin, needAdmin, (req, res) => {
     const rows = getDb()
       .prepare(
-        `SELECT model, COUNT(*) AS calls,
+        `SELECT model, reason, COUNT(*) AS calls,
                 COALESCE(SUM(tokens_input),0) AS inputTokens,
                 COALESCE(SUM(tokens_output),0) AS outputTokens,
                 COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END),0) AS points
          FROM points_ledger WHERE delta < 0 AND model IS NOT NULL
-         GROUP BY model ORDER BY points DESC`
+         GROUP BY model, reason ORDER BY points DESC`
       )
       .all();
-    res.json(rows);
+    res.json(rows.map((r) => ({ ...r, reason_label: REASON_LABELS[r.reason] || r.reason })));
+  });
+
+  // v1.19.0: GET /api/admin/stats/api-models——自带 Key 调用按模型+用途分布
+  app.get('/api/admin/stats/api-models', needMulti, needLogin, needAdmin, (req, res) => {
+    let rows = [];
+    try {
+      rows = getDb()
+        .prepare(
+          `SELECT model, reason, COUNT(*) AS calls,
+                  COALESCE(SUM(tokens_input),0) AS inputTokens,
+                  COALESCE(SUM(tokens_output),0) AS outputTokens
+           FROM api_usage GROUP BY model, reason ORDER BY calls DESC`
+        )
+        .all();
+    } catch {}
+    res.json(rows.map((r) => ({ ...r, reason_label: REASON_LABELS[r.reason] || r.reason })));
   });
 
   // GET /api/admin/stats/top-users：消费排行
@@ -739,7 +768,8 @@ export function mountAuthRoutes(app, authLimiter) {
         `SELECT u.id, u.username, u.is_admin, u.jailbreak_allowed,
                 COALESCE(SUM(CASE WHEN l.delta < 0 THEN -l.delta ELSE 0 END),0) AS consumed,
                 COALESCE(SUM(CASE WHEN l.delta > 0 THEN l.delta ELSE 0 END),0) AS granted,
-                u.points_balance AS balance
+                u.points_balance AS balance,
+                COALESCE((SELECT COUNT(*) FROM api_usage a WHERE a.user_id = u.id), 0) AS api_calls
          FROM users u LEFT JOIN points_ledger l ON l.user_id = u.id
          GROUP BY u.id ORDER BY consumed DESC LIMIT ?`
       )
