@@ -1,3 +1,5 @@
+import { getSetting } from './db.js';
+
 // v1.17.0: 破限预设插件库
 // 插件化设计：预设 = { name, description, models(目标模型), prompt }
 // 角色通过 characters.jailbreak_preset 选用（NULL=关闭）；注入时按当前聊天模型匹配 models
@@ -25,6 +27,21 @@ export function jailbreakPresetList() {
   }));
 }
 
+// v1.17.5: 预设 prompt 管理员覆盖（sys_settings.jailbreak_presets_override = JSON { key: { prompt } }）
+// 取预设生效 prompt：管理员覆盖 > 内置
+export function jailbreakPresetPrompt(key) {
+  const preset = JAILBREAK_PRESETS[key];
+  if (!preset) return '';
+  try {
+    const raw = getSetting('jailbreak_presets_override', '');
+    if (raw) {
+      const ov = JSON.parse(raw);
+      const p = ov && ov[key] && ov[key].prompt;
+      if (typeof p === 'string' && p.trim()) return p;
+    }
+  } catch {}
+  return preset.prompt;
+}
 // 取角色在当前模型下生效的破限文本：未启用/模型不匹配返回 ''
 export function jailbreakPromptOf(character, modelId) {
   const key = character && character.jailbreak_preset;
@@ -33,5 +50,17 @@ export function jailbreakPromptOf(character, modelId) {
   if (!preset) return '';
   const models = preset.models || [];
   if (models.length && modelId && !models.includes(modelId)) return '';
-  return preset.prompt;
+  return jailbreakPresetPrompt(key);
+}
+// 给管理后台：预设列表（含生效 prompt 与是否被覆盖）
+export function jailbreakPresetAdminList() {
+  let ov = {};
+  try {
+    const raw = getSetting('jailbreak_presets_override', '');
+    if (raw) ov = JSON.parse(raw) || {};
+  } catch {}
+  return Object.entries(JAILBREAK_PRESETS).map(([key, p]) => {
+    const custom = ov && ov[key] && typeof ov[key].prompt === 'string' && ov[key].prompt.trim() ? ov[key].prompt : null;
+    return { key, name: p.name, description: p.description, models: p.models || [], prompt: custom || p.prompt, custom: !!custom };
+  });
 }

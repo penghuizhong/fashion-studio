@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { getDb, getSetting, setSetting } from './db.js';
+import { getRoleplayTemplate } from './memory.js';
+import { jailbreakPresetAdminList, JAILBREAK_PRESETS } from './jailbreakPresets.js';
 import { getConfig } from './config.js';
 import { assertPublicHttpsUrl } from './llm.js';
 import { ah } from './asyncHandler.js';
@@ -506,6 +508,10 @@ export function mountAuthRoutes(app, authLimiter) {
       worker_model: getSetting('worker_model', ''),
       chat_default_model: getSetting('chat_default_model', ''),
       filter_fallback_models: fb,
+      // v1.17.5: 系统提示词模板（管理员可覆盖）
+      roleplay_template: getRoleplayTemplate(),
+      roleplay_template_custom: String(getSetting('roleplay_template', '') || '').trim().length > 0,
+      jailbreak_presets: jailbreakPresetAdminList(),
     });
   });
 
@@ -536,6 +542,29 @@ export function mountAuthRoutes(app, authLimiter) {
       }
       setSetting('filter_fallback_models', JSON.stringify(clean));
       out.filter_fallback_models = clean;
+    }
+    // v1.17.5: 扮演模式系统模板（空字符串 = 恢复内置）
+    if (b.roleplay_template !== undefined) {
+      const v = String(b.roleplay_template || '');
+      setSetting('roleplay_template', v);
+      out.roleplay_template = v;
+    }
+    // v1.17.5: 破限预设 prompt 覆盖（{ key: prompt }；空 prompt = 恢复该预设内置）
+    if (b.jailbreak_presets !== undefined) {
+      const obj = (b.jailbreak_presets && typeof b.jailbreak_presets === 'object') ? b.jailbreak_presets : {};
+      let ov = {};
+      try {
+        const raw = getSetting('jailbreak_presets_override', '');
+        if (raw) ov = JSON.parse(raw) || {};
+      } catch {}
+      for (const key of Object.keys(JAILBREAK_PRESETS)) {
+        if (obj[key] === undefined) continue;
+        const p = String(obj[key] || '').trim();
+        if (p) ov[key] = { prompt: obj[key] };
+        else delete ov[key];
+      }
+      setSetting('jailbreak_presets_override', JSON.stringify(ov));
+      out.jailbreak_presets = jailbreakPresetAdminList();
     }
     res.json({ ok: true, ...out });
   });

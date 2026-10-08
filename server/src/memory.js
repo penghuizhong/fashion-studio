@@ -1,5 +1,5 @@
 import { getConfig} from './config.js';
-import { getDb} from './db.js';
+import { getDb, getSetting} from './db.js';
 import { summarizeText, classifyTurn, extractFacts } from './llm.js';
 import { jailbreakPromptOf } from './jailbreakPresets.js';
 
@@ -34,11 +34,19 @@ export const ROLEPLAY_TEMPLATE = `## 回复格式：小说式角色扮演
 5. 正文结束后另起 markdown 代码块，写角色没说出口的真实内心独白；独白可与说出口的话矛盾。
 6. 每轮 200～500 字（不含独白块），信息密度高，不水文、不重复。`;
 
-// 取角色生效的扮演提示词：开且自定义非空用自定义，开且空用内置，关则返回空
+// v1.17.5: 系统扮演模板（管理员可在设置→提示词 tab 自定义；空=用内置 ROLEPLAY_TEMPLATE）
+// 取角色生效的扮演提示词：角色自定义 > 管理员系统模板 > 内置；开关决定返回空
+export function getRoleplayTemplate() {
+  try {
+    const t = String(getSetting('roleplay_template', '') || '').trim();
+    if (t) return t;
+  } catch {}
+  return ROLEPLAY_TEMPLATE;
+}
 export function roleplayPromptOf(character) {
   if (!character || !character.roleplay_mode) return '';
   const custom = String(character.roleplay_prompt || '').trim();
-  return custom || ROLEPLAY_TEMPLATE;
+  return custom || getRoleplayTemplate();
 }
 
 // 粗略 token 估算：CJK 字符 1.5 字符/token，其余 4 字符/token
