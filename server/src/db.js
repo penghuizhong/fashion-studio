@@ -98,6 +98,18 @@ CREATE TABLE IF NOT EXISTS points_ledger(
   created_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON points_ledger(user_id, id);
+-- ---- v1.19.0: 自带 Key（BYOK）调用统计（不扣费，只记录用量） ----
+CREATE TABLE IF NOT EXISTS api_usage(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT,
+  model TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  tokens_input INTEGER DEFAULT 0,
+  tokens_output INTEGER DEFAULT 0,
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_api_usage_day ON api_usage(created_at);
+CREATE INDEX IF NOT EXISTS idx_api_usage_user ON api_usage(user_id);
 -- ---- 积分可用模型（管理员动态管理） ----
 CREATE TABLE IF NOT EXISTS points_models(
   id INTEGER PRIMARY KEY AUTOINCREMENT,

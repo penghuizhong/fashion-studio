@@ -51,6 +51,7 @@ import {
   maybeCollectionReward,
   COLLECTION_REWARD,
   hasSignupBonus,
+  recordByokUsage,
 } from './points.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
@@ -237,9 +238,14 @@ export function createApp() {
   }
 
   // 积分模式后台用量计费回调工厂（记忆/摘要/导演）；onBalance 用于同步最新余额
+  // v1.19.0: 自带 Key 模式下只记录用量不扣费（api_usage 统计用）
   function bgBill(bill, cfg, reason, model, onBalance) {
     return (usage) => {
-      if (!bill.usePoints || cfg.mockLlm || !usage) return;
+      if (cfg.mockLlm || !usage) return;
+      if (!bill.usePoints) {
+        recordByokUsage(bill.userId, model, reason, usage);
+        return;
+      }
       try {
         const pts = calcPoints(model, usage);
         if (pts > 0)
@@ -819,6 +825,14 @@ export function createApp() {
           balance,
         };
       }
+      // v1.19.0: 自带 Key 生成只记录不扣费
+      if (!usePoints && !cfg.mockLlm) {
+        const usage = result.usage || {
+          input: estimateTokens(desc),
+          output: estimateTokens(JSON.stringify(result.card)),
+        };
+        recordByokUsage(uid, model, 'character_generate', usage);
+      }
       // v1.13: 生成成功自动保存到收藏
       let savedId = null;
       if (uid && result && result.card) {
@@ -898,6 +912,14 @@ export function createApp() {
           return res.status(402).json({ error: '积分不足，本次生成不计费' });
         }
         cost = { points: pts, model, tokens_input: usage.input, tokens_output: usage.output, balance };
+      }
+      // v1.19.0: 自带 Key 生成只记录不扣费
+      if (!usePoints && !cfg.mockLlm) {
+        const usage = result.usage || {
+          input: estimateTokens(desc),
+          output: estimateTokens(result.soul_md),
+        };
+        recordByokUsage(uid, model, 'soul_generate', usage);
       }
       res.json({ soul_md: result.soul_md, cost });
     })
@@ -1532,6 +1554,11 @@ export function createApp() {
             }
           }
         }
+        // v1.19.0: 自带 Key 群聊只记录不扣费
+        if (!usePoints && !cfg.mockLlm) {
+          const u = turnUsage || { input: usedTokens, output: outTokens };
+          recordByokUsage(bill.userId, turnModel, 'group_chat', u);
+        }
         const row = db
           .prepare(
             'INSERT INTO messages(conversation_id, role, content, tokens, character_id, created_at) VALUES(?,?,?,?,?,?)'
@@ -1703,6 +1730,11 @@ export function createApp() {
             console.warn('[points] 扣费失败:', e.message);
           }
         }
+      }
+      // v1.19.0: 自带 Key 调用只记录不扣费（统计用）
+      if (!usePoints && !cfg.mockLlm) {
+        const u = usage || { input: usedTokens, output: outTokens };
+        recordByokUsage(bill.userId, finalModel, 'chat', u);
       }
       if (usePoints) send('points', { balance: pointsBalance });
       if (bill.userId) checkInviteReward(bill.userId);
