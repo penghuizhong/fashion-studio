@@ -281,6 +281,8 @@ export const api = {
   adminStatsOverview: () => get('/api/admin/stats/overview'),
   adminStatsDaily: (days = 30) => get(`/api/admin/stats/daily?days=${days}`),
   adminStatsModels: () => get('/api/admin/stats/models'),
+  // v1.19.0: 自带 Key 调用按模型+用途分布
+  adminStatsApiModels: () => get('/api/admin/stats/api-models'),
   adminStatsTopUsers: (limit = 10) => get(`/api/admin/stats/top-users?limit=${limit}`),
   // v1.18.1: 管理员授权/撤销用户破限权限
   adminSetJailbreak: (userId, allowed) => put(`/api/admin/users/${userId}/jailbreak`, { allowed }),

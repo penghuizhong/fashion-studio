@@ -135,11 +135,15 @@ function TrendChart({ data }) {
   const P = 30;
   if (!data.length) return <p className="key-desc small">暂无数据</p>;
   const max = Math.max(1, ...data.map((d) => d.consumed));
+  // v1.19.0: 自带 Key 调用次数（独立刻度）
+  const maxApi = Math.max(1, ...data.map((d) => d.apiCalls || 0));
   const n = data.length;
   const xs = (i) => P + (n === 1 ? 0 : (i / (n - 1)) * (W - 2 * P));
   const ys = (v) => H - P - (v / max) * (H - 2 * P);
+  const ysApi = (v) => H - P - (v / maxApi) * (H - 2 * P);
   const line = data.map((d, i) => `${i ? 'L' : 'M'}${xs(i).toFixed(1)},${ys(d.consumed).toFixed(1)}`).join(' ');
   const area = `${line} L${xs(n - 1).toFixed(1)},${H - P} L${xs(0).toFixed(1)},${H - P} Z`;
+  const lineApi = data.map((d, i) => `${i ? 'L' : 'M'}${xs(i).toFixed(1)},${ysApi(d.apiCalls || 0).toFixed(1)}`).join(' ');
   // x 轴日期标签：最多 6 个
   const step = Math.max(1, Math.floor(n / 6));
   return (
@@ -157,6 +161,7 @@ function TrendChart({ data }) {
       ))}
       <path d={area} fill="#5b8def" opacity="0.15" />
       <path d={line} fill="none" stroke="#5b8def" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d={lineApi} fill="none" stroke="#34c77b" strokeWidth="2" strokeDasharray="5 3" strokeLinejoin="round" />
       {data.map((d, i) =>
         i % step === 0 ? (
           <text
@@ -174,6 +179,11 @@ function TrendChart({ data }) {
       <text x={P} y={18} fontSize="11" fill="var(--text-secondary)">
         max {max}
       </text>
+      {/* 图例 */}
+      <circle cx={P + 4} cy={34} r="4" fill="#5b8def" />
+      <text x={P + 12} y={38} fontSize="11" fill="var(--text-secondary)">积分消耗</text>
+      <circle cx={P + 90} cy={34} r="4" fill="#34c77b" />
+      <text x={P + 98} y={38} fontSize="11" fill="var(--text-secondary)">API 调用{maxApi > 1 ? `（max ${maxApi}）` : ''}</text>
     </svg>
   );
 }
@@ -403,7 +413,9 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
           api.adminStatsModels(),
           api.adminStatsTopUsers(10),
         ]);
-        if (!cancelled) setStats({ ov, da: da || [], mo: mo || [], tu: tu || [] });
+        // v1.19.0: 自带 Key 模型分布（失败不影响主统计）
+        const am = await api.adminStatsApiModels().catch(() => []);
+        if (!cancelled) setStats({ ov, da: da || [], mo: mo || [], tu: tu || [], am: am || [] });
         const pm = await api.adminPointsModels().catch(() => []);
         if (!cancelled) setPmModels(Array.isArray(pm) ? pm : []);
         if (!cancelled) await loadModelCfg();
@@ -685,7 +697,24 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
 
   const inPointsMode = billingMode === 'points';
   const wlModels = ((pointsInfo && pointsInfo.models) || []).map((m) => ({ id: m.id, name: `${m.name} · ${m.desc}` }));
-  const maxModelPts = stats ? Math.max(1, ...stats.mo.map((m) => m.points)) : 1;
+  // v1.18.3: 模型分布按模型+用途聚合（后端按 model,reason 分组）
+  // v1.19.0: 积分 / 自带API 切换（自带API 按调用次数排）
+  const [modelSrc, setModelSrc] = useState('points');
+  const modelGroups = (() => {
+    if (!stats) return [];
+    const rows = modelSrc === 'points' ? stats.mo : stats.am || [];
+    const valKey = modelSrc === 'points' ? 'points' : 'calls';
+    const byModel = new Map();
+    for (const r of rows) {
+      if (!byModel.has(r.model)) byModel.set(r.model, { model: r.model, val: 0, calls: 0, reasons: [] });
+      const g = byModel.get(r.model);
+      g.val += r[valKey] || 0;
+      g.calls += r.calls;
+      g.reasons.push(r);
+    }
+    return [...byModel.values()].sort((a, b) => b.val - a.val);
+  })();
+  const maxModelPts = Math.max(1, ...modelGroups.map((m) => m.val));
 
   return (
     <SettingsErrorBoundary onClose={onClose}>
@@ -858,15 +887,26 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   <div className="card-title" style={{ marginTop: 4 }}>30 天消耗趋势</div>
                   <TrendChart data={stats.da} />
                   <div className="card-title" style={{ marginTop: 4 }}>模型分布</div>
-                  {stats.mo.length ? (
+                  <div className="model-src-tabs">
+                    <button className={modelSrc === 'points' ? 'active' : ''} onClick={() => setModelSrc('points')}>积分</button>
+                    <button className={modelSrc === 'byok' ? 'active' : ''} onClick={() => setModelSrc('byok')}>自带API</button>
+                  </div>
+                  {modelGroups.length ? (
                     <div className="model-bars">
-                      {stats.mo.map((m) => (
-                        <div className="model-bar-row" key={m.model}>
-                          <span className="model-bar-name" title={m.model}>{m.model}</span>
-                          <div className="model-bar-track">
-                            <div className="model-bar-fill" style={{ width: `${Math.max(2, (m.points / maxModelPts) * 100)}%` }} />
+                      {modelGroups.map((m) => (
+                        <div key={m.model}>
+                          <div className="model-bar-row">
+                            <span className="model-bar-name" title={m.model}>{m.model}</span>
+                            <div className="model-bar-track">
+                              <div className="model-bar-fill" style={{ width: `${Math.max(2, (m.val / maxModelPts) * 100)}%` }} />
+                            </div>
+                            <span className="model-bar-val">{modelSrc === 'points' ? `${m.val} 积分 · ${m.calls} 次` : `${m.calls} 次`}</span>
                           </div>
-                          <span className="model-bar-val">{m.points} 积分 · {m.calls} 次</span>
+                          <div className="model-bar-reasons">
+                            {m.reasons.map((r) => (
+                              <span key={r.reason} className="model-bar-reason">{r.reason_label} {r.calls}次</span>
+                            ))}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -876,11 +916,11 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   <div className="card-title" style={{ marginTop: 4 }}>消费 Top 10</div>
                   {stats.tu.length ? (
                     <table className="stat-table">
-                      <thead><tr><th>用户</th><th>消耗</th><th>获赠</th><th>余额</th><th>破限</th><th>操作</th></tr></thead>
+                      <thead><tr><th>用户</th><th>消耗</th><th>获赠</th><th>余额</th><th>API调用</th><th>破限</th><th>操作</th></tr></thead>
                       <tbody>
                         {stats.tu.map((u) => (
                           <tr key={u.username}>
-                            <td>{u.username}</td><td>{u.consumed}</td><td>{u.granted}</td><td>{u.balance}</td>
+                            <td>{u.username}</td><td>{u.consumed}</td><td>{u.granted}</td><td>{u.balance}</td><td>{u.api_calls || 0}</td>
                             <td>
                               {u.is_admin ? (
                                 <span className="key-desc small">管理员</span>

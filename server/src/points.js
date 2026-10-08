@@ -133,6 +133,27 @@ export function addLedger(userId, delta, reason, refType = null, refId = null, e
   })();
 }
 
+// v1.19.0: 记录自带 Key（BYOK）调用（不扣费，只统计用量；单用户模式 userId 可空）
+export function recordByokUsage(userId, model, reason, usage) {
+  if (!usage) return;
+  try {
+    getDb()
+      .prepare(
+        'INSERT INTO api_usage(user_id, model, reason, tokens_input, tokens_output, created_at) VALUES(?,?,?,?,?,?)'
+      )
+      .run(
+        userId || null,
+        model || '',
+        reason || 'chat',
+        Math.round(Number(usage.input) || 0),
+        Math.round(Number(usage.output) || 0),
+        new Date().toISOString()
+      );
+  } catch (e) {
+    console.warn('[api_usage] 记录失败:', e.message);
+  }
+}
+
 // 扣费：预检由调用方做（余额不足直接 402 拒绝）；这里允许余额变负（并发竞态的极端情况），
 // 流水如实记录，下一次预检会拦截。
 export function deductPoints(userId, points, reason, refType = null, refId = null, extra = {}) {
