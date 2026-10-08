@@ -156,12 +156,13 @@ const regenerateRecoveryCode = () => post('/api/auth/recovery-code/regenerate');
  * onEvent(event, data)：event ∈ context | token | memory_updated | done | error
  * SSE 块格式：按 \n\n 分块，首行 `event: X`，次行 `data: {...单行JSON...}`
  */
-export async function sendMessage(conversationId, content, onEvent, signal) {
+export async function sendMessage(conversationId, content, onEvent, signal, opts = {}) {
   const res = await fetch(`/api/conversations/${conversationId}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     credentials: 'same-origin',
-    body: JSON.stringify({ content }),
+    // v1.22.0: regenerate=true 时后端复用最后一条用户消息，不重复落库
+    body: JSON.stringify(opts.regenerate ? { regenerate: true } : { content }),
     signal,
   });
   if (!res.ok) throw await httpError(res, '发送失败');
@@ -195,6 +196,43 @@ export async function sendMessage(conversationId, content, onEvent, signal) {
 // v1.20.3: 重新生成——删掉最后一条 AI 回复，返回最后一条用户消息内容
 export async function regenerateMessage(conversationId) {
   return post(`/api/conversations/${conversationId}/regenerate`, {});
+}
+
+// v1.22.0: 群聊单轮重新生成——删掉指定半截回复，只重跑该角色一轮（SSE）
+export async function regenerateGroupTurn(conversationId, messageId, onEvent, signal) {
+  const res = await fetch(`/api/conversations/${conversationId}/regenerate-turn`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    credentials: 'same-origin',
+    body: JSON.stringify({ message_id: messageId }),
+    signal,
+  });
+  if (!res.ok) throw await httpError(res, '重新生成失败');
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const lines = block.split('\n');
+      const evLine = lines.find((l) => l.startsWith('event:'));
+      const dataLine = lines.find((l) => l.startsWith('data:'));
+      if (!evLine || !dataLine) continue;
+      const ev = evLine.slice('event:'.length).trim();
+      let data = null;
+      try {
+        data = JSON.parse(dataLine.slice('data:'.length).trim());
+      } catch {
+        continue;
+      }
+      onEvent(ev, data);
+    }
+  }
 }
 
 export function formatTime(ts) {
@@ -254,6 +292,7 @@ export const api = {
   listMessages: (id, limit = 200) => get(`/api/conversations/${id}/messages?limit=${limit}`),
   sendMessage,
   regenerateMessage,
+  regenerateGroupTurn,
   // v1.20.5: 消息删除
   clearMessages: (id) => del(`/api/conversations/${id}/messages`),
   deleteMessage: (id) => del(`/api/messages/${id}`),
