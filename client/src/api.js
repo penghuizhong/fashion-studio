@@ -9,6 +9,7 @@ const API_BASE_URL_KEY = 'soulchat-api-base-url';
 const API_KEY_KEY = 'soulchat-openrouter-key';
 const API_MODEL_KEY = 'soulchat-chat-model';
 const API_WORKER_MODEL_KEY = 'soulchat-worker-model';
+const API_PROVIDER_KEY = 'soulchat-api-provider'; // v1.20.0: 提供商（非敏感，决定协议参数）
 
 export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
 
@@ -23,16 +24,17 @@ export function isMultiUserMode() {
 }
 
 export function getApiConfig() {
-  // Key 只放内存（防 XSS 持久化窃取，刷新页面后需重新填写）；地址/模型等非敏感项仍存 localStorage
+  // Key 只放内存（防 XSS 持久化窃取，刷新页面后需重新填写）；地址/模型/提供商等非敏感项仍存 localStorage
   try {
     return {
       baseUrl: (localStorage.getItem(API_BASE_URL_KEY) || '').trim(),
       key: memApiKey,
       model: (localStorage.getItem(API_MODEL_KEY) || '').trim(),
       workerModel: (localStorage.getItem(API_WORKER_MODEL_KEY) || '').trim(),
+      provider: (localStorage.getItem(API_PROVIDER_KEY) || 'custom').trim() || 'custom',
     };
   } catch {
-    return { baseUrl: '', key: memApiKey, model: '', workerModel: '' };
+    return { baseUrl: '', key: memApiKey, model: '', workerModel: '', provider: 'custom' };
   }
 }
 
@@ -48,7 +50,7 @@ try {
   /* 忽略 */
 }
 
-export function setApiConfig({ baseUrl, key, model, workerModel }) {
+export function setApiConfig({ baseUrl, key, model, workerModel, provider }) {
   if (typeof key === 'string') memApiKey = key.trim();
   try {
     if (baseUrl) localStorage.setItem(API_BASE_URL_KEY, baseUrl);
@@ -57,6 +59,8 @@ export function setApiConfig({ baseUrl, key, model, workerModel }) {
     else localStorage.removeItem(API_MODEL_KEY);
     if (workerModel) localStorage.setItem(API_WORKER_MODEL_KEY, workerModel);
     else localStorage.removeItem(API_WORKER_MODEL_KEY);
+    if (provider) localStorage.setItem(API_PROVIDER_KEY, provider);
+    else localStorage.removeItem(API_PROVIDER_KEY);
   } catch {
     /* 忽略存储失败 */
   }
@@ -64,7 +68,7 @@ export function setApiConfig({ baseUrl, key, model, workerModel }) {
 }
 
 export function clearApiConfig() {
-  setApiConfig({ baseUrl: '', key: '', model: '', workerModel: '' });
+  setApiConfig({ baseUrl: '', key: '', model: '', workerModel: '', provider: '' });
 }
 
 function authHeaders() {
@@ -73,11 +77,12 @@ function authHeaders() {
   // 单用户模式：走 localStorage + 请求头透传（原有行为）。
   if (isMultiUserMode()) return {};
   const h = {};
-  const { baseUrl, key, model, workerModel } = getApiConfig();
+  const { baseUrl, key, model, workerModel, provider } = getApiConfig();
   if (key) h['X-OpenRouter-Key'] = key;
   if (baseUrl) h['X-Api-Base-Url'] = baseUrl;
   if (model) h['X-Chat-Model'] = model;
   if (workerModel) h['X-Worker-Model'] = workerModel;
+  if (provider) h['X-Api-Provider'] = provider; // v1.20.0
   return h;
 }
 
@@ -254,6 +259,9 @@ export const api = {
   // 多用户模式：当前用户的 API 配置（key 存服务器加密，前端永远拿不到明文）
   getUserApiKey: () => get('/api/user/api-key'),
   saveUserApiKey: (data) => put('/api/user/api-key', data),
+  // v1.20.0: 提供商预设 + 保存前连通性测试
+  getProviders: () => get('/api/providers'),
+  testApiKey: (data) => post('/api/user/api-key/test', data),
 
   // 密码重置（无需登录）/ 重置码管理（需登录）
   resetPassword,

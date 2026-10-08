@@ -198,8 +198,9 @@ function formatLedgerTime(ts) {
 
 export default function SettingsModal({ initialTab = 'points', onClose, showToast }) {
   const [tab, setTab] = useState(initialTab);
-  const [form, setForm] = useState({ baseUrl: '', key: '', model: '', workerModel: '' });
+  const [form, setForm] = useState({ baseUrl: '', key: '', model: '', workerModel: '', provider: 'custom' });
   const [models, setModels] = useState([]);
+  const [providers, setProviders] = useState([]); // v1.20.0: API 提供商预设
   const [loading, setLoading] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [version, setVersion] = useState('');
@@ -360,8 +361,13 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
           key: '',
           model: (k && k.chatModel) || '',
           workerModel: (k && k.workerModel) || '',
+          provider: (k && k.provider) || 'custom',
         });
         setHasServerKey(!!(k && k.hasKey));
+        // v1.20.0: 提供商预设（失败则只留自定义，不挡主流程）
+        api.getProviders().then((ps) => { if (!cancelled && Array.isArray(ps)) setProviders(ps); }).catch(() => {
+          if (!cancelled) setProviders([{ id: 'custom', name: '自定义', defaultBaseUrl: '', modelHint: '', thinkingOff: null, note: '' }]);
+        });
         if (p) {
           setPointsInfo(p);
           setBillingMode((p && p.billing_mode) || 'points');
@@ -479,7 +485,8 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       setPullSeq((s) => s + 1);
       showToast(list.length ? `已拉取 ${list.length} 个可用模型` : '拉取成功，但列表为空（可手动输入模型名）', 2200);
     } catch (e) {
-      showToast((e && e.message) || '拉取失败', 2600);
+      // v1.20.0: 部分提供商（如千问 DashScope 兼容接口）没有 /models 端点，引导手动输入
+      showToast(`${(e && e.message) || '拉取失败'}（该地址可能不支持拉取，可手动输入模型 ID）`, 3000);
     } finally {
       setLoading(false);
     }
@@ -502,12 +509,28 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
           showToast('请填写 API Key', 2000);
           return;
         }
-        const payload = { baseUrl: form.baseUrl.trim(), chatModel: form.model.trim(), workerModel: form.workerModel.trim() };
+        const provider = form.provider || 'custom';
+        const testPayload = { provider, baseUrl: form.baseUrl.trim(), model: form.model.trim() };
+        if (key) testPayload.key = key;
+        // v1.20.0: 保存前连通性测试（Key+地址+模型），不通不让切，拦在配置阶段
+        showToast('正在测试连接…', 1500);
+        let t;
+        try {
+          t = await api.testApiKey(testPayload);
+        } catch (e) {
+          showToast((e && e.message) || '连接测试失败', 2600);
+          return;
+        }
+        if (!t || !t.ok) {
+          showToast(`连接失败：${(t && t.error) || '未知错误'}，请检查配置`, 3200);
+          return;
+        }
+        const payload = { baseUrl: form.baseUrl.trim(), chatModel: form.model.trim(), workerModel: form.workerModel.trim(), provider };
         if (key) payload.key = key;
         const d = await api.saveUserApiKey(payload);
         setHasServerKey(!!(d && d.hasKey));
         setForm((f) => ({ ...f, key: '' }));
-        showToast('API 配置已保存到服务器，换设备也生效', 2200);
+        showToast('连接正常，API 配置已保存到服务器，换设备也生效', 2200);
       }
     } catch (e) {
       showToast((e && e.message) || '保存失败', 2600);
@@ -521,7 +544,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     setLoading(true);
     try {
       await api.saveUserApiKey({ key: '', baseUrl: '', chatModel: '', workerModel: '' });
-      setForm({ baseUrl: '', key: '', model: '', workerModel: '' });
+      setForm({ baseUrl: '', key: '', model: '', workerModel: '', provider: 'custom' });
       setHasServerKey(false);
       setModels([]);
       showToast('服务器配置已清除', 2000);
@@ -806,9 +829,29 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
             <>
               <p className="key-desc">配置保存在<b>服务器</b>（Key 加密存储，永不回显），随账号走，换设备也生效。</p>
               <label>
+                提供商
+                <select
+                  value={form.provider || 'custom'}
+                  onChange={(e) => {
+                    const pid = e.target.value;
+                    const p = (providers || []).find((x) => x.id === pid);
+                    setForm((f) => ({ ...f, provider: pid, baseUrl: (p && p.defaultBaseUrl) || f.baseUrl }));
+                  }}
+                >
+                  {(providers || []).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </label>
+              {(() => {
+                const p = (providers || []).find((x) => x.id === (form.provider || 'custom'));
+                return p && p.note ? <p className="key-desc small">⚠️ {p.note}</p> : null;
+              })()}
+              <label>
                 API 地址
                 <input value={form.baseUrl} onChange={setField('baseUrl')} placeholder={DEFAULT_BASE_URL} spellCheck={false} autoComplete="off" />
               </label>
+              <p className="key-desc small">同一家可有多个地址（北京/国际版/按量计费等），填你自己的那个就行，协议按上面的提供商走。</p>
               <div className="key-status-row">
                 <span className="key-status-label">API Key</span>
                 {hasServerKey ? <span className="key-ok">已保存 ●</span> : <span className="key-none">未保存</span>}
@@ -834,7 +877,10 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   <button className="btn secondary" onClick={pullModels} disabled={loading}>{loading ? '拉取中…' : '拉取模型'}</button>
                 </div>
               </label>
-              {models.length > 0 && <p className="key-desc small">共 {models.length} 个可用模型，可在输入框中搜索选择。</p>}
+              {(() => {
+                const p = (providers || []).find((x) => x.id === (form.provider || 'custom'));
+                return <p className="key-desc small">{p && p.modelHint ? `模型 ID 格式：${p.modelHint}` : ''}{models.length > 0 ? `共 ${models.length} 个可用模型，可在输入框中搜索选择。` : '该地址可能不支持拉取列表，可手动输入模型 ID。'}</p>;
+              })()}
               <label>
                 后台模型
                 <ModelPicker value={form.workerModel || ''} onChange={(v) => setForm((f) => ({ ...f, workerModel: v }))} models={models} placeholder="留空用默认便宜模型" />
