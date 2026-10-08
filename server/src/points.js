@@ -4,7 +4,22 @@
 import { getDb, getSetting } from './db.js';
 
 export const POINTS_PER_YUAN = 100;
-export const SIGNUP_BONUS = 500;
+export const SIGNUP_BONUS = 500; // 兼容保留：实际以后台配置为准（见 getSignupBonus）
+
+// v1.18.1: 注册奖励改为管理员可配置（sys_settings.signup_bonus，默认 100）
+export function getSignupBonus() {
+  const v = parseInt(getSetting('signup_bonus', ''), 10);
+  return Number.isFinite(v) && v >= 0 ? v : 100;
+}
+
+// v1.18.1: 管理员直接设用户余额（输多发错时纠正）；账本记 admin_set
+export function setPointsBalance(userId, balance) {
+  const target = Math.max(0, Math.floor(Number(balance) || 0));
+  const cur = getBalance(userId);
+  const delta = target - cur;
+  if (delta !== 0) addLedger(userId, delta, 'admin_set');
+  return target;
+}
 
 // ---- 邀请奖励 ----
 export const INVITE_REWARD_INVITER = 200; // 邀请人奖励
@@ -154,13 +169,15 @@ export function hasSignupBonus(userId) {
 
 // 注册奖励：首次聊天成功（收到第一条 assistant 回复）后发放，防批量注册刷号薅积分。
 // 幂等：已发放过（ledger 有 signup_bonus）则跳过；老用户注册时已发过，不会重复。
+// v1.18.1: 金额取管理员配置（getSignupBonus），改配置只影响新用户
 export function maybeSignupBonus(userId) {
   if (hasSignupBonus(userId)) return 0;
   const db = getDb();
   const u = db.prepare('SELECT invited_by FROM users WHERE id = ?').get(userId);
   if (!u) return 0;
-  addLedger(userId, SIGNUP_BONUS, 'signup_bonus');
-  let total = SIGNUP_BONUS;
+  const bonus = getSignupBonus();
+  addLedger(userId, bonus, 'signup_bonus');
+  let total = bonus;
   if (u.invited_by) {
     addLedger(userId, INVITE_REWARD_INVITEE, 'invite_bonus', 'user', u.invited_by);
     total += INVITE_REWARD_INVITEE;

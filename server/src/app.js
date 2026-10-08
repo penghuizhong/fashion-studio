@@ -24,6 +24,7 @@ import {
   currentUserId,
   llmCreds,
   mountAuthRoutes,
+  canUseJailbreak,
 } from './auth.js';
 import {
   estimateTokens,
@@ -923,6 +924,10 @@ export function createApp() {
     // v1.16.4: 支持 roleplay_prompt（空=用内置模板）
     const { name, avatar, temperature, soul_md, user_md, roleplay_mode, roleplay_prompt, jailbreak_preset } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'name 不能为空' });
+    // v1.18.1: 破限白名单——无权限用户不能建开着破限的角色
+    if (jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] && !canUseJailbreak(uidOf(req))) {
+      return res.status(403).json({ error: '破限模式需管理员授权' });
+    }
     const id = randomUUID();
     const t = now();
     const row = {
@@ -972,6 +977,10 @@ export function createApp() {
     const c = getChar(req.params.id, req);
     if (!c) return char404(res);
     const { name, avatar, temperature, roleplay_mode, roleplay_prompt, jailbreak_preset } = req.body || {};
+    // v1.18.1: 破限白名单——无权限用户不能开启破限（关闭永远允许）
+    if (jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] && !canUseJailbreak(uidOf(req))) {
+      return res.status(403).json({ error: '破限模式需管理员授权' });
+    }
     const next = {
       name: name !== undefined ? String(name).trim() : c.name,
       avatar: avatar !== undefined ? avatar : c.avatar,
@@ -1382,6 +1391,8 @@ export function createApp() {
       )
       .all(conv.id);
     if (members.length < 2) return res.status(400).json({ error: '群成员不足' });
+    // v1.18.1: 破限白名单——无权限用户群聊里也不注入破限词
+    if (!canUseJailbreak(uidOf(req))) members.forEach((m) => { m.jailbreak_preset = null; });
     const memberIds = new Set(members.map((m) => m.id));
 
     // @点名：提到谁谁必回（最多 3 个）
@@ -1581,6 +1592,8 @@ export function createApp() {
     const content = String((req.body && req.body.content) ?? '').trim();
     if (!content) return res.status(400).json({ error: 'content 不能为空' });
     const char = getChar(conv.character_id, req);
+    // v1.18.1: 破限白名单——权限被收回后，已开破限的角色也不再注入
+    if (char.jailbreak_preset && !canUseJailbreak(uidOf(req))) char.jailbreak_preset = null;
     if (!char) return char404(res);
 
     // 凭证：多用户模式用用户托管 key（忽略请求头），单用户模式保持请求头优先；

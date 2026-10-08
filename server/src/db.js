@@ -229,6 +229,15 @@ export function getDb() {
     if (!userCols.includes('points_balance')) _db.exec('ALTER TABLE users ADD COLUMN points_balance INTEGER DEFAULT 0');
     if (!userCols.includes('billing_mode')) _db.exec("ALTER TABLE users ADD COLUMN billing_mode TEXT DEFAULT 'points'");
     if (!userCols.includes('is_admin')) _db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
+    // v1.18.1: 破限白名单——只有管理员授权的用户可用破限模式（默认关闭）
+    if (!userCols.includes('jailbreak_allowed')) _db.exec('ALTER TABLE users ADD COLUMN jailbreak_allowed INTEGER DEFAULT 0');
+    // v1.18.1: 老用户 grandfather——已有角色开着破限的，自动授权，不影响现有体验
+    try {
+      const charCols = _db.prepare('PRAGMA table_info(characters)').all().map((c) => c.name);
+      if (charCols.includes('jailbreak_preset')) {
+        _db.exec(`UPDATE users SET jailbreak_allowed = 1 WHERE id IN (SELECT DISTINCT user_id FROM characters WHERE jailbreak_preset IS NOT NULL AND jailbreak_preset != '')`);
+      }
+    } catch (e) { console.warn('[db] 破限白名单 grandfather 迁移失败:', e.message); }
     // 邀请系统
     if (!userCols.includes('invite_code')) _db.exec('ALTER TABLE users ADD COLUMN invite_code TEXT');
     if (!userCols.includes('invited_by')) _db.exec('ALTER TABLE users ADD COLUMN invited_by TEXT');
