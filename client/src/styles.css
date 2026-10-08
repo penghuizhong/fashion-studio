@@ -329,6 +329,22 @@ textarea {
   background: var(--hover);
 }
 
+/* v1.18.1: 破限授权开关（管理后台用户表） */
+.jb-allow-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.jb-allow-toggle input {
+  accent-color: var(--accent, #000);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
 /* v1.18.0: 对话长按菜单 */
 .conv-menu-backdrop {
   position: fixed;
