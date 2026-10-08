@@ -54,14 +54,11 @@ export function jailbreakPresetPrompt(key) {
   } catch {}
   return preset.prompt;
 }
-// 取角色在当前模型下生效的破限文本：未启用/模型不匹配返回 ''
+// 取角色在当前模型下生效的破限文本：未启用返回 ''
+// v1.17.12: 预设与模型解耦——选中哪个预设就注入哪个，不再按模型匹配（用户决策：每个模型都可用）
 export function jailbreakPromptOf(character, modelId) {
   const key = character && character.jailbreak_preset;
   if (!key) return '';
-  const preset = JAILBREAK_PRESETS[key];
-  if (!preset) return '';
-  const models = preset.models || [];
-  if (models.length && modelId && !models.includes(modelId)) return '';
   return jailbreakPresetPrompt(key);
 }
 // 给管理后台：预设列表（含生效 prompt 与是否被覆盖）

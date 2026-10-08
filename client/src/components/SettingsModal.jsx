@@ -998,11 +998,11 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                     />
                   </label>
                   <div className="card-title" style={{ marginTop: 12 }}>破限预设提示词</div>
-                  <p className="key-desc small">按预设分别覆盖 prompt；某条清空并保存 = 该预设恢复内置。只在匹配的目标模型上生效。</p>
+                  <p className="key-desc small">按预设分别覆盖 prompt；某条清空并保存 = 该预设恢复内置。选中哪个预设就注入哪个，不限聊天模型。</p>
                   {promptCfg.jailbreak_presets.map((p) => (
                     <div key={p.key} style={{ marginBottom: 12 }}>
                       <div className="pm-name">{p.name}{p.custom && <span className="pm-off-tag">已自定义</span>}</div>
-                      <div className="pm-id">{p.key} · 适用模型：{(p.models || []).join('、') || '全部'}</div>
+                      <div className="pm-id">{p.key} · 调优目标：{(p.models || []).join('、') || '通用'}</div>
                       <label>
                         <textarea
                           value={(promptCfg.jailbreak && promptCfg.jailbreak[p.key]) || ''}
