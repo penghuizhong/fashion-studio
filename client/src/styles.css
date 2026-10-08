@@ -584,6 +584,8 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* v1.20.4: 禁掉聊天列表的下拉刷新手势，防手滑误触整页刷新 */
+  overscroll-behavior-y: contain;
 }
 
 .loading-hint,
