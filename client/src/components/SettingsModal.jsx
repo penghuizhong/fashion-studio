@@ -241,6 +241,44 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       setModelCfgSaving(false);
     }
   };
+  // 系统提示词模板（管理员）
+  const [promptCfg, setPromptCfg] = useState(null);
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [promptSaving, setPromptSaving] = useState(false);
+  const loadPromptCfg = async () => {
+    setPromptLoading(true);
+    try {
+      const s = await api.adminGetSettings();
+      const jb = {};
+      for (const p of (s && s.jailbreak_presets) || []) jb[p.key] = p.prompt || '';
+      setPromptCfg({
+        roleplay_template: (s && s.roleplay_template) || '',
+        roleplay_template_custom: !!(s && s.roleplay_template_custom),
+        jailbreak_presets: (s && s.jailbreak_presets) || [],
+        jailbreak: jb,
+      });
+    } catch (e) {
+      showToast((e && e.message) || '读取提示词模板失败', 2600);
+    } finally {
+      setPromptLoading(false);
+    }
+  };
+  const savePromptCfg = async () => {
+    if (!promptCfg) return;
+    setPromptSaving(true);
+    try {
+      await api.adminUpdateSettings({
+        roleplay_template: promptCfg.roleplay_template,
+        jailbreak_presets: promptCfg.jailbreak,
+      });
+      showToast('提示词模板已保存');
+      loadPromptCfg();
+    } catch (e) {
+      showToast((e && e.message) || '保存失败');
+    } finally {
+      setPromptSaving(false);
+    }
+  };
   // 统计
   const [stats, setStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -268,6 +306,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     { id: 'invite', icon: 'gift', label: '邀请' },
   ];
   if (isAdmin) TABS.push({ id: 'stats', icon: 'chart', label: '统计' });
+  if (isAdmin) TABS.push({ id: 'prompts', icon: 'chat', label: '提示词' });
   if (isAdmin) TABS.push({ id: 'review', icon: 'shield', label: '审核' });
 
   useEffect(() => {
@@ -337,6 +376,13 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 提示词 tab 懒加载
+  useEffect(() => {
+    if (tab !== 'prompts' || promptCfg || promptLoading) return;
+    loadPromptCfg();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   // 统计 tab 懒加载
   useEffect(() => {
@@ -618,15 +664,6 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         <div className="settings-body">
           {tab === 'points' && (
             <>
-              <div className="billing-toggle">
-                <button className={billingMode === 'points' ? 'active' : ''} onClick={() => setBillingMode('points')}>
-                  平台积分
-                </button>
-                <button className={billingMode === 'byok' ? 'active' : ''} onClick={() => setBillingMode('byok')}>
-                  自带 Key
-                </button>
-              </div>
-              <p className="key-desc small">平台积分：无需 Key，开箱即用，按 token 扣积分。自带 Key：用你自己的 OpenRouter Key，不花积分。</p>
               {inPointsMode ? (
                 <>
                   <div className="points-balance-card">
@@ -676,7 +713,14 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   <p className="key-desc small">密码重置码：忘记密码时凭它自助找回，请妥善保存。重新生成后旧码立即失效。</p>
                 </>
               ) : (
-                <p className="key-desc small">自带 Key 模式请到「API」tab 配置你的 OpenRouter Key。</p>
+                <>
+                  <p className="key-desc small">当前为自带 Key 模式：用你自己的 OpenRouter Key，不花积分。</p>
+                  <div className="save-row">
+                    <button className="btn secondary" onClick={() => { setBillingMode('points'); save('points'); }} disabled={loading}>
+                      切换回平台积分
+                    </button>
+                  </div>
+                </>
               )}
             </>
           )}
@@ -932,6 +976,54 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                 </>
               ) : (
                 <p className="key-desc small">暂无数据</p>
+              )}
+            </>
+          )}
+          {tab === 'prompts' && isAdmin && (
+            <>
+              {promptLoading ? (
+                <p className="key-desc">加载中…</p>
+              ) : promptCfg ? (
+                <>
+                  <div className="card-title" style={{ marginTop: 0 }}>扮演模式默认提示词</div>
+                  <p className="key-desc small">
+                    角色开启扮演模式但未自定义提示词时使用。{promptCfg.roleplay_template_custom ? '当前为你的自定义版本。' : '当前为系统内置版本。'}清空并保存 = 恢复内置。
+                  </p>
+                  <label>
+                    <textarea
+                      value={promptCfg.roleplay_template}
+                      onChange={(e) => setPromptCfg((f) => ({ ...f, roleplay_template: e.target.value }))}
+                      rows={10}
+                      spellCheck={false}
+                      style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit' }}
+                    />
+                  </label>
+                  <div className="card-title" style={{ marginTop: 12 }}>破限预设提示词</div>
+                  <p className="key-desc small">按预设分别覆盖 prompt；某条清空并保存 = 该预设恢复内置。只在匹配的目标模型上生效。</p>
+                  {promptCfg.jailbreak_presets.map((p) => (
+                    <div key={p.key} style={{ marginBottom: 12 }}>
+                      <div className="pm-name">{p.name}{p.custom && <span className="pm-off-tag">已自定义</span>}</div>
+                      <div className="pm-id">{p.key} · 适用模型：{(p.models || []).join('、') || '全部'}</div>
+                      <label>
+                        <textarea
+                          value={(promptCfg.jailbreak && promptCfg.jailbreak[p.key]) || ''}
+                          onChange={(e) => setPromptCfg((f) => ({ ...f, jailbreak: { ...(f.jailbreak || {}), [p.key]: e.target.value } }))}
+                          rows={8}
+                          spellCheck={false}
+                          style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', marginTop: 4 }}
+                        />
+                      </label>
+                    </div>
+                  ))}
+                  <div className="key-input-row" style={{ marginTop: 8 }}>
+                    <button className="btn primary" onClick={savePromptCfg} disabled={promptSaving}>
+                      {promptSaving ? '保存中…' : '保存提示词模板'}
+                    </button>
+                    <button className="btn secondary" onClick={loadPromptCfg} disabled={promptSaving}>重新加载</button>
+                  </div>
+                </>
+              ) : (
+                <p className="key-desc small">加载失败，请重试。</p>
               )}
             </>
           )}
