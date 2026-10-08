@@ -259,6 +259,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             });
             setTyping(null);
             const mem = memberOf(cid);
+            // v1.22.0: 截断标记——流异常结束时前端提示"好像没说完"并给重新生成
+            const truncated = !!(data && data.truncated && finalText.trim());
             setMessages((m) => [
               ...m,
               {
@@ -269,6 +271,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                 character_avatar: (mem && mem.avatar) || '✨',
                 content: finalText,
                 created_at: new Date().toISOString(),
+                truncated,
               },
             ]);
           } else if (ev === 'memory_updated') {
@@ -309,7 +312,9 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             setErrorMsg((data && data.message) || '生成失败，换句话试试');
           }
         },
-        controller.signal
+        controller.signal,
+        // v1.22.0: 重新生成时告诉后端复用用户消息，不重复落库
+        { regenerate: !!opts.regenerate }
       );
     } catch (err) {
       if (err.name !== 'AbortError') {
@@ -358,6 +363,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   };
 
   // v1.20.3: 重新生成最后一条 AI 回复（断流半截时用）——后端删掉半截，前端按原问题重发
+  // v1.22.0: 重发时带 regenerate 标记，后端复用最后一条用户消息，不再重复落库
   const regenerate = async () => {
     if (sending || regenerating || isGroup) return;
     const last = messages[messages.length - 1];
@@ -368,9 +374,73 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
       const r = await api.regenerateMessage(conversationId);
       setMessages((m) => m.slice(0, -1));
       showToast('正在重新生成…', 1500);
-      sendContent(r.content, { skipUserBubble: true });
+      sendContent(r.content, { skipUserBubble: true, regenerate: true });
     } catch (err) {
       showToast(err.message || '重新生成失败');
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  // v1.22.0: 群聊单轮重新生成——删掉指定半截回复，只重跑该角色一轮
+  const regenerateGroupTurn = async (msg) => {
+    if (sending || regenerating || !isGroup) return;
+    if (!msg || msg.role !== 'assistant' || !msg.character_id) return;
+    setRegenerating(true);
+    setErrorMsg(null);
+    // 先从界面上拿掉半截消息
+    setMessages((m) => m.filter((x) => x.id !== msg.id));
+    const cid = msg.character_id;
+    setGroupStreams((s) => ({ ...s, [cid]: '' }));
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      await api.regenerateGroupTurn(conversationId, msg.id, (ev, data) => {
+        if (ev === 'token' && data && data.character_id === cid) {
+          setGroupStreams((s) => ({ ...s, [cid]: (s[cid] || '') + (data.text || '') }));
+        } else if (ev === 'turn_done' && data && data.character_id === cid) {
+          const finalText = data.content || '';
+          setGroupStreams((s) => {
+            const next = { ...s };
+            delete next[cid];
+            return next;
+          });
+          const mem = memberOf(cid);
+          const truncated = !!(data.truncated && finalText.trim());
+          setMessages((m) => [
+            ...m,
+            {
+              id: data.message_id ? data.message_id : `tmp-a-${Date.now()}`,
+              role: 'assistant',
+              character_id: cid,
+              character_name: (data && data.character_name) || (mem && mem.name) || msg.character_name || '某人',
+              character_avatar: (mem && mem.avatar) || msg.character_avatar || '✨',
+              content: finalText,
+              created_at: new Date().toISOString(),
+              truncated,
+            },
+          ]);
+        } else if (ev === 'error') {
+          setErrorMsg(data && data.message ? String(data.message) : '重新生成失败');
+          // 失败时把原半截消息放回去，避免丢失
+          setMessages((m) => [...m, msg]);
+          setGroupStreams((s) => {
+            const next = { ...s };
+            delete next[cid];
+            return next;
+          });
+        }
+      }, controller.signal);
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        showToast(err.message || '重新生成失败');
+        setMessages((m) => [...m, msg]);
+      }
+      setGroupStreams((s) => {
+        const next = { ...s };
+        delete next[cid];
+        return next;
+      });
     } finally {
       setRegenerating(false);
     }
@@ -509,6 +579,15 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
               <div className="regen-row">
                 {m.truncated && <span className="truncated-hint">回复好像没说完，</span>}
                 <button className="btn secondary small" onClick={regenerate} disabled={regenerating}>
+                  {regenerating ? '生成中…' : '↻ 重新生成'}
+                </button>
+              </div>
+            )}
+            {/* v1.22.0: 群聊半截回复下放重新生成（只重跑该角色一轮） */}
+            {isGroup && m.role === 'assistant' && m.truncated && !sending && (
+              <div className="regen-row">
+                <span className="truncated-hint">回复好像没说完，</span>
+                <button className="btn secondary small" onClick={() => regenerateGroupTurn(m)} disabled={regenerating}>
                   {regenerating ? '生成中…' : '↻ 重新生成'}
                 </button>
               </div>
