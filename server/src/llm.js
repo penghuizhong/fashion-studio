@@ -1,6 +1,7 @@
 import { getConfig} from './config.js';
 import { ProxyAgent } from 'undici';
 import { isIP } from 'node:net';
+import { thinkingParams, detectProvider } from './providers.js';
 
 // 校验用户自填的 API 地址：仅允许 https 公网地址，防 SSRF（内网探测 / 云元数据）。
 // 管理员 .env 中的服务器默认地址不受此限（管理员可信）。
@@ -117,7 +118,7 @@ const EXTRACT_SYSTEM = `你是记忆整理助手。根据当前 user.md、memory
 // 无可用 Key 时的统一提示（app.js 做上游 401 拦截时复用）
 export const NO_KEY_MESSAGE = '未配置 API Key：请在侧边栏底部「API 设置」中填写你的 Key（或由管理员在服务器 .env 中配置 OPENROUTER_API_KEY）';
 
-async function postCompletions({ model, messages, temperature, stream, onToken, apiKey, baseUrl, signal }) {
+async function postCompletions({ model, messages, temperature, stream, onToken, apiKey, baseUrl, signal, provider, maxTokens }) {
 const cfg = getConfig();
 // BYOK：优先用调用方传入的个人 Key（请求头 X-OpenRouter-Key），否则用服务器 .env
 const key = (apiKey || '').trim() || cfg.apiKey;
@@ -141,12 +142,10 @@ body: JSON.stringify({
   messages,
   temperature,
   stream,
-  // v1.17.10: 关掉 thinking 模型的推理过程（RP 不需要推理；thinking token 按输出计费，关掉省积分、首字更快）
-  // OpenRouter 统一参数：enabled:false 才是真正的开关（max_tokens:0 只是 budget hint，不管用）
-  reasoning: { enabled: false },
-  // v1.19.1: 千问原生兼容接口（DashScope OpenAI 兼容模式 / 部分第三方中转）不认 OpenRouter 的 reasoning 参数，
-  // 用千问自己的 enable_thinking 开关；只对 qwen 系模型加，非 qwen 模型不发送避免未知参数干扰
-  ...(/qwen/i.test(model || '') ? { enable_thinking: false } : {}),
+  // v1.20.0: 按提供商发对应的关思考参数（providers.js）；custom 回退保留 qwen 猜测
+  ...thinkingParams(provider, model),
+  // v1.20.0: 连通性测试用（max_tokens: 1，最小开销）
+  ...(maxTokens ? { max_tokens: maxTokens } : {}),
   // 流式时让 OpenRouter 在最后一个 chunk 返回真实用量（计费用）
   ...(stream ? { stream_options: { include_usage: true } } : {}),
 }),
@@ -156,9 +155,26 @@ if (!res.ok) {
 const text = await res.text().catch(() => '');
 const err = new Error(`LLM 请求失败 HTTP ${res.status}: ${text.slice(0, 200)}`);
 err.status = res.status;
+err.model = model; // v1.19.2: 404 时带上模型 ID，方便排查是哪个 ID 写错了
 throw err;
 }
 return res;
+}
+
+// v1.20.0: 连通性测试——最小请求验证 Key+地址+模型（保存前调用，不通不让切 BYOK）
+export async function testUpstream({ provider, baseUrl, apiKey, model }) {
+  const { json } = await postJson({
+    provider: provider || detectProvider(baseUrl),
+    model,
+    messages: [{ role: 'user', content: 'hi' }],
+    temperature: 0.7,
+    apiKey,
+    baseUrl,
+    maxTokens: 1,
+  });
+  const ch = json && json.choices && json.choices[0];
+  if (!ch) throw new Error('上游无有效返回');
+  return true;
 }
 
 // v1.17.2: 上游错误转用户友好文案，不把原始 JSON 甩给用户看
@@ -167,7 +183,10 @@ const status = e && (e.status || e.statusCode);
 if (status === 429) return '上游限流了，休息几秒再试一次';
 if (status === 402) return '积分不足，请充值或切换模型';
 if (status === 401 || status === 403) return 'API 授权失败，请检查 Key 配置';
-if (status === 404) return '模型不存在或已下架，换个模型试试';
+if (status === 404) {
+  const m = e && e.model ? `（${e.model}）` : '';
+  return `模型${m}不存在或已下架，检查 API 设置里的模型 ID 是否正确`;
+}
 if (status >= 500) return '上游服务暂时不可用，稍后再试';
 return '生成失败，换句话试试';
 }
@@ -204,7 +223,7 @@ return { json, usage };
 }
 
 // v1.18.0: AI 生成对话标题（首轮结束后调用，走最便宜的 worker 模型；不计费，系统开销）
-export async function genTitle({ userText, asstText, model, apiKey, baseUrl, signal }) {
+export async function genTitle({ userText, asstText, model, apiKey, baseUrl, provider, signal }) {
 const cfg = getConfig();
 if (cfg.mockLlm) return '';
 const { json } = await postJson({
@@ -212,6 +231,7 @@ model,
 temperature: 0.3,
 apiKey,
 baseUrl,
+provider,
 signal,
 // onUsage 不传：标题生成不向用户计费
 messages: [
@@ -225,11 +245,11 @@ return t.slice(0, 14);
 }
 
 // 流式聊天：每收到 delta 就调 onToken；返回 { text, usage }（usage 为真实用量，可能为 null）
-export async function chatStream({ messages, model, temperature, onToken, apiKey, baseUrl, signal }) {
+export async function chatStream({ messages, model, temperature, onToken, apiKey, baseUrl, provider, signal }) {
 const cfg = getConfig();
 if (cfg.mockLlm) return { text: await mockChatStream({ messages, onToken }), usage: null };
 
-const res = await postCompletions({ model, messages, temperature, stream: true, onToken, apiKey, baseUrl, signal });
+const res = await postCompletions({ model, messages, temperature, stream: true, onToken, apiKey, baseUrl, provider, signal });
 const reader = res.body.getReader();
 const decoder = new TextDecoder();
 let buf = '';
@@ -296,7 +316,7 @@ const DIRECTOR_SYSTEM = `你是群聊导演。根据群成员人设和最近对�
 4. 只返回 JSON，不要其他文字`;
 
 // 群聊导演：决定发言顺序（角色 id 数组）。失败返回 null，调用方用确定性 fallback
-export async function decideSpeakers({ members, history, model, apiKey, baseUrl, lastSpeakerId, onUsage, signal }) {
+export async function decideSpeakers({ members, history, model, apiKey, baseUrl, provider, lastSpeakerId, onUsage, signal }) {
 const cfg = getConfig();
 if (cfg.mockLlm) {
 // mock：轮换，避免每次固定
@@ -318,6 +338,7 @@ model: model || cfg.extractModel,
 temperature: 0.5,
 apiKey,
 baseUrl,
+provider,
 signal,
 onUsage,
 messages: [
@@ -350,7 +371,7 @@ const CLASSIFY_SYSTEM = `你是意图识别助手。只看用户的最新一句�
    注意区分：用户让角色"记住某件事"（如"我明天要开会"）是记事实，不是改设定 → soul_update 为 null。
 2. worth：这句话及上下文是否有值得长期记住的新信息（关于用户的稳定事实、重要事件、约定、偏好变化）。闲聊、打招呼、重复已有信息 → false。
 只返回 JSON：{"soul_update": {"proposed": "...", "confidence": 0.85} 或 null, "worth": true/false}，不要输出其他文字。`;
-export async function classifyTurn({ userText, prevAsstText, model, apiKey, baseUrl, onUsage, signal }) {
+export async function classifyTurn({ userText, prevAsstText, model, apiKey, baseUrl, provider, onUsage, signal }) {
 const cfg = getConfig();
 if (cfg.mockLlm) {
 const t = String(userText || '');
@@ -364,6 +385,7 @@ model,
 temperature: 0.1,
 apiKey,
 baseUrl,
+provider,
 signal,
 onUsage,
 messages: [
@@ -395,7 +417,7 @@ export const FACTS_SYSTEM = `你是记忆整理助手。根据当前 user_md、�
 3. 互斥：同一条信息只记录在一处。长期画像只进 user_md，具体事件只进 facts；已在 user_md 里的画像不要再写成 facts，避免两边重复。
 4. 对照已有事实去重：语义重复 → NOOP；新事实推翻旧事实 → SUPERSEDE 并给出 supersedes_id（旧事实 id）；否则 ADD。
 5. 没有值得记的新事实时 facts 为空数组。`;
-export async function extractFacts({ userMd, existingFacts, rounds, model, apiKey, baseUrl, onUsage, signal }) {
+export async function extractFacts({ userMd, existingFacts, rounds, model, apiKey, baseUrl, provider, onUsage, signal }) {
 const cfg = getConfig();
 const today = new Date().toISOString().slice(0, 10);
 // 北京时间 "10月5日 19:30" 格式，供 prompt 里的时间标注
@@ -419,6 +441,7 @@ model,
 temperature: 0.2,
 apiKey,
 baseUrl,
+provider,
 signal,
 onUsage,
 messages: [
@@ -447,7 +470,7 @@ return null;
 }
 
 // 记忆提取：返回 {user_md, memory_md} 全文；失败返回 null
-export async function extractJson({ userMd, memoryMd, rounds, model, apiKey, baseUrl, onUsage, signal }) {
+export async function extractJson({ userMd, memoryMd, rounds, model, apiKey, baseUrl, provider, onUsage, signal }) {
 const cfg = getConfig();
 const today = new Date().toISOString().slice(0, 10);
 if (cfg.mockLlm) {
@@ -462,6 +485,7 @@ model,
 temperature: 0.2,
 apiKey,
 baseUrl,
+provider,
 signal,
 onUsage,
 messages: [
@@ -483,7 +507,7 @@ return null;
 }
 
 // 对话摘要：返回摘要字符串
-export async function summarizeText({ text, model, apiKey, baseUrl, onUsage, signal }) {
+export async function summarizeText({ text, model, apiKey, baseUrl, provider, onUsage, signal }) {
 const cfg = getConfig();
 if (cfg.mockLlm) return '摘要（mock）：' + String(text).slice(0, 40);
 const { json } = await postJson({
@@ -491,6 +515,7 @@ model,
 temperature: 0.3,
 apiKey,
 baseUrl,
+provider,
 signal,
 onUsage,
 messages: [
@@ -503,7 +528,7 @@ return (json.choices && json.choices[0] && json.choices[0].message && json.choic
 
 // AI 生成角色卡：返回 { card, usage }；mock 模式返回固定示例卡
 // v1.16.0: 只生成 soul_md（新建角色弹窗的 AI 生成灵魂用，比整卡生成省 token）
-export async function generateSoulMd({ desc, model, apiKey, baseUrl, signal }) {
+export async function generateSoulMd({ desc, model, apiKey, baseUrl, provider, signal }) {
   const cfg = getConfig();
   if (cfg.mockLlm) {
     return {
@@ -520,7 +545,7 @@ export async function generateSoulMd({ desc, model, apiKey, baseUrl, signal }) {
     },
     { role: 'user', content: desc },
   ];
-  const { json, usage } = await postJson({ model, temperature: 0.9, apiKey, baseUrl, signal, messages });
+  const { json, usage } = await postJson({ model, temperature: 0.9, apiKey, baseUrl, provider, signal, messages });
   const text =
     (json && json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
   const soul = String(text).trim();
@@ -528,7 +553,7 @@ export async function generateSoulMd({ desc, model, apiKey, baseUrl, signal }) {
   return { soul_md: soul, usage };
 }
 
-export async function generateCardJson({ desc, model, apiKey, baseUrl, signal }) {
+export async function generateCardJson({ desc, model, apiKey, baseUrl, provider, signal }) {
   const cfg = getConfig();
   if (cfg.mockLlm) {
     const { parseGeneratedCard } = await import('./characterCards.js');
@@ -553,7 +578,7 @@ export async function generateCardJson({ desc, model, apiKey, baseUrl, signal })
   let lastErr = null;
   // 解析失败自动重试一次（换 temperature），成功才计费
   for (const temperature of [0.9, 0.7]) {
-    const { json, usage } = await postJson({ model, temperature, apiKey, baseUrl, signal, messages });
+    const { json, usage } = await postJson({ model, temperature, apiKey, baseUrl, provider, signal, messages });
     const text =
       (json && json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
     try {
