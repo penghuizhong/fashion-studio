@@ -7,6 +7,7 @@ import { getRoleplayTemplate } from './memory.js';
 import { jailbreakPresetAdminList, JAILBREAK_PRESETS } from './jailbreakPresets.js';
 import { getConfig } from './config.js';
 import { assertPublicHttpsUrl } from './llm.js';
+import { API_PROVIDERS, getProvider, detectProvider } from './providers.js';
 import { ah } from './asyncHandler.js';
 import {
   listPointsModels,
@@ -144,20 +145,22 @@ export function decryptSecret(masterKeyHex, stored) {
   }
 }
 
-// 解密后的用户 API 配置：{ key, baseUrl, chatModel, workerModel }（无配置时全 ''）
+// 解密后的用户 API 配置：{ key, baseUrl, chatModel, workerModel, provider }（无配置时全 ''，provider 默认 custom）
+// v1.20.0: provider 决定协议参数（关思考/模型 ID 格式），与地址解耦
 export function getUserApiKeys(userId) {
   const cfg = getConfig();
   const row = getDb().prepare('SELECT * FROM user_api_keys WHERE user_id = ?').get(userId);
-  if (!row) return { key: '', baseUrl: '', chatModel: '', workerModel: '' };
+  if (!row) return { key: '', baseUrl: '', chatModel: '', workerModel: '', provider: 'custom' };
   return {
     key: decryptSecret(cfg.masterKey, row.enc_key),
     baseUrl: decryptSecret(cfg.masterKey, row.enc_base_url),
     chatModel: decryptSecret(cfg.masterKey, row.enc_chat_model),
     workerModel: decryptSecret(cfg.masterKey, row.enc_worker_model),
+    provider: row.provider || 'custom',
   };
 }
 
-export function setUserApiKeys(userId, { key, baseUrl, chatModel, workerModel }) {
+export function setUserApiKeys(userId, { key, baseUrl, chatModel, workerModel, provider }) {
   const cfg = getConfig();
   const cur = getUserApiKeys(userId); // 解密后的当前值
   // 合并语义：字段缺席(undefined)=保持原值；空串('')=清除该字段；非空=更新。
@@ -171,20 +174,22 @@ export function setUserApiKeys(userId, { key, baseUrl, chatModel, workerModel })
     baseUrl: pick(baseUrl, cur.baseUrl),
     chatModel: pick(chatModel, cur.chatModel),
     workerModel: pick(workerModel, cur.workerModel),
+    provider: getProvider(pick(provider, cur.provider) || 'custom').id,
   };
   const enc = (v) => (v ? encryptSecret(cfg.masterKey, v) : null);
   getDb()
     .prepare(
-      `INSERT INTO user_api_keys(user_id, enc_key, enc_base_url, enc_chat_model, enc_worker_model, updated_at)
-       VALUES(?,?,?,?,?,?)
+      `INSERT INTO user_api_keys(user_id, enc_key, enc_base_url, enc_chat_model, enc_worker_model, provider, updated_at)
+       VALUES(?,?,?,?,?,?,?)
        ON CONFLICT(user_id) DO UPDATE SET
          enc_key = excluded.enc_key,
          enc_base_url = excluded.enc_base_url,
          enc_chat_model = excluded.enc_chat_model,
          enc_worker_model = excluded.enc_worker_model,
+         provider = excluded.provider,
          updated_at = excluded.updated_at`
     )
-    .run(userId, enc(next.key), enc(next.baseUrl), enc(next.chatModel), enc(next.workerModel), Date.now());
+    .run(userId, enc(next.key), enc(next.baseUrl), enc(next.chatModel), enc(next.workerModel), next.provider, Date.now());
 }
 
 // ---------- LLM 凭证解析（聊天/摘要/记忆提取/导演/模型列表共用） ----------
@@ -193,7 +198,7 @@ export function setUserApiKeys(userId, { key, baseUrl, chatModel, workerModel })
 // baseUrl/chatModel/workerModel：请求头 > 用户存储值 > 服务器默认
 export function llmCreds(req, cfg, requestApiKey) {
   const uid = req.userId;
-  const stored = cfg.multiUser && uid ? getUserApiKeys(uid) : { key: '', baseUrl: '', chatModel: '', workerModel: '' };
+  const stored = cfg.multiUser && uid ? getUserApiKeys(uid) : { key: '', baseUrl: '', chatModel: '', workerModel: '', provider: 'custom' };
   const header = (n) => String((req.headers && req.headers[n]) || '').trim();
   const apiKey = cfg.multiUser ? stored.key || cfg.apiKey : requestApiKey(req) || cfg.apiKey;
   // 用户自填地址（请求头 / 已存储）必须过 SSRF 校验；服务器 .env 默认地址由管理员可信配置，不校验
@@ -201,7 +206,9 @@ export function llmCreds(req, cfg, requestApiKey) {
   const baseUrl = userBase ? assertPublicHttpsUrl(userBase) : cfg.baseUrl;
   const chatModel = header('x-chat-model') || stored.chatModel || cfg.chatModel;
   const workerModel = header('x-worker-model') || stored.workerModel || cfg.extractModel;
-  return { apiKey, baseUrl, chatModel, workerModel };
+  // v1.20.0: 提供商决定协议参数；请求头 > 已存储 > 按地址猜
+  const provider = getProvider(header('x-api-provider') || stored.provider || detectProvider(baseUrl)).id;
+  return { apiKey, baseUrl, chatModel, workerModel, provider };
 }
 
 // v1.18.1: 破限白名单——单用户模式直接放行；多用户模式需 is_admin 或 jailbreak_allowed
@@ -348,6 +355,7 @@ export function mountAuthRoutes(app, authLimiter) {
       baseUrl: b.baseUrl,
       chatModel: b.chatModel,
       workerModel: b.workerModel,
+      provider: b.provider,
     });
     const saved = getUserApiKeys(uid);
     res.json({ ok: true, hasKey: !!saved.key });
@@ -358,8 +366,47 @@ export function mountAuthRoutes(app, authLimiter) {
     const uid = currentUserId(req);
     if (!uid) return res.status(401).json({ error: '未登录' });
     const s = getUserApiKeys(uid);
-    res.json({ hasKey: !!s.key, baseUrl: s.baseUrl, chatModel: s.chatModel, workerModel: s.workerModel });
+    res.json({ hasKey: !!s.key, baseUrl: s.baseUrl, chatModel: s.chatModel, workerModel: s.workerModel, provider: s.provider });
   });
+
+  // v1.20.0: GET /api/providers——API 提供商预设（公开，无密钥）
+  app.get('/api/providers', (req, res) => {
+    res.json(API_PROVIDERS);
+  });
+
+  // v1.20.0: POST /api/user/api-key/test——保存前连通性测试（最小请求验证 Key+地址+模型）
+  // body: { provider, baseUrl, key, model }；key 缺席时用已存储的
+  app.post(
+    '/api/user/api-key/test',
+    needMulti,
+    ah(async (req, res) => {
+      const uid = currentUserId(req);
+      if (!uid) return res.status(401).json({ error: '未登录' });
+      const b = req.body || {};
+      const stored = getUserApiKeys(uid);
+      const key = (typeof b.key === 'string' && b.key.trim()) || stored.key;
+      const baseUrl = (typeof b.baseUrl === 'string' && b.baseUrl.trim()) || stored.baseUrl;
+      const model = (typeof b.model === 'string' && b.model.trim()) || stored.chatModel;
+      const provider = getProvider(b.provider || stored.provider || detectProvider(baseUrl)).id;
+      if (!key) return res.json({ ok: false, error: '请填写 API Key' });
+      if (!baseUrl) return res.json({ ok: false, error: '请填写 API 地址' });
+      if (!model) return res.json({ ok: false, error: '请填写模型 ID' });
+      let url;
+      try {
+        url = assertPublicHttpsUrl(baseUrl);
+      } catch (e) {
+        return res.json({ ok: false, error: e.message });
+      }
+      try {
+        const { testUpstream } = await import('./llm.js');
+        await testUpstream({ provider, baseUrl: url, apiKey: key, model });
+        res.json({ ok: true, provider });
+      } catch (e) {
+        const { friendlyLlmError } = await import('./llm.js');
+        res.json({ ok: false, error: friendlyLlmError(e) });
+      }
+    })
+  );
 
   // ---------- 积分系统 ----------
   const needLogin = (req, res, next) => {
