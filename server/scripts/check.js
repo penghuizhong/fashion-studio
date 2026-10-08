@@ -1653,6 +1653,66 @@ async function runMulti() {
     );
   }
 
+  // M46. v1.17.5 系统提示词模板可配置（扮演默认 + 破限预设覆盖）
+  {
+    const { getRoleplayTemplate, roleplayPromptOf } = await import('../src/memory.js');
+    const { jailbreakPresetPrompt, jailbreakPromptOf, jailbreakPresetAdminList } = await import('../src/jailbreakPresets.js');
+    const db = getDb();
+    db.prepare("DELETE FROM sys_settings WHERE key IN ('roleplay_template','jailbreak_presets_override')").run();
+
+    // 1. 默认：内置模板
+    const defRp = getRoleplayTemplate();
+    const defJb = jailbreakPresetPrompt('deepseek-rp-light');
+    const charOn = { roleplay_mode: 1, roleplay_prompt: '', jailbreak_preset: 'deepseek-rp-light' };
+    const effRp0 = roleplayPromptOf(charOn);
+    const effJb0 = jailbreakPromptOf(charOn, 'deepseek/deepseek-v3.2');
+    const effJbMismatch = jailbreakPromptOf(charOn, 'sao10k/l3.3-euryale-70b'); // 模型不匹配 → 空
+
+    // 2. 管理员覆盖（经 API）
+    const put1 = await req('PUT', '/api/admin/settings', {
+      roleplay_template: '自定义扮演模板A',
+      jailbreak_presets: { 'deepseek-rp-light': '自定义破限B' },
+    }, { jar: jarAdminM });
+    const get1 = await req('GET', '/api/admin/settings', undefined, { jar: jarAdminM });
+    const effRp1 = roleplayPromptOf(charOn);
+    const effJb1 = jailbreakPromptOf(charOn, 'deepseek/deepseek-v3.2');
+    const charCustom = { roleplay_mode: 1, roleplay_prompt: '角色自定义', jailbreak_preset: 'deepseek-rp-light' };
+    const effRpChar = roleplayPromptOf(charCustom); // 角色自定义优先于系统模板
+    const adminList = jailbreakPresetAdminList();
+
+    // 3. 非管理员拒绝（用新会话登录 testuserB，密码已被 M32 改为 newpassword123）
+    const jarB46 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB46 });
+    const forbidden = await req('PUT', '/api/admin/settings', { roleplay_template: 'x' }, { jar: jarB46 });
+
+    // 4. 清空恢复内置
+    const put2 = await req('PUT', '/api/admin/settings', {
+      roleplay_template: '',
+      jailbreak_presets: { 'deepseek-rp-light': '' },
+    }, { jar: jarAdminM });
+    const effRp2 = roleplayPromptOf(charOn);
+    const effJb2 = jailbreakPromptOf(charOn, 'deepseek/deepseek-v3.2');
+
+    // 5. 清理
+    db.prepare("DELETE FROM sys_settings WHERE key IN ('roleplay_template','jailbreak_presets_override')").run();
+
+    ok(
+      'M46. 提示词模板：默认/覆盖/角色优先/鉴权/清空恢复',
+      defRp.length > 50 && defJb.includes('虚构') &&
+        effRp0 === defRp && effJb0 === defJb && effJbMismatch === '' &&
+        put1.status === 200 &&
+        get1.json.roleplay_template === '自定义扮演模板A' &&
+        get1.json.roleplay_template_custom === true &&
+        get1.json.jailbreak_presets.some((p) => p.key === 'deepseek-rp-light' && p.custom && p.prompt === '自定义破限B') &&
+        effRp1 === '自定义扮演模板A' && effJb1 === '自定义破限B' &&
+        effRpChar === '角色自定义' &&
+        adminList.some((p) => p.key === 'deepseek-rp-light' && p.custom) &&
+        forbidden.status === 403 &&
+        put2.status === 200 && effRp2 === defRp && effJb2 === defJb,
+      `put1=${put1.status} effRp1=${effRp1.slice(0, 8)} effJb1=${effJb1.slice(0, 6)} forbidden=${forbidden.status}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
