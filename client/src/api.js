@@ -281,6 +281,8 @@ export const api = {
   // 角色卡
   getPresetCards: () => get('/api/character-cards/presets'),
   getJailbreakPresets: () => get('/api/jailbreak-presets'),
+  // v1.17.7: 生效中的提示词模板（扮演模式一键填入/恢复默认用这个，而非前端硬编码拷贝）
+  getPromptTemplates: () => get('/api/prompt-templates'),
   adoptCharacterCard: (data) => post('/api/character-cards/adopt', data),
   generateSoul: (data) => post('/api/soul/generate', data),
   generateCharacterCard: (data) => post('/api/character-cards/generate', data),

@@ -35,6 +35,7 @@ import {
   getLabeledHistory,
   summarizeOld,
   runMemoryPipeline,
+  getRoleplayTemplate,
 } from './memory.js';
 import { JAILBREAK_PRESETS, jailbreakPresetList } from './jailbreakPresets.js';
 import {
@@ -157,7 +158,8 @@ export function createApp() {
     if (!cfg.multiUser) return next();
     const p = req.path;
     // 预设角色卡 / 广场列表公开（未登录可浏览，用于拉新）；领养/生成/发布仍需登录
-    if (p.startsWith('/auth/') || p === '/config' || p === '/health' || p === '/character-cards/presets' || p === '/character-cards/shared') return next();
+    // v1.17.7: /prompt-templates 公开（生效中的扮演模板，不敏感；一键填入/恢复默认用）
+    if (p.startsWith('/auth/') || p === '/config' || p === '/health' || p === '/character-cards/presets' || p === '/character-cards/shared' || p === '/prompt-templates') return next();
     if (!req.userId) return res.status(401).json({ error: '未登录，请先登录' });
     next();
   });
@@ -340,6 +342,11 @@ export function createApp() {
   // v1.17.0: 破限预设插件库（给前端下拉框）
   app.get('/api/jailbreak-presets', (req, res) => {
     res.json({ presets: jailbreakPresetList() });
+  });
+
+  // v1.17.7: 生效中的扮演提示词模板（管理员覆盖 > 内置；公开，所有用户创建角色/恢复默认都吃这个）
+  app.get('/api/prompt-templates', (req, res) => {
+    res.json({ roleplay_template: getRoleplayTemplate() });
   });
 
   app.get('/api/character-cards/presets', (req, res) => {
