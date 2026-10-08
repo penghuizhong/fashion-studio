@@ -9,7 +9,6 @@ import { getConfig } from './config.js';
 import { assertPublicHttpsUrl } from './llm.js';
 import { ah } from './asyncHandler.js';
 import {
-  SIGNUP_BONUS,
   listPointsModels,
   listPointsModelRows,
   POINTS_PER_YUAN,
@@ -23,6 +22,8 @@ import {
   getBalance,
   getLedger,
   grantPoints,
+  getSignupBonus,
+  setPointsBalance,
 } from './points.js';
 
 const COOKIE_NAME = 'soulchat_session';
@@ -203,6 +204,14 @@ export function llmCreds(req, cfg, requestApiKey) {
   return { apiKey, baseUrl, chatModel, workerModel };
 }
 
+// v1.18.1: 破限白名单——单用户模式直接放行；多用户模式需 is_admin 或 jailbreak_allowed
+export function canUseJailbreak(uid) {
+  if (!getConfig().multiUser) return true;
+  if (!uid) return false;
+  const row = getDb().prepare('SELECT is_admin, jailbreak_allowed FROM users WHERE id = ?').get(uid);
+  return !!(row && (row.is_admin || row.jailbreak_allowed));
+}
+
 // ---------- 认证路由 ----------
 const USERNAME_RE = /^[A-Za-z0-9_\-\u4e00-\u9fa5]{3,20}$/;
 
@@ -315,9 +324,10 @@ export function mountAuthRoutes(app, authLimiter) {
   app.get('/api/auth/me', needMulti, (req, res) => {
     const uid = currentUserId(req);
     if (!uid) return res.status(401).json({ error: '未登录' });
-    const row = getDb().prepare('SELECT id, username FROM users WHERE id = ?').get(uid);
+    const row = getDb().prepare('SELECT id, username, is_admin, jailbreak_allowed FROM users WHERE id = ?').get(uid);
     if (!row) return res.status(401).json({ error: '未登录' });
-    res.json({ user: row });
+    // v1.18.1: 前端角色设置用 jailbreak_allowed 决定破限开关是否可用
+    res.json({ user: { ...row, jailbreak_allowed: !!(row.is_admin || row.jailbreak_allowed) } });
   });
 
   // PUT /api/user/api-key（需登录；合并语义：字段缺席=保持原值，空串=清除该字段）
@@ -387,7 +397,7 @@ export function mountAuthRoutes(app, authLimiter) {
       balance: getBalance(req.uid),
       billing_mode: (u && u.billing_mode) || 'points',
       is_admin: !!(u && u.is_admin),
-      signup_bonus: SIGNUP_BONUS,
+      signup_bonus: getSignupBonus(),
       platform_ready: !!cfg.apiKey,
       models: listPointsModels(true),
     });
@@ -420,6 +430,19 @@ export function mountAuthRoutes(app, authLimiter) {
     if (!target) return res.status(404).json({ error: '用户不存在' });
     const balance = grantPoints(target.id, points, 'admin_grant');
     res.json({ ok: true, username: target.username, granted: points, balance });
+  });
+
+  // v1.18.1: POST /api/admin/points/set——管理员直接设用户余额（发放输错时纠正）{ username, balance }
+  app.post('/api/admin/points/set', needMulti, needLogin, needAdmin, (req, res) => {
+    const username = String((req.body && req.body.username) || '').trim();
+    const balance = Math.floor(Number((req.body && req.body.balance) || 0));
+    if (!username) return res.status(400).json({ error: '用户名不能为空' });
+    if (!Number.isFinite(balance) || balance < 0 || balance > 10000000)
+      return res.status(400).json({ error: '余额需在 0~10000000 之间' });
+    const target = getDb().prepare('SELECT id, username FROM users WHERE username = ?').get(username);
+    if (!target) return res.status(404).json({ error: '用户不存在' });
+    const after = setPointsBalance(target.id, balance);
+    res.json({ ok: true, username: target.username, balance: after });
   });
 
   // ---------- 积分可用模型管理（管理员） ----------
@@ -508,6 +531,8 @@ export function mountAuthRoutes(app, authLimiter) {
       worker_model: getSetting('worker_model', ''),
       chat_default_model: getSetting('chat_default_model', ''),
       filter_fallback_models: fb,
+      // v1.18.1: 注册送积分（管理员可配置，默认 100）
+      signup_bonus: getSignupBonus(),
       // v1.17.5: 系统提示词模板（管理员可覆盖）
       roleplay_template: getRoleplayTemplate(),
       roleplay_template_custom: String(getSetting('roleplay_template', '') || '').trim().length > 0,
@@ -548,6 +573,14 @@ export function mountAuthRoutes(app, authLimiter) {
       const v = String(b.roleplay_template || '');
       setSetting('roleplay_template', v);
       out.roleplay_template = v;
+    }
+    // v1.18.1: 注册送积分（0~100000；只影响新用户，已发放不追溯）
+    if (b.signup_bonus !== undefined) {
+      const v = Math.floor(Number(b.signup_bonus));
+      if (!Number.isFinite(v) || v < 0 || v > 100000)
+        return res.status(400).json({ error: '注册送积分需在 0~100000 之间' });
+      setSetting('signup_bonus', String(v));
+      out.signup_bonus = v;
     }
     // v1.17.5: 破限预设 prompt 覆盖（{ key: prompt }；空 prompt = 恢复该预设内置）
     if (b.jailbreak_presets !== undefined) {
@@ -703,7 +736,7 @@ export function mountAuthRoutes(app, authLimiter) {
     const limit = Math.min(Math.max(parseInt(req.query.limit || '10', 10) || 10, 1), 50);
     const rows = getDb()
       .prepare(
-        `SELECT u.username,
+        `SELECT u.id, u.username, u.is_admin, u.jailbreak_allowed,
                 COALESCE(SUM(CASE WHEN l.delta < 0 THEN -l.delta ELSE 0 END),0) AS consumed,
                 COALESCE(SUM(CASE WHEN l.delta > 0 THEN l.delta ELSE 0 END),0) AS granted,
                 u.points_balance AS balance
@@ -712,6 +745,15 @@ export function mountAuthRoutes(app, authLimiter) {
       )
       .all(limit);
     res.json(rows);
+  });
+
+  // v1.18.1: PUT /api/admin/users/:id/jailbreak——管理员授权/撤销破限权限 { allowed: true|false }
+  app.put('/api/admin/users/:id/jailbreak', needMulti, needLogin, needAdmin, (req, res) => {
+    const target = getDb().prepare('SELECT id, username, is_admin FROM users WHERE id = ?').get(req.params.id);
+    if (!target) return res.status(404).json({ error: '用户不存在' });
+    const allowed = !!((req.body && req.body.allowed));
+    getDb().prepare('UPDATE users SET jailbreak_allowed = ? WHERE id = ?').run(allowed ? 1 : 0, target.id);
+    res.json({ ok: true, username: target.username, jailbreak_allowed: allowed || !!target.is_admin });
   });
 
   // ---------- 角色广场审核 ----------
