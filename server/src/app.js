@@ -161,7 +161,8 @@ export function createApp() {
     const p = req.path;
     // 预设角色卡 / 广场列表公开（未登录可浏览，用于拉新）；领养/生成/发布仍需登录
     // v1.17.7: /prompt-templates 公开（生效中的扮演模板，不敏感；一键填入/恢复默认用）
-    if (p.startsWith('/auth/') || p === '/config' || p === '/health' || p === '/character-cards/presets' || p === '/character-cards/shared' || p === '/prompt-templates') return next();
+    // v1.20.0: /providers 公开（API 提供商预设，无密钥，纯静态配置）
+    if (p.startsWith('/auth/') || p === '/config' || p === '/health' || p === '/character-cards/presets' || p === '/character-cards/shared' || p === '/prompt-templates' || p === '/providers') return next();
     if (!req.userId) return res.status(401).json({ error: '未登录，请先登录' });
     next();
   });
@@ -211,7 +212,7 @@ export function createApp() {
       usePoints: false,
       chatModel: creds.chatModel,
       workerModel: creds.workerModel,
-      llmOpts: { apiKey: creds.apiKey, baseUrl: creds.baseUrl },
+      llmOpts: { apiKey: creds.apiKey, baseUrl: creds.baseUrl, provider: creds.provider },
     };
     const uid = uidOf(req);
     if (!cfg.multiUser || !uid) return base;
