@@ -995,7 +995,6 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                       onChange={(e) => setPromptCfg((f) => ({ ...f, roleplay_template: e.target.value }))}
                       rows={10}
                       spellCheck={false}
-                      style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit' }}
                     />
                   </label>
                   <div className="card-title" style={{ marginTop: 12 }}>破限预设提示词</div>
@@ -1010,7 +1009,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                           onChange={(e) => setPromptCfg((f) => ({ ...f, jailbreak: { ...(f.jailbreak || {}), [p.key]: e.target.value } }))}
                           rows={8}
                           spellCheck={false}
-                          style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', marginTop: 4 }}
+                          style={{ marginTop: 4 }}
                         />
                       </label>
                     </div>

@@ -1,3 +1,6 @@
+## v1.17.6
+- 修复：深色模式下设置弹窗「提示词」tab 的 textarea 是白色底。根因：设置弹窗用自有 `.settings-modal`（非通用 `.modal`），`.modal textarea` 的主题样式没吃到。新增 `.settings-modal textarea` 主题样式（`var(--bg)`/`var(--text)`/`var(--border)`），并清理冗余内联样式。
+
 ## v1.17.5
 - 设置弹窗积分 tab：删除「平台积分 / 自带 Key」二级导航；积分 tab 只显示积分内容，BYOK 模式下显示“当前为自带 Key 模式”+「切换回平台积分」按钮（API tab 保存仍自动切 BYOK）。
 - 新增管理员「提示词」tab：可自定义扮演模式系统默认提示词（`sys_settings.roleplay_template`，角色未自定义时生效，留空恢复内置）与各破限预设 prompt（`sys_settings.jailbreak_presets_override` 按 key 覆盖，留空恢复内置）。生效优先级：角色自定义 > 管理员系统模板 > 内置。
