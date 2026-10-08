@@ -192,6 +192,11 @@ export async function sendMessage(conversationId, content, onEvent, signal) {
   }
 }
 
+// v1.20.3: 重新生成——删掉最后一条 AI 回复，返回最后一条用户消息内容
+export async function regenerateMessage(conversationId) {
+  return post(`/api/conversations/${conversationId}/regenerate`, {});
+}
+
 export function formatTime(ts) {
   if (!ts) return '';
   const d = new Date(String(ts).replace(' ', 'T'));
@@ -248,6 +253,7 @@ export const api = {
 
   listMessages: (id, limit = 200) => get(`/api/conversations/${id}/messages?limit=${limit}`),
   sendMessage,
+  regenerateMessage,
 
   // 群聊
   createGroup: (data) => post('/api/groups', data),

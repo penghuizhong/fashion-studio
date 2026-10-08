@@ -41,6 +41,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
 
   const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
   const [errorMsg, setErrorMsg] = useState(null);
+  // v1.20.3: 重新生成中
+  const [regenerating, setRegenerating] = useState(false);
   const [input, setInput] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState('');
@@ -279,6 +281,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             if (!isGroup) {
               const finalText = acc;
               setStreamText('');
+              // v1.20.3: 截断标记——流异常结束时前端提示"好像没说完"
+              const truncated = !!(data && data.truncated && finalText.trim());
               setMessages((m) => [
                 ...m,
                 {
@@ -286,6 +290,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                   role: 'assistant',
                   content: finalText,
                   created_at: new Date().toISOString(),
+                  truncated,
                 },
               ]);
             }
@@ -325,6 +330,25 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   const retrySend = () => {
     if (sending || !lastContentRef.current) return;
     sendContent(lastContentRef.current, { skipUserBubble: true });
+  };
+
+  // v1.20.3: 重新生成最后一条 AI 回复（断流半截时用）——后端删掉半截，前端按原问题重发
+  const regenerate = async () => {
+    if (sending || regenerating || isGroup) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== 'assistant') return;
+    setRegenerating(true);
+    setErrorMsg(null);
+    try {
+      const r = await api.regenerateMessage(conversationId);
+      setMessages((m) => m.slice(0, -1));
+      showToast('正在重新生成…', 1500);
+      sendContent(r.content, { skipUserBubble: true });
+    } catch (err) {
+      showToast(err.message || '重新生成失败');
+    } finally {
+      setRegenerating(false);
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -434,7 +458,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             </p>
           </div>
         )}
-        {messages.map((m) => (
+        {messages.map((m, i) => (
           <div key={m.id} className={`msg-row ${m.role === 'user' ? 'user' : 'assistant'}`}>
             {isGroup && m.role === 'assistant' && (
               <div className="msg-speaker">
@@ -448,6 +472,15 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
               dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }}
             />
             <div className="msg-time">{formatFullTime(m.created_at).slice(5)}</div>
+            {/* v1.20.3: 最后一条 AI 回复下放重新生成 */}
+            {!isGroup && m.role === 'assistant' && i === messages.length - 1 && !sending && (
+              <div className="regen-row">
+                {m.truncated && <span className="truncated-hint">回复好像没说完，</span>}
+                <button className="btn secondary small" onClick={regenerate} disabled={regenerating}>
+                  {regenerating ? '生成中…' : '↻ 重新生成'}
+                </button>
+              </div>
+            )}
           </div>
         ))}
         {/* 群聊：各角色流式气泡 */}
