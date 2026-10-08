@@ -1,3 +1,6 @@
+## v1.19.1
+- 修：自带 Key 用千问系模型聊天等待久——`reasoning: { enabled: false }` 是 OpenRouter 专用参数，非 OpenRouter 的自定义 API（千问官方兼容接口/第三方中转）会忽略；现对 qwen 系模型额外发送千问原生 `enable_thinking: false`，双保险关思考。
+
 ## v1.19.0
 - 新增：自带 Key（BYOK）用量统计——新表 `api_usage`，所有走用户自带 Key 的调用（单聊/群聊/后台记忆摘要导演/AI 生成）都记一条（用户/模型/用途/token），不扣费只统计。统计页：30 天趋势加绿色虚线"API 调用"线；模型分布加"积分 | 自带API"切换（同样有用途明细）；消费 Top 表加"API调用"列。历史数据从上线后开始累积。M54。
 

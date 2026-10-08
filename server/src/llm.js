@@ -144,6 +144,9 @@ body: JSON.stringify({
   // v1.17.10: 关掉 thinking 模型的推理过程（RP 不需要推理；thinking token 按输出计费，关掉省积分、首字更快）
   // OpenRouter 统一参数：enabled:false 才是真正的开关（max_tokens:0 只是 budget hint，不管用）
   reasoning: { enabled: false },
+  // v1.19.1: 千问原生兼容接口（DashScope OpenAI 兼容模式 / 部分第三方中转）不认 OpenRouter 的 reasoning 参数，
+  // 用千问自己的 enable_thinking 开关；只对 qwen 系模型加，非 qwen 模型不发送避免未知参数干扰
+  ...(/qwen/i.test(model || '') ? { enable_thinking: false } : {}),
   // 流式时让 OpenRouter 在最后一个 chunk 返回真实用量（计费用）
   ...(stream ? { stream_options: { include_usage: true } } : {}),
 }),
