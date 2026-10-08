@@ -2806,6 +2806,42 @@ textarea {
   font-family: ui-monospace, monospace;
 }
 
+/* v1.19.0: 模型分布 积分/自带API 切换 */
+.model-src-tabs {
+  display: inline-flex;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 3px;
+  margin: 6px 0 10px;
+}
+.model-src-tabs button {
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.model-src-tabs button.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+/* v1.18.3: 模型用途明细行 */
+.model-bar-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 2px 0 8px;
+}
+.model-bar-reason {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .model-bar-track {
   height: 10px;
   background: var(--bg-tertiary);
