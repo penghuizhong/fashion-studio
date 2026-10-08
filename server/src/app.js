@@ -1612,6 +1612,27 @@ export function createApp() {
     }
   }
 
+  // v1.20.3: 重新生成——删掉最后一条 AI 回复（断流半截时用），返回最后一条用户消息内容，前端拿到后按原问题重发
+  app.post('/api/conversations/:id/regenerate', chatLimiter, ah(async (req, res) => {
+    const conv = getConv(req.params.id, req);
+    if (!conv) return conv404(res);
+    if (conv.type === 'group') return res.status(400).json({ error: '群聊暂不支持重新生成' });
+    const last = db
+      .prepare('SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1')
+      .get(conv.id);
+    if (!last || last.role !== 'assistant') {
+      return res.status(400).json({ error: '最后一条不是 AI 回复，无需重新生成' });
+    }
+    db.prepare('DELETE FROM messages WHERE id = ?').run(last.id);
+    const prevUser = db
+      .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1")
+      .get(conv.id);
+    if (!prevUser || !String(prevUser.content || '').trim()) {
+      return res.status(400).json({ error: '找不到可重发的问题' });
+    }
+    res.json({ content: prevUser.content });
+  }));
+
   app.post('/api/conversations/:id/messages', chatLimiter, ah(async (req, res) => {
     const cfg = getConfig();
     const conv = getConv(req.params.id, req);
@@ -1707,6 +1728,7 @@ export function createApp() {
       } else {
         full = r.text;
       }
+      // v1.20.3: 截断标记——流异常结束（无 finish_reason）或超长截断时，前端提示"好像没说完"
       usage = r.usage;
       const asst = db
         .prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)')
@@ -1752,7 +1774,7 @@ export function createApp() {
           }
         } catch (e) { console.warn('[title] AI 标题生成失败:', e.message); }
       }
-      send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens } });
+      send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens }, truncated: full !== FILTER_NOTICE && (!r.finishReason || r.finishReason === 'length') });
       // 摘要 + v1.10 记忆流水线（意图识别/事件驱动）放后台，不阻塞 done；去掉请求级 signal
       const bgOpts = { ...llmOpts, signal: undefined };
       setImmediate(async () => {
