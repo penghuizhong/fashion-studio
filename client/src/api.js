@@ -262,6 +262,8 @@ export const api = {
   setBillingMode: (mode) => put('/api/points/mode', { mode }),
   getPointsLedger: (limit = 20) => get(`/api/points/ledger?limit=${limit}`),
   adminGrantPoints: (data) => post('/api/admin/points/grant', data),
+  // v1.18.1: 管理员直接设用户余额
+  adminSetPoints: (username, balance) => post('/api/admin/points/set', { username, balance }),
   adminListUsers: (q = '') => get(`/api/admin/users?q=${encodeURIComponent(q)}`),
   // 积分可用模型管理（管理员）
   adminPointsModels: () => get('/api/admin/points/models'),
@@ -278,6 +280,8 @@ export const api = {
   adminStatsDaily: (days = 30) => get(`/api/admin/stats/daily?days=${days}`),
   adminStatsModels: () => get('/api/admin/stats/models'),
   adminStatsTopUsers: (limit = 10) => get(`/api/admin/stats/top-users?limit=${limit}`),
+  // v1.18.1: 管理员授权/撤销用户破限权限
+  adminSetJailbreak: (userId, allowed) => put(`/api/admin/users/${userId}/jailbreak`, { allowed }),
   // 角色卡
   getPresetCards: () => get('/api/character-cards/presets'),
   getJailbreakPresets: () => get('/api/jailbreak-presets'),

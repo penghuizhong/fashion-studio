@@ -6,6 +6,7 @@ import Avatar from './Avatar.jsx';
 import AvatarPicker from './AvatarPicker.jsx';
 import MemoryFacts from './MemoryFacts.jsx';
 import { ROLEPLAY_TEMPLATE } from '../roleplayTemplate.js';
+import { useAuth } from '../auth.jsx';
 
 const TABS = [
   { id: 'chat', label: '对话', icon: 'chat' },
@@ -17,6 +18,9 @@ const TABS = [
 const FILE_FIELD = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
 
 export default function CharacterSettingsModal({ characterId, onClose, onCharacterUpdated, onCharacterDeleted, showToast }) {
+  // v1.18.1: 破限白名单——无权限用户看不到可用开关
+  const { user, multiUser } = useAuth();
+  const jbAllowed = !multiUser || (user && user.jailbreak_allowed);
   const [tab, setTab] = useState('chat');
   const [character, setCharacter] = useState(null);
   const [settings, setSettings] = useState({ name: '', avatar: '', temperature: 0.7 });
@@ -325,15 +329,17 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                       </>
                     )}
                     {/* v1.17.0: 破限模式（插件化） */}
+                    {/* v1.18.1: 白名单——无权限用户开关置灰，提示需管理员授权 */}
                     <div className="jailbreak-section">
-                      <label className="roleplay-toggle">
+                      <label className="roleplay-toggle" style={jbAllowed ? undefined : { opacity: 0.5 }}>
                         <input
                           type="checkbox"
                           checked={!!jailbreakPreset}
+                          disabled={!jbAllowed}
                           onChange={handleJbToggle}
                         />
                         <span className="roleplay-toggle-label">破限模式</span>
-                        <span className="roleplay-toggle-desc">减少 AI 拒绝，角色扮演更放得开</span>
+                        <span className="roleplay-toggle-desc">{jbAllowed ? '减少 AI 拒绝，角色扮演更放得开' : '需管理员授权后可用'}</span>
                       </label>
                       {jailbreakPreset && (
                         <>

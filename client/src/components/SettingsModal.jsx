@@ -204,6 +204,10 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [grantUser, setGrantUser] = useState('');
   const [grantAmount, setGrantAmount] = useState('');
   const [granting, setGranting] = useState(false);
+  // v1.18.1: 注册送积分（管理员可配）+ 按用户直接设余额
+  const [signupBonus, setSignupBonus] = useState('');
+  const [signupBonusSaving, setSignupBonusSaving] = useState(false);
+  const [adjustUser, setAdjustUser] = useState(null); // { username, balance }
   // 密码重置码
   const [recoveryCode, setRecoveryCode] = useState('');
   const [regenBusy, setRegenBusy] = useState(false);
@@ -224,6 +228,8 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         chat_default_model: (s && s.chat_default_model) || '',
         filter_fallback_models: (s && Array.isArray(s.filter_fallback_models)) ? s.filter_fallback_models : null,
       });
+      // v1.18.1: 注册送积分（管理员可配）
+      if (s && typeof s.signup_bonus === 'number') setSignupBonus(String(s.signup_bonus));
     } catch {
       /* 非管理员或加载失败就保持默认 */
     }
@@ -538,6 +544,48 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     }
   };
 
+  // v1.18.1: 注册送积分（管理员可配）
+  const saveSignupBonus = async () => {
+    const v = Math.floor(Number(signupBonus));
+    if (!Number.isFinite(v) || v < 0 || v > 100000) { showToast('请输入 0~100000 的整数', 2000); return; }
+    setSignupBonusSaving(true);
+    try {
+      await api.adminUpdateSettings({ signup_bonus: v });
+      setSignupBonus(String(v));
+      showToast(`注册送积分已设为 ${v}（只影响新用户）`, 2200);
+    } catch (e) {
+      showToast((e && e.message) || '保存失败', 2600);
+    } finally {
+      setSignupBonusSaving(false);
+    }
+  };
+
+  // v1.18.1: 按用户直接设余额（发放输错时纠正）
+  const saveAdjustPoints = async () => {
+    const v = Math.floor(Number(adjustUser.balance));
+    if (!Number.isFinite(v) || v < 0 || v > 10000000) { showToast('请输入 0~10000000 的整数', 2000); return; }
+    try {
+      const d = await api.adminSetPoints(adjustUser.username, v);
+      showToast(`${d.username} 余额已设为 ${d.balance}`, 2200);
+      setAdjustUser(null);
+      const tu = await api.adminStatsTopUsers(10).catch(() => null);
+      if (tu) setStats((s) => ({ ...s, tu }));
+    } catch (e) {
+      showToast((e && e.message) || '调整失败', 2600);
+    }
+  };
+  // v1.18.1: 破限白名单开关（管理员在消费排行表里直接授权/撤销）
+  const toggleJailbreak = async (u) => {
+    const next = !(u.jailbreak_allowed || u.is_admin);
+    try {
+      await api.adminSetJailbreak(u.id, next);
+      setStats((s) => ({ ...s, tu: s.tu.map((x) => (x.id === u.id ? { ...x, jailbreak_allowed: next } : x)) }));
+      showToast(`${u.username} 破限权限已${next ? '开通' : '关闭'}`, 2000);
+    } catch (e) {
+      showToast((e && e.message) || '操作失败', 2600);
+    }
+  };
+
   const copyInviteLink = async () => {
     if (!invite || !invite.code) return;
     const link = `${window.location.origin}/?invite=${invite.code}`;
@@ -828,10 +876,34 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   <div className="card-title" style={{ marginTop: 4 }}>消费 Top 10</div>
                   {stats.tu.length ? (
                     <table className="stat-table">
-                      <thead><tr><th>用户</th><th>消耗</th><th>获赠</th><th>余额</th></tr></thead>
+                      <thead><tr><th>用户</th><th>消耗</th><th>获赠</th><th>余额</th><th>破限</th><th>操作</th></tr></thead>
                       <tbody>
                         {stats.tu.map((u) => (
-                          <tr key={u.username}><td>{u.username}</td><td>{u.consumed}</td><td>{u.granted}</td><td>{u.balance}</td></tr>
+                          <tr key={u.username}>
+                            <td>{u.username}</td><td>{u.consumed}</td><td>{u.granted}</td><td>{u.balance}</td>
+                            <td>
+                              {u.is_admin ? (
+                                <span className="key-desc small">管理员</span>
+                              ) : (
+                                <label className="jb-allow-toggle" title={u.jailbreak_allowed ? '点击撤销破限权限' : '点击授权破限权限'}>
+                                  <input
+                                    type="checkbox"
+                                    checked={!!u.jailbreak_allowed}
+                                    onChange={() => toggleJailbreak(u)}
+                                  />
+                                  <span>{u.jailbreak_allowed ? '已授权' : '未授权'}</span>
+                                </label>
+                              )}
+                            </td>
+                            <td>
+                              <button
+                                className="btn secondary small"
+                                onClick={() => setAdjustUser({ username: u.username, balance: String(u.balance ?? '') })}
+                              >
+                                调整
+                              </button>
+                            </td>
+                          </tr>
                         ))}
                       </tbody>
                     </table>
@@ -845,6 +917,12 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                     <button className="btn secondary" onClick={grant} disabled={granting}>{granting ? '发放中…' : '发放'}</button>
                   </div>
                   <p className="key-desc small">手动充值：用户付款后，按用户名发放积分。</p>
+                  <div className="card-title" style={{ marginTop: 4 }}>注册送积分</div>
+                  <div className="key-input-row">
+                    <input value={signupBonus} onChange={(e) => setSignupBonus(e.target.value)} placeholder="数量" inputMode="numeric" autoComplete="off" style={{ maxWidth: 96 }} />
+                    <button className="btn secondary" onClick={saveSignupBonus} disabled={signupBonusSaving}>{signupBonusSaving ? '保存中…' : '保存'}</button>
+                  </div>
+                  <p className="key-desc small">新用户首次聊天成功后到账；只影响新用户，已发放的不追溯。</p>
                   <div className="card-title" style={{ marginTop: 4 }}>积分可用模型</div>
                   <p className="key-desc small">上架后用户可在「积分」tab 选用；单价单位：积分 / 1M tokens；后台任务用的模型在下方「模型配置」里指定（不选则自动用最便宜的）。</p>
                   <div className="pm-list">
@@ -1094,6 +1172,34 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
           )}
         </div>
         {version && <div className="settings-foot">SoulChat v{version}</div>}
+        {/* v1.18.1: 按用户调整积分 */}
+        {adjustUser && (
+          <div className="conv-menu-backdrop" onClick={() => setAdjustUser(null)}>
+            <div
+              className="conv-menu"
+              style={{ left: '50%', top: '40%', transform: 'translate(-50%,-50%)', minWidth: 240, padding: 12 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="conv-menu-title">调整积分 · {adjustUser.username}</div>
+              <div className="key-input-row" style={{ marginTop: 8 }}>
+                <input
+                  value={adjustUser.balance}
+                  onChange={(e) => setAdjustUser({ ...adjustUser, balance: e.target.value })}
+                  placeholder="目标余额"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveAdjustPoints(); }}
+                />
+              </div>
+              <p className="key-desc small">直接设为目标余额，账本记一笔调整记录。</p>
+              <div className="modal-actions">
+                <button className="btn" onClick={() => setAdjustUser(null)}>取消</button>
+                <button className="btn primary" onClick={saveAdjustPoints}>设为该余额</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
     </SettingsErrorBoundary>
