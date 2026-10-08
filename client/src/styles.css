@@ -288,6 +288,8 @@ textarea {
   cursor: pointer;
   color: var(--text-secondary);
   transition: background 0.18s var(--ease), color 0.18s var(--ease), transform 0.18s var(--ease);
+  -webkit-touch-callout: none; /* v1.18.0: 长按菜单时不弹系统 callout */
+  user-select: none;
 }
 
 .conv-item:hover {
@@ -325,6 +327,57 @@ textarea {
 .conv-del:hover {
   color: var(--danger);
   background: var(--hover);
+}
+
+/* v1.18.0: 对话长按菜单 */
+.conv-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
+.conv-menu {
+  position: fixed;
+  z-index: 201;
+  min-width: 140px;
+  background: var(--bg-elev, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  animation: conv-menu-in 0.12s ease-out;
+}
+@keyframes conv-menu-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.conv-menu-title {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.conv-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.conv-menu-item:hover {
+  background: var(--hover);
+}
+.conv-menu-item.danger {
+  color: var(--danger);
 }
 
 .new-conv-btn {

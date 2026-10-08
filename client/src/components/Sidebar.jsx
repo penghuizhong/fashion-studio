@@ -41,6 +41,28 @@ export default function Sidebar({
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [groupForm, setGroupForm] = useState({ name: '', memberIds: [] });
   const [creatingGroup, setCreatingGroup] = useState(false);
+  // v1.18.0: 对话长按菜单（改名/删除）
+  const [convMenu, setConvMenu] = useState(null); // { charId, conv, x, y }
+  const [renamingConv, setRenamingConv] = useState(null); // { charId, convId, value }
+  const pressTimer = useRef(null);
+  const pressFired = useRef(false);
+  const cancelPress = () => {
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+  };
+  const openConvMenu = (x, y, charId, conv) => setConvMenu({ charId, conv, x, y });
+  const startPress = (e, charId, conv) => {
+    if (e.touches && e.touches.length === 1) {
+      const t = e.touches[0];
+      pressTimer.current = setTimeout(() => {
+        pressFired.current = true; // 长按后抑制随之而来的 click
+        openConvMenu(t.clientX, t.clientY, charId, conv);
+      }, 550);
+    }
+  };
+  const handleConvClick = (charId, convId) => {
+    if (pressFired.current) { pressFired.current = false; return; }
+    onSelectConversation(charId, convId);
+  };
 
   const loadConvs = async (charId) => {
     const list = await api.listConversations(charId);
@@ -175,8 +197,7 @@ export default function Sidebar({
     }
   };
 
-  const handleDeleteConversation = async (e, charId, convId) => {
-    e.stopPropagation();
+  const doDeleteConv = async (charId, convId) => {
     if (!window.confirm('确定删除这段对话吗？')) return;
     try {
       await api.deleteConversation(convId);
@@ -184,6 +205,24 @@ export default function Sidebar({
       onConversationDeleted(charId, convId);
     } catch (err) {
       showToast(err.message || '删除失败');
+    }
+  };
+  const handleDeleteConversation = (e, charId, convId) => {
+    e.stopPropagation();
+    doDeleteConv(charId, convId);
+  };
+  // v1.18.0: 长按菜单改名
+  const saveConvRename = async () => {
+    const v = (renamingConv.value || '').trim();
+    if (!v) { showToast('名称不能为空'); return; }
+    try {
+      await api.renameConversation(renamingConv.convId, v);
+      const { charId } = renamingConv;
+      setRenamingConv(null);
+      await loadConvs(charId);
+      if (onConversationsChanged) onConversationsChanged();
+    } catch (err) {
+      showToast(err.message || '改名失败');
     }
   };
 
@@ -256,7 +295,11 @@ export default function Sidebar({
                     <div
                       key={conv.id}
                       className={`conv-item ${activeConv === conv.id ? 'active' : ''}`}
-                      onClick={() => onSelectConversation(c.id, conv.id)}
+                      onClick={() => handleConvClick(c.id, conv.id)}
+                      onTouchStart={(e) => startPress(e, c.id, conv)}
+                      onTouchEnd={cancelPress}
+                      onTouchMove={cancelPress}
+                      onContextMenu={(e) => { e.preventDefault(); openConvMenu(e.clientX, e.clientY, c.id, conv); }}
                       title={formatTime(conv.updated_at)}
                     >
                       <span className="conv-title">{conv.title || '未命名对话'}</span>
@@ -414,6 +457,64 @@ export default function Sidebar({
           onCreated={onCharacterCreated}
           showToast={showToast}
         />
+      )}
+
+      {/* v1.18.0: 对话长按菜单 */}
+      {convMenu && (
+        <div
+          className="conv-menu-backdrop"
+          onClick={() => setConvMenu(null)}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div
+            className="conv-menu"
+            style={{
+              left: Math.min(convMenu.x, window.innerWidth - 150),
+              top: Math.min(convMenu.y, window.innerHeight - 130),
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="conv-menu-title">{convMenu.conv.title || '未命名对话'}</div>
+            <button
+              className="conv-menu-item"
+              onClick={() => {
+                setRenamingConv({ charId: convMenu.charId, convId: convMenu.conv.id, value: convMenu.conv.title || '' });
+                setConvMenu(null);
+              }}
+            >
+              ✏️ 改名
+            </button>
+            <button
+              className="conv-menu-item danger"
+              onClick={() => {
+                const { charId, conv } = convMenu;
+                setConvMenu(null);
+                doDeleteConv(charId, conv.id);
+              }}
+            >
+              🗑️ 删除
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* v1.18.0: 对话改名弹窗 */}
+      {renamingConv && (
+        <Modal title="重命名对话" size="s" onClose={() => setRenamingConv(null)}>
+          <input
+            className="input"
+            value={renamingConv.value}
+            autoFocus
+            maxLength={30}
+            placeholder="输入对话名称"
+            onChange={(e) => setRenamingConv({ ...renamingConv, value: e.target.value })}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveConvRename(); }}
+          />
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setRenamingConv(null)}>取消</button>
+            <button className="btn primary" onClick={saveConvRename}>保存</button>
+          </div>
+        </Modal>
       )}
     </aside>
   );
