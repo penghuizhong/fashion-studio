@@ -2021,6 +2021,39 @@ async function runMulti() {
     );
   }
 
+  // M55. v1.20.0 提供商预设：/api/providers、thinkingParams、provider 持久化、连通性测试接口
+  {
+    const prov = await req('GET', '/api/providers');
+    const ids = Array.isArray(prov.json) ? prov.json.map((p) => p.id) : [];
+    const { thinkingParams, getProvider, detectProvider } = await import('../src/providers.js');
+    const tpOk =
+      JSON.stringify(thinkingParams('dashscope', 'qwen-plus')) === JSON.stringify({ enable_thinking: false }) &&
+      JSON.stringify(thinkingParams('zhipu', 'glm-4.6')) === JSON.stringify({ thinking: { type: 'disabled' } }) &&
+      JSON.stringify(thinkingParams('openrouter', 'x/y')) === JSON.stringify({ reasoning: { enabled: false } }) &&
+      JSON.stringify(thinkingParams('deepseek', 'deepseek-reasoner')) === JSON.stringify({}) &&
+      thinkingParams('custom', 'qwen-plus').enable_thinking === false &&
+      getProvider('nope').id === 'custom' &&
+      detectProvider('https://dashscope-intl.aliyuncs.com/compatible-mode/v1') === 'dashscope';
+    // provider 持久化
+    const { setUserApiKeys, getUserApiKeys } = await import('../src/auth.js');
+    const jarT55 = makeJar();
+    const reg = await req('POST', '/api/auth/register', { username: 'm55user', password: 'password123' }, { jar: jarT55 });
+    const uid55 = reg.json.user.id;
+    setUserApiKeys(uid55, { provider: 'dashscope' });
+    const saved55 = getUserApiKeys(uid55);
+    // 连通性测试：非法域名 → ok:false（不依赖外网）
+    const t = await req('POST', '/api/user/api-key/test',
+      { provider: 'dashscope', baseUrl: 'https://invalid.invalid/v1', key: 'sk-test', model: 'qwen-plus' },
+      { jar: jarT55 });
+    ok(
+      'M55. 提供商预设：列表/thinking参数/持久化/测试接口',
+      prov.status === 200 && ['openrouter', 'dashscope', 'deepseek', 'zhipu', 'custom'].every((id) => ids.includes(id)) &&
+        tpOk && saved55.provider === 'dashscope' &&
+        t.status === 200 && t.json && t.json.ok === false && typeof t.json.error === 'string',
+      `providers=${ids.join(',')} saved=${saved55.provider} testOk=${t.json && t.json.ok}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
