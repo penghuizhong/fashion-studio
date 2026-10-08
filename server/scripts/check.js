@@ -1789,6 +1789,33 @@ async function runMulti() {
     );
   }
 
+  // M49. v1.17.11 Qwen 专用破限预设（deepseek-rp-light 保持原提示词）
+  {
+    const { JAILBREAK_PRESETS, jailbreakPresetList, jailbreakPresetPrompt, jailbreakPromptOf, jailbreakPresetAdminList } =
+      await import('../src/jailbreakPresets.js');
+    const list = jailbreakPresetList();
+    const adminList = jailbreakPresetAdminList();
+    const qwenPrompt = jailbreakPresetPrompt('qwen-rp');
+    const dsPrompt = jailbreakPresetPrompt('deepseek-rp-light');
+    const charQwen = { roleplay_mode: 0, roleplay_prompt: '', jailbreak_preset: 'qwen-rp' };
+    const charDs = { roleplay_mode: 0, roleplay_prompt: '', jailbreak_preset: 'deepseek-rp-light' };
+    ok(
+      'M49. 破限预设：DeepSeek 原词保留/Qwen 新预设/模型匹配隔离',
+      list.length === 2 &&
+        list.some((p) => p.key === 'deepseek-rp-light') &&
+        list.some((p) => p.key === 'qwen-rp') &&
+        dsPrompt.includes('不拒绝、不说教') && // DeepSeek 用回之前那个提示词
+        qwenPrompt.includes('虚构文学创作') &&
+        qwenPrompt.includes('角色锁定') &&
+        jailbreakPromptOf(charQwen, 'qwen/qwen3.7-plus') === qwenPrompt && // Qwen 模型命中
+        jailbreakPromptOf(charQwen, 'deepseek/deepseek-v3.2') === '' && // 模型不匹配不注入
+        jailbreakPromptOf(charDs, 'deepseek/deepseek-v3.2') === dsPrompt &&
+        jailbreakPromptOf(charDs, 'qwen/qwen3.7-plus') === '' &&
+        adminList.some((p) => p.key === 'qwen-rp' && (p.models || []).includes('qwen/qwen3.7-plus')),
+      `presets=${list.map((p) => p.key).join(',')}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
