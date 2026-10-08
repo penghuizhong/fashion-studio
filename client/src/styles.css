@@ -998,7 +998,6 @@ textarea {
   background: var(--bg);
   color: var(--text);
 }
-
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -3061,6 +3060,13 @@ textarea {
   outline: none;
   font-family: inherit;
   resize: vertical;
+}
+
+/* v1.18.2: 设置弹窗内的 input 同样跟随主题（积分调整弹窗输入框深色模式白色底） */
+.settings-modal input:not([type='checkbox']):not([type='radio']) {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
 .settings-head {
