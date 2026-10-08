@@ -1721,12 +1721,13 @@ async function runMulti() {
 
     // 1. 默认：返回内置模板（未登录也可读）
     const t0 = await req('GET', '/api/prompt-templates');
+    let t1, t2;
     // 2. 管理员覆盖后：返回覆盖后的
     const put1 = await req('PUT', '/api/admin/settings', { roleplay_template: '覆盖模板C' }, { jar: jarAdminM });
-    const t1 = await req('GET', '/api/prompt-templates');
+    t1 = await req('GET', '/api/prompt-templates');
     // 3. 清空恢复内置
     const put2 = await req('PUT', '/api/admin/settings', { roleplay_template: '' }, { jar: jarAdminM });
-    const t2 = await req('GET', '/api/prompt-templates');
+    t2 = await req('GET', '/api/prompt-templates');
     db.prepare("DELETE FROM sys_settings WHERE key='roleplay_template'").run();
 
     ok(
@@ -2131,6 +2132,116 @@ async function runMulti() {
         dOther.status === 404 &&
         c1.status === 200 && left2 === 0,
       `f1=${JSON.stringify(f1)} d1=${d1.status} left1=${left1} dOther=${dOther.status} clear=${c1.status} left2=${left2}`
+    );
+  }
+
+  // M58. v1.21.0 群聊上下文架构：①群成员人设 ②排除已摘要 ④已读水位 ⑤batch_id ⑥OpenAI结构化
+  {
+    const { buildGroupContext, oneLineDesc } = await import('../src/memory.js');
+    const db = getDb();
+    const jarM58 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarM58 });
+    const c1 = await req('POST', '/api/characters', { name: 'M58A' }, { jar: jarM58 });
+    const c2 = await req('POST', '/api/characters', { name: 'M58B' }, { jar: jarM58 });
+    const g = await req('POST', '/api/groups', { member_ids: [c1.json.id, c2.json.id] }, { jar: jarM58 });
+    const gid = g.json && g.json.id;
+    const t0 = c1.status === 201 && c2.status === 201 && g.status === 201 && !!gid;
+    let t1 = false, t5 = false, t4 = false, t6 = false, t2 = false;
+    if (t0) {
+    const members = [
+      { id: c1.json.id, name: 'M58A', soul_md: '# 身份\nA是话痨' },
+      { id: c2.json.id, name: 'M58B', soul_md: '# 身份\nB是吃货' },
+    ];
+    // ① system 含 #群成员段：有对方一句话人设、无自己
+    const sysA = buildGroupContext(members, gid, 'hi', 'mock').buildFor(members[0]).apiMessages[0].content;
+    t1 = sysA.includes('# 群成员') && sysA.includes('M58B') && sysA.includes('B是吃货') && !/M58A：/.test(sysA) &&
+      oneLineDesc('# 身份\nA是话痨') === 'A是话痨';
+    // 发一轮（@M58A 只让 A 回），产生 user 消息 + A 回复
+    const { events } = await postSSE(`/api/conversations/${gid}/messages`, { content: '来说两句@M58A' }, { jar: jarM58 });
+    const starts = events.filter((e) => e.event === 'turn_start');
+    const batchIds = starts.map((e) => e.data && e.data.batch_id).filter(Boolean);
+    // ⑤ turn_start 带 batch_id；DB 里本轮消息共享同一 batch_id
+    const dbBatches = db.prepare('SELECT DISTINCT batch_id AS b FROM messages WHERE conversation_id = ?').all(gid).map((r) => r.b);
+    t5 = starts.length === 1 && batchIds.length === 1 && dbBatches.length === 1 && dbBatches[0] === batchIds[0];
+    // ④ 已读水位：A 发言后 group_read_marks 有记录且 upto=其回复 id
+    const marks = db.prepare('SELECT character_id, upto_message_id AS u FROM group_read_marks WHERE conversation_id = ?').all(gid);
+    const replyId = db.prepare('SELECT id FROM messages WHERE conversation_id = ? AND character_id = ? ORDER BY id DESC LIMIT 1').get(gid, c1.json.id);
+    t4 = marks.length === 1 && marks[0].character_id === c1.json.id && replyId && marks[0].u === replyId.id;
+    // ⑥ 结构化：A 自己的历史标 assistant + name=m_<id>；用户消息标 user + name=user
+    const hist = buildGroupContext(members, gid, 'hi', 'mock').buildFor(members[0]).apiMessages.slice(1);
+    const selfMsg = hist.find((m) => m.role === 'assistant');
+    const userMsg = hist.find((m) => m.role === 'user' && m.name === 'user');
+    t6 = !!selfMsg && selfMsg.name === 'm_' + String(c1.json.id).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 60) &&
+      !!userMsg && userMsg.content.startsWith('用户：');
+    // ② 排除已摘要：插 3 条旧消息 + 摘要 upto 覆盖它们，history 不再含旧原文
+    const t = new Date().toISOString();
+    const olds = [];
+    for (let i = 0; i < 3; i++) {
+      olds.push(db.prepare('INSERT INTO messages(conversation_id, role, content, created_at) VALUES(?,?,?,?)').run(gid, 'user', `old-${i}`, t).lastInsertRowid);
+    }
+    const maxOld = Math.max(...olds.map(Number));
+    db.prepare('INSERT INTO conversation_summaries(conversation_id, summary, message_upto, created_at) VALUES(?,?,?,?)')
+      .run(gid, '旧摘要', maxOld, t);
+    const hist2 = buildGroupContext(members, gid, 'hi', 'mock').buildFor(members[1]).apiMessages.slice(1);
+    t2 = !hist2.some((m) => /old-[012]/.test(m.content));
+    } // end if (t0)
+    if (gid) await req('DELETE', `/api/conversations/${gid}`, undefined, { jar: jarM58 });
+    if (c1.json) await req('DELETE', `/api/characters/${c1.json.id}`, undefined, { jar: jarM58 });
+    if (c2.json) await req('DELETE', `/api/characters/${c2.json.id}`, undefined, { jar: jarM58 });
+    ok(
+      'M58. 群成员段/排除已摘要/水位/batch_id/结构化',
+      t0 && t1 && t5 && t4 && t6 && t2,
+      `t0=${t0}(c1=${c1.status} c2=${c2.status} g=${g.status}) t1=${t1} t5=${t5} t4=${t4} t6=${t6} t2=${t2}`
+    );
+  }
+
+  // M59. v1.22.0 Bug1: 单聊重新生成不重复落库用户消息；Bug2: 群聊 turn_done 带 truncated + regenerate-turn
+  {
+    const db = getDb();
+    const jarA59 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarA59 });
+    // --- Bug1: 单聊 regenerate(true) 不重复插入用户消息 ---
+    const cv = await req('POST', `/api/characters/${charA}/conversations`, {}, { jar: jarA59 });
+    const convR = cv.json && cv.json.id;
+    const t = new Date().toISOString();
+    db.prepare('INSERT INTO messages(conversation_id, role, content, created_at) VALUES(?,?,?,?)').run(convR, 'user', '第一问', t);
+    db.prepare('INSERT INTO messages(conversation_id, role, content, created_at) VALUES(?,?,?,?)').run(convR, 'assistant', '半截回复', t);
+    const rg1 = await req('POST', `/api/conversations/${convR}/regenerate`, {}, { jar: jarA59 });
+    // 用 regenerate=true 重发（SSE，mock 下快速完成）
+    const sse1 = await postSSE(`/api/conversations/${convR}/messages`, { regenerate: true }, { jar: jarA59 });
+    const userCount = db.prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND role = 'user'").get(convR).c;
+    const asstCount = db.prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND role = 'assistant'").get(convR).c;
+    const doneEv = sse1.events.find((e) => e.event === 'done');
+    const b1 = rg1.status === 200 && sse1.status === 200 && userCount === 1 && asstCount === 1 && !!doneEv;
+    // --- Bug2: 群聊 turn_done 带 truncated；regenerate-turn 删半截重跑单轮 ---
+    const gc1 = await req('POST', '/api/characters', { name: 'M59A' }, { jar: jarA59 });
+    const gc2 = await req('POST', '/api/characters', { name: 'M59B' }, { jar: jarA59 });
+    const gg = await req('POST', '/api/groups', { member_ids: [gc1.json.id, gc2.json.id] }, { jar: jarA59 });
+    const gid = gg.json && gg.json.id;
+    let b2 = false, b3 = false;
+    if (gid) {
+      const gs = await postSSE(`/api/conversations/${gid}/messages`, { content: '来说两句@M59A' }, { jar: jarA59 });
+      const turnDones = gs.events.filter((e) => e.event === 'turn_done');
+      b2 = turnDones.length === 1 && 'truncated' in (turnDones[0].data || {});
+      const mid = turnDones[0] && turnDones[0].data && turnDones[0].data.message_id;
+      if (mid) {
+        const rs = await postSSE(`/api/conversations/${gid}/regenerate-turn`, { message_id: mid }, { jar: jarA59 });
+        const rTurns = rs.events.filter((e) => e.event === 'turn_done');
+        const rDones = rs.events.filter((e) => e.event === 'done');
+        const msgCount = db.prepare('SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ?').get(gid).c;
+        // 原 2 条（user+assistant），删半截后重跑 1 轮 → 仍是 2 条，且新 turn 有 truncated 字段
+        b3 = rs.status === 200 && rTurns.length === 1 && rDones.length === 1 &&
+          'truncated' in (rTurns[0].data || {}) && msgCount === 2;
+      }
+      await req('DELETE', `/api/conversations/${gid}`, undefined, { jar: jarA59 });
+    }
+    if (gc1.json) await req('DELETE', `/api/characters/${gc1.json.id}`, undefined, { jar: jarA59 });
+    if (gc2.json) await req('DELETE', `/api/characters/${gc2.json.id}`, undefined, { jar: jarA59 });
+    await req('DELETE', `/api/conversations/${convR}`, undefined, { jar: jarA59 });
+    ok(
+      'M59. 单聊regenerate不重复用户消息/群聊truncated/regenerate-turn',
+      b1 && b2 && b3,
+      `b1=${b1}(user=${userCount} asst=${asstCount}) b2=${b2} b3=${b3}`
     );
   }
 
