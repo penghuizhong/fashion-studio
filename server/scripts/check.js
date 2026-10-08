@@ -1138,7 +1138,7 @@ async function runMulti() {
       bad1.status === 400 && bad2.status === 400 && bad3.status === 400 && good2.status === 200,
       `bad1=${bad1.status} bad2=${bad2.status} bad3=${bad3.status} good=${good2.status}`
     );
-    // M27. 注册奖励首聊发放：B（已获 grant 100，未领注册奖励）聊一条 → +500，账本有 signup_bonus
+    // M27. 注册奖励首聊发放：B（已获 grant 100，未领注册奖励）聊一条 → +100（v1.18.1 默认），账本有 signup_bonus
     const chB = await req('POST', '/api/characters', { name: '小测' }, { jar: jarB2 });
     const charB2 = chB.json && chB.json.id;
     const cvB = await req('POST', `/api/characters/${charB2}/conversations`, {}, { jar: jarB2 });
@@ -1148,8 +1148,8 @@ async function runMulti() {
     const lb = await req('GET', '/api/points/ledger?limit=5', undefined, { jar: jarB2 });
     const reasonsB = Array.isArray(lb.json) ? lb.json.map((x) => x.reason) : [];
     ok(
-      'M27. 首聊后注册奖励到账：B 余额 100+500=600，账本有 signup_bonus',
-      pb.json && pb.json.balance === 600 && reasonsB.includes('signup_bonus'),
+      'M27. 首聊后注册奖励到账：B 余额 100+100=200，账本有 signup_bonus',
+      pb.json && pb.json.balance === 200 && reasonsB.includes('signup_bonus'),
       `balance=${pb.json && pb.json.balance} reasons=${reasonsB.join(',')}`
     );
   }
@@ -1873,6 +1873,116 @@ async function runMulti() {
       fake.close();
     }
     ok('M50b. genTitle：去引号截断', title === '公园散步计划', `title=${title}`);
+  }
+
+  // M51. v1.18.1 破限白名单：无权限开破限 → 403；管理员授权后可开；撤销后 canUseJailbreak=false
+  let m51uid = null; let m51chId = null; const jarU51 = makeJar();
+  {
+    const { canUseJailbreak } = await import('../src/auth.js');
+    const regU = await req('POST', '/api/auth/register', { username: 'm51user', password: 'password123' }, { jar: jarU51 });
+    m51uid = regU.json.user.id;
+    const chU = await req('POST', '/api/characters', { name: 'M51角色' }, { jar: jarU51 });
+    m51chId = chU.json.id;
+    const forbid = await req('PUT', `/api/characters/${m51chId}`, { jailbreak_preset: 'qwen-rp' }, { jar: jarU51 });
+    const grant = await req('PUT', `/api/admin/users/${m51uid}/jailbreak`, { allowed: true }, { jar: jarAdminM });
+    const allow = await req('PUT', `/api/characters/${m51chId}`, { jailbreak_preset: 'qwen-rp' }, { jar: jarU51 });
+    const me = await req('GET', '/api/auth/me', undefined, { jar: jarU51 });
+    const revoke = await req('PUT', `/api/admin/users/${m51uid}/jailbreak`, { allowed: false }, { jar: jarAdminM });
+    ok(
+      'M51. 破限白名单：无权限403/授权后可开/me带权限/撤销后失效',
+      forbid.status === 403 && /管理员授权/.test(forbid.json.error || '') &&
+        grant.status === 200 && grant.json.jailbreak_allowed === true &&
+        allow.status === 200 &&
+        me.json.user.jailbreak_allowed === true &&
+        revoke.status === 200 && canUseJailbreak(m51uid) === false,
+      `forbid=${forbid.status} grant=${grant.status} allow=${allow.status} me=${me.json.user.jailbreak_allowed} revoke=${revoke.status}`
+    );
+  }
+
+  // M51b. v1.18.1 撤销前后聊天注入对比（fake 上游抓 system prompt）
+  {
+    const http = await import('node:http');
+    for (const k of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']) delete process.env[k];
+    const { resetDispatcher } = await import('../src/llm.js'); // 与 app 同实例，重置 dispatcher 避开代理
+    resetDispatcher();
+    await req('PUT', `/api/admin/users/${m51uid}/jailbreak`, { allowed: true }, { jar: jarAdminM });
+    await req('PUT', `/api/characters/${m51chId}`, { jailbreak_preset: 'qwen-rp' }, { jar: jarU51 });
+    await req('POST', '/api/admin/points/grant', { username: 'm51user', points: 100 }, { jar: jarAdminM });
+    let sys = '';
+    const fake = http.createServer((rq, rs) => {
+      let buf = '';
+      rq.on('data', (c) => { buf += c; });
+      rq.on('end', () => {
+        let body = {};
+        try { body = JSON.parse(buf); } catch {}
+        if (body.stream) {
+          const s = (body.messages || []).find((m) => m.role === 'system');
+          sys = (s && s.content) || '';
+          rs.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          rs.write('data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n');
+          rs.write('data: [DONE]\n\n');
+          rs.end();
+        } else {
+          rs.writeHead(200, { 'Content-Type': 'application/json' });
+          rs.end(JSON.stringify({ choices: [{ message: { content: '测试标题' } }] }));
+        }
+      });
+    });
+    await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+    const port = fake.address().port;
+    const oldBase = process.env.OPENROUTER_BASE_URL;
+    const oldKey = process.env.OPENROUTER_API_KEY;
+    const oldMock = process.env.MOCK_LLM;
+    process.env.OPENROUTER_BASE_URL = `http://127.0.0.1:${port}`;
+    process.env.OPENROUTER_API_KEY = 'sk-test-123';
+    process.env.MOCK_LLM = '';
+    let hasJb1 = false; let st1 = 0; let hasJb2 = true; let st2 = 0;
+    try {
+      const cv1 = await req('POST', `/api/characters/${m51chId}/conversations`, {}, { jar: jarU51 });
+      const r1 = await postSSE(`/api/conversations/${cv1.json.id}/messages`, { content: 'hello' }, { jar: jarU51 });
+      st1 = r1.status; hasJb1 = sys.includes('叙事不断流');
+      await req('PUT', `/api/admin/users/${m51uid}/jailbreak`, { allowed: false }, { jar: jarAdminM });
+      const cv2 = await req('POST', `/api/characters/${m51chId}/conversations`, {}, { jar: jarU51 });
+      const r2 = await postSSE(`/api/conversations/${cv2.json.id}/messages`, { content: 'hello' }, { jar: jarU51 });
+      st2 = r2.status; hasJb2 = sys.includes('叙事不断流');
+    } finally {
+      process.env.MOCK_LLM = oldMock;
+      if (oldBase === undefined) delete process.env.OPENROUTER_BASE_URL; else process.env.OPENROUTER_BASE_URL = oldBase;
+      if (oldKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = oldKey;
+      fake.close();
+    }
+    ok(
+      'M51b. 授权时聊天注入破限词/撤销后不再注入',
+      st1 === 200 && hasJb1 && st2 === 200 && !hasJb2,
+      `st1=${st1} hasJb1=${hasJb1} st2=${st2} hasJb2=${hasJb2}`
+    );
+  }
+
+  // M52. v1.18.1 积分管理：直接设余额；注册送积分可配置
+  {
+    const set1 = await req('POST', '/api/admin/points/set', { username: 'm51user', balance: 1234 }, { jar: jarAdminM });
+    const bal1 = await req('GET', '/api/points', undefined, { jar: jarU51 });
+    const setNoAuth = await req('POST', '/api/admin/points/set', { username: 'm51user', balance: 9999 }, { jar: jarU51 });
+    const setBad = await req('POST', '/api/admin/points/set', { username: 'm51user', balance: -5 }, { jar: jarAdminM });
+    // 注册送积分改成 200，新用户首聊验证
+    const cfgSet = await req('PUT', '/api/admin/settings', { signup_bonus: 200 }, { jar: jarAdminM });
+    const jarN = makeJar();
+    await req('POST', '/api/auth/register', { username: 'm52user', password: 'password123' }, { jar: jarN });
+    const chN = await req('POST', '/api/characters', { name: 'M52' }, { jar: jarN });
+    const cvN = await req('POST', `/api/characters/${chN.json.id}/conversations`, {}, { jar: jarN });
+    await postSSE(`/api/conversations/${cvN.json.id}/messages`, { content: 'hi' }, { jar: jarN });
+    const balN = await req('GET', '/api/points', undefined, { jar: jarN });
+    const cfgBad = await req('PUT', '/api/admin/settings', { signup_bonus: -1 }, { jar: jarAdminM });
+    ok(
+      'M52. 积分管理：设余额/非管理员403/非法值400；注册送可配200新用户到账',
+      set1.status === 200 && set1.json.balance === 1234 &&
+        bal1.json && bal1.json.balance === 1234 &&
+        setNoAuth.status === 403 && setBad.status === 400 &&
+        cfgSet.status === 200 &&
+        balN.json && balN.json.balance === 200 &&
+        cfgBad.status === 400,
+      `set1=${set1.status} bal1=${bal1.json && bal1.json.balance} noAuth=${setNoAuth.status} bad=${setBad.status} cfg=${cfgSet.status} balN=${balN.json && balN.json.balance} cfgBad=${cfgBad.status}`
+    );
   }
 
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
