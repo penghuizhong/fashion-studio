@@ -1738,6 +1738,57 @@ async function runMulti() {
     );
   }
 
+  // M48. v1.17.10 上游请求带 reasoning:{enabled:false}（关 thinking，省 token/首字更快）
+  {
+    const { resetDispatcher } = await import('../src/llm.js');
+    resetDispatcher();
+    const http = await import('node:http');
+    let gotBody = null;
+    const fake = http.createServer((rq, rs) => {
+      let buf = '';
+      rq.on('data', (c) => { buf += c; });
+      rq.on('end', () => {
+        try { gotBody = JSON.parse(buf); } catch { gotBody = null; }
+        rs.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        rs.write('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop","usage":{"prompt_tokens":10,"output_tokens":5}}]}\n\n');
+        rs.write('data: [DONE]\n\n');
+        rs.end();
+      });
+    });
+    await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+    const port = fake.address().port;
+    const oldBase = process.env.OPENROUTER_BASE_URL;
+    const oldKey = process.env.OPENROUTER_API_KEY;
+    const oldMock = process.env.MOCK_LLM;
+    process.env.OPENROUTER_BASE_URL = `http://127.0.0.1:${port}`;
+    process.env.OPENROUTER_API_KEY = 'sk-test-123';
+    process.env.MOCK_LLM = '';
+    try {
+      const chR = await req('POST', '/api/characters', { name: 'M48角色' }, { jar: jarAdminM });
+      const chId = chR.json && chR.json.id;
+      const cvR = await req('POST', `/api/characters/${chId}/conversations`, {}, { jar: jarAdminM });
+      const cvId = cvR.json && cvR.json.id;
+      const ck = jarAdminM.header();
+      const sseRes = await fetch(base + `/api/conversations/${cvId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-chat-model': 'qwen/qwen3.7-plus', ...(ck ? { Cookie: ck } : {}) },
+        body: JSON.stringify({ content: 'hi' }),
+      });
+      await sseRes.text();
+    } finally {
+      if (oldBase === undefined) delete process.env.OPENROUTER_BASE_URL; else process.env.OPENROUTER_BASE_URL = oldBase;
+      if (oldKey === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = oldKey;
+      process.env.MOCK_LLM = oldMock;
+      fake.close();
+    }
+    const reasoningOff = gotBody && gotBody.reasoning && gotBody.reasoning.enabled === false;
+    ok(
+      'M48. 上游请求带 reasoning:{enabled:false}',
+      reasoningOff === true,
+      `reasoning=${JSON.stringify(gotBody && gotBody.reasoning)}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
