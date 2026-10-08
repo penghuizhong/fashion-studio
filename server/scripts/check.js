@@ -2054,6 +2054,34 @@ async function runMulti() {
     );
   }
 
+  // M56. v1.20.3 重新生成：删最后一条 AI 回复并返回上一条用户消息；最后一条非 AI 回复时 400；他人对话 404
+  {
+    // M12 已登出 jarA：用新 jar 重新登录
+    const jarA56 = makeJar();
+    const jarB56 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarA56 });
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB56 });
+    const cv = await req('POST', `/api/characters/${charA}/conversations`, {}, { jar: jarA56 });
+    const convR = cv.json && cv.json.id;
+    const db = getDb();
+    const t = new Date().toISOString();
+    db.prepare('INSERT INTO messages(conversation_id, role, content, created_at) VALUES(?,?,?,?)').run(convR, 'user', '第一问', t);
+    db.prepare('INSERT INTO messages(conversation_id, role, content, created_at) VALUES(?,?,?,?)').run(convR, 'assistant', '半截回复', t);
+    const r1 = await req('POST', `/api/conversations/${convR}/regenerate`, {}, { jar: jarA56 });
+    const left = db.prepare('SELECT role FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1').get(convR);
+    const r2 = await req('POST', `/api/conversations/${convR}/regenerate`, {}, { jar: jarA56 });
+    const r3 = await req('POST', `/api/conversations/${convR}/regenerate`, {}, { jar: jarB56 });
+    ok(
+      'M56. regenerate：删AI回复/返回用户问题；再调400；他人404',
+      cv.status === 201 && !!convR &&
+        r1.status === 200 && r1.json && r1.json.content === '第一问' &&
+        left && left.role === 'user' &&
+        r2.status === 400 &&
+        r3.status === 404,
+      `r1=${r1.status} left=${left && left.role} r2=${r2.status} r3=${r3.status}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
