@@ -1985,6 +1985,42 @@ async function runMulti() {
     );
   }
 
+  // M53. v1.18.3 模型分布加用途维度（reason + reason_label）
+  {
+    const mo = await req('GET', '/api/admin/stats/models', undefined, { jar: jarAdminM });
+    const rows = Array.isArray(mo.json) ? mo.json : [];
+    ok(
+      'M53. 模型分布：按 model,reason 分组且带中文用途',
+      mo.status === 200 && rows.every((r) => r.model && r.reason && r.reason_label) &&
+        rows.some((r) => r.reason === 'chat' && r.reason_label === '聊天消耗'),
+      `rows=${rows.length} sample=${rows[0] ? rows[0].reason + '/' + rows[0].reason_label : 'none'}`
+    );
+  }
+
+  // M54. v1.19.0 自带 Key 调用统计：recordByokUsage 写表；统计接口带新字段
+  {
+    const { recordByokUsage } = await import('../src/points.js');
+    const jarT54 = makeJar();
+    const reg = await req('POST', '/api/auth/register', { username: 'm54user', password: 'password123' }, { jar: jarT54 });
+    const uid54 = reg.json.user.id;
+    recordByokUsage(uid54, 'test/model-x', 'chat', { input: 100, output: 50 });
+    recordByokUsage(uid54, 'test/model-x', 'memory', { input: 10, output: 5 });
+    const am = await req('GET', '/api/admin/stats/api-models', undefined, { jar: jarAdminM });
+    const rows = Array.isArray(am.json) ? am.json : [];
+    const da = await req('GET', '/api/admin/stats/daily?days=1', undefined, { jar: jarAdminM });
+    const tu = await req('GET', '/api/admin/stats/top-users?limit=50', undefined, { jar: jarAdminM });
+    const me54 = (Array.isArray(tu.json) ? tu.json : []).find((u) => u.username === 'm54user');
+    const apiSum = Array.isArray(da.json) ? da.json.reduce((s, d) => s + (d.apiCalls || 0), 0) : -1;
+    ok(
+      'M54. BYOK统计：写表/api-models/趋势apiCalls/Top表api_calls',
+      rows.some((r) => r.model === 'test/model-x' && r.reason === 'chat' && r.calls === 1 && r.reason_label) &&
+        rows.some((r) => r.model === 'test/model-x' && r.reason === 'memory') &&
+        Array.isArray(da.json) && da.json.every((d) => typeof d.apiCalls === 'number') &&
+        apiSum >= 2 && me54 && me54.api_calls >= 2,
+      `apiModels=${rows.length} apiSum=${apiSum} topApi=${me54 && me54.api_calls}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
