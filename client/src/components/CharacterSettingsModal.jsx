@@ -114,6 +114,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
 
   useEffect(() => {
     if (tab === 'chat' || tab === 'memory') return;
+    // v1.20.2: files 加入依赖——files 后加载完也能同步到 draft，修灵魂输入框偶发空白
     setDraft(files[FILE_FIELD[tab]] || '');
     setDirty(false);
     let cancelled = false;
@@ -129,7 +130,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, characterId]);
+  }, [tab, characterId, files]);
 
   const selectTab = (id, el) => {
     if (id === tab) return;
@@ -220,6 +221,36 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
     }
   };
 
+  // v1.20.2: 档案模板一键填入
+  const USER_TEMPLATE = '- 称呼：\n- 偏好：\n- 重要事项：\n';
+  const fillUserTemplate = () => {
+    const stripped = draft.replace(/<!--[\s\S]*?-->/g, '').trim();
+    if (stripped && !window.confirm('当前已有内容，确定用模板覆盖吗？')) return;
+    setDraft(USER_TEMPLATE);
+    setDirty(true);
+  };
+
+  // v1.20.2: 文件编辑器（灵魂/档案共用；灵魂 tab 里放最顶）
+  const fileEditor = (
+    <>
+      <textarea
+        className="md-editor"
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setDirty(true);
+        }}
+        spellCheck={false}
+      />
+      <div className="settings-actions">
+        <span className="dirty-hint">{dirty ? '● 有未保存的修改' : ''}</span>
+        <button className="btn primary" onClick={saveFile} disabled={saving || !dirty}>
+          {saving ? '保存中…' : '保存'}
+        </button>
+      </div>
+    </>
+  );
+
   const deleteCharacter = async () => {
     if (!window.confirm(`确定删除角色「${character ? character.name : ''}」吗？所有对话和记忆都会被删除。`)) return;
     if (!window.confirm('再次确认：真的要删除吗？此操作不可恢复。')) return;
@@ -299,6 +330,8 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
           ) : (
             tab !== 'chat' && (
               <>
+                {/* v1.20.2: 灵魂输入框移到最顶 */}
+                {tab === 'soul' && fileEditor}
                 {tab === 'soul' && (
                   <div className="roleplay-section">
                     <label className="roleplay-toggle">
@@ -385,21 +418,18 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                     </div>
                   </div>
                 )}
-                <textarea
-                className="md-editor"
-                value={draft}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  setDirty(true);
-                }}
-                spellCheck={false}
-              />
-              <div className="settings-actions">
-                <span className="dirty-hint">{dirty ? '● 有未保存的修改' : ''}</span>
-                <button className="btn primary" onClick={saveFile} disabled={saving || !dirty}>
-                  {saving ? '保存中…' : '保存'}
-                </button>
-              </div>
+                {tab === 'user' && (
+                  <>
+                    <div className="profile-guide">
+                      <p>这里写你希望 AI 记住的关于你的事：别人怎么称呼你、你的喜好、忌讳等。每次聊天都会告诉 AI。</p>
+                      <p>AI 也会根据聊天自动补充你的长期画像；具体事件或约定，直接在聊天里说"记住"，会进「记忆」。</p>
+                      <button className="btn secondary small" onClick={fillUserTemplate}>
+                        一键填入模板
+                      </button>
+                    </div>
+                    {fileEditor}
+                  </>
+                )}
               <h4 className="versions-title">历史版本</h4>
               <div className="versions">
                 {versions.length === 0 && <div className="versions-empty">暂无历史版本</div>}
