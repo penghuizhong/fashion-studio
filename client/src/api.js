@@ -254,6 +254,9 @@ export const api = {
   listMessages: (id, limit = 200) => get(`/api/conversations/${id}/messages?limit=${limit}`),
   sendMessage,
   regenerateMessage,
+  // v1.20.5: 消息删除
+  clearMessages: (id) => del(`/api/conversations/${id}/messages`),
+  deleteMessage: (id) => del(`/api/messages/${id}`),
 
   // 群聊
   createGroup: (data) => post('/api/groups', data),

@@ -90,6 +90,14 @@ export const DEFAULT_MEMORY_MD = `<!-- 记忆：v1.10 起已升级为 AI 自动�
 此文本框保留做兼容：手动填写的内容不会被 AI 读取，如需补充记忆请直接在聊天中告诉 AI（例如"记住：我下周三要出差"）。
 -->`;
 
+// v1.20.5: 群聊@接龙——从文本里找出@到的成员 id（排除 excludeIds，如自己和已发言者）
+export function findMentionedIds(text, members, excludeIds = []) {
+  const ex = new Set(excludeIds || []);
+  return (members || [])
+    .filter((m) => m && m.id && !ex.has(m.id) && String(text || '').includes('@' + m.name))
+    .map((m) => m.id);
+}
+
 
 // 防幻觉系统指令，{name} 会被替换为角色名
 export const ANTI_HALLU = `你是 {name}。回答时只依据以及本次对话中的事实。
@@ -111,7 +119,8 @@ const sysParts = [
 ANTI_HALLU.replaceAll('{name}', character.name || ''),
 `# 当前时间\n${nowBeijingStr()}`,
 `# 角色设定\n${character.soul_md || ''}`,
-`# 关于用户\n${character.user_md || ''}`,
+// v1.20.5: 档案为空时不注入，省 token
+...(character.user_md && character.user_md.trim() ? [`# 关于用户\n${character.user_md}`] : []),
 ];
 const rpSingle = roleplayPromptOf(character);
 if (rpSingle) sysParts.push(`# 回复格式要求\n${rpSingle}`);
@@ -209,7 +218,8 @@ ANTI_HALLU.replaceAll('{name}', character.name || ''),
 `# 你正在一个群聊里。下面是你的角色设定，群聊消息格式为「说话人：内容」。只以${character.name || '你'}的身份发言，不要冒充别人。`,
 `# 当前时间\n${nowBeijingStr()}`,
 `# 角色设定\n${character.soul_md || ''}`,
-`# 关于用户\n${character.user_md || ''}`,
+// v1.20.5: 档案为空时不注入，省 token
+...(character.user_md && character.user_md.trim() ? [`# 关于用户\n${character.user_md}`] : []),
 ];
 const rpGroup = roleplayPromptOf(character);
 if (rpGroup) sysParts.push(`# 回复格式要求\n${rpGroup}`);

@@ -332,6 +332,31 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     sendContent(lastContentRef.current, { skipUserBubble: true });
   };
 
+  // v1.20.5: 消息长按/右键菜单（删除单条，防上下文污染）
+  const [msgMenu, setMsgMenu] = useState(null); // { id, x, y }
+  const msgPressTimer = useRef(null);
+  const cancelMsgPress = () => {
+    if (msgPressTimer.current) { clearTimeout(msgPressTimer.current); msgPressTimer.current = null; }
+  };
+  const startMsgPress = (e, id) => {
+    if (e.touches && e.touches.length === 1) {
+      const t = e.touches[0];
+      msgPressTimer.current = setTimeout(() => {
+        setMsgMenu({ id, x: t.clientX, y: t.clientY });
+      }, 550);
+    }
+  };
+  const deleteMsg = async (id) => {
+    setMsgMenu(null);
+    try {
+      await api.deleteMessage(id);
+      setMessages((msgs) => msgs.filter((m) => m.id !== id));
+      showToast('已删除', 1500);
+    } catch (err) {
+      showToast(err.message || '删除失败');
+    }
+  };
+
   // v1.20.3: 重新生成最后一条 AI 回复（断流半截时用）——后端删掉半截，前端按原问题重发
   const regenerate = async () => {
     if (sending || regenerating || isGroup) return;
@@ -459,7 +484,14 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={m.id} className={`msg-row ${m.role === 'user' ? 'user' : 'assistant'}`}>
+          <div
+            key={m.id}
+            className={`msg-row ${m.role === 'user' ? 'user' : 'assistant'}`}
+            onContextMenu={typeof m.id === 'number' ? (e) => { e.preventDefault(); setMsgMenu({ id: m.id, x: e.clientX, y: e.clientY }); } : undefined}
+            onTouchStart={typeof m.id === 'number' ? (e) => startMsgPress(e, m.id) : undefined}
+            onTouchEnd={cancelMsgPress}
+            onTouchMove={cancelMsgPress}
+          >
             {isGroup && m.role === 'assistant' && (
               <div className="msg-speaker">
                 <Avatar src={m.character_avatar} size={24} className="msg-speaker-avatar" />
@@ -522,6 +554,27 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             </div>
           </div>
         )}
+        {/* v1.20.5: 消息删除菜单 */}
+        {msgMenu && (
+          <div
+            className="conv-menu-backdrop"
+            onClick={() => setMsgMenu(null)}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <div
+              className="conv-menu"
+              style={{
+                left: Math.min(msgMenu.x, window.innerWidth - 150),
+                top: Math.min(msgMenu.y, window.innerHeight - 130),
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button className="conv-menu-item danger" onClick={() => deleteMsg(msgMenu.id)}>
+                删除这条消息
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="composer">
@@ -573,6 +626,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             setTitle(g.title);
             onConversationsChanged();
           }}
+          onMessagesCleared={() => setMessages([])}
           showToast={showToast}
         />
       )}

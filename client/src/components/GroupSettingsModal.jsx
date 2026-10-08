@@ -1,13 +1,16 @@
 // 群聊设置：改群名、增删成员
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import Avatar from './Avatar.jsx';
 import Modal from './Modal.jsx';
 
-export default function GroupSettingsModal({ group, onClose, onSaved, showToast }) {
+export default function GroupSettingsModal({ group, onClose, onSaved, onMessagesCleared, showToast }) {
   const [name, setName] = useState((group && group.title) || '');
   const [memberIds, setMemberIds] = useState(() => (group && group.members ? group.members.map((m) => m.id) : []));
   const [allChars, setAllChars] = useState([]);
   const [saving, setSaving] = useState(false);
+  // v1.20.5: 清空消息
+  const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
     api
@@ -40,6 +43,24 @@ export default function GroupSettingsModal({ group, onClose, onSaved, showToast 
     }
   };
 
+  // v1.20.5: 清空群聊消息（防上下文污染）
+  const clearMessages = async () => {
+    if (!window.confirm('确定清空该群聊的全部消息吗？摘要也会一起删除，此操作不可恢复。')) return;
+    if (!window.confirm('再次确认：真的要清空吗？')) return;
+    setClearing(true);
+    try {
+      await api.clearMessages(group.id);
+      showToast('群聊消息已清空', 2000);
+      if (onMessagesCleared) onMessagesCleared();
+      onSaved({ ...group });
+      onClose();
+    } catch (err) {
+      showToast(err.message || '清空失败');
+    } finally {
+      setClearing(false);
+    }
+  };
+
   return (
     <Modal
       title="群聊设置"
@@ -65,10 +86,15 @@ export default function GroupSettingsModal({ group, onClose, onSaved, showToast 
         {allChars.map((c) => (
           <label key={c.id} className="member-option">
             <input type="checkbox" checked={memberIds.includes(c.id)} onChange={() => toggle(c.id)} />
-            <span className="member-avatar">{c.avatar || '✨'}</span>
+            <Avatar src={c.avatar || '✨'} size={28} className="member-avatar" />
             <span>{c.name}</span>
           </label>
         ))}
+      </div>
+      <div className="danger-zone">
+        <button className="btn danger" onClick={clearMessages} disabled={clearing}>
+          {clearing ? '清空中…' : '清空群聊消息'}
+        </button>
       </div>
     </Modal>
   );
