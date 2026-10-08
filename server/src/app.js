@@ -37,6 +37,7 @@ import {
   summarizeOld,
   runMemoryPipeline,
   getRoleplayTemplate,
+  findMentionedIds,
 } from './memory.js';
 import { JAILBREAK_PRESETS, jailbreakPresetList } from './jailbreakPresets.js';
 import {
@@ -118,6 +119,14 @@ export function createApp() {
 
   const db = getDb();
   const now = () => new Date().toISOString();
+
+  // v1.20.5: 存量清理——user_md 恰好等于默认长注释的清成空（用户改过的一律不动），省 token
+  try {
+    const r = db.prepare('UPDATE characters SET user_md = ? WHERE user_md = ?').run('', DEFAULT_USER_MD);
+    if (r.changes) console.log(`[migrate] 清理默认档案注释 ${r.changes} 条`);
+  } catch (e) {
+    console.warn('[migrate] 清理默认档案失败:', e.message);
+  }
 
   // ---------- 限流（超限 429 JSON） ----------
   const tooMany = (req, res) =>
@@ -393,7 +402,7 @@ export function createApp() {
         card.name,
         card.avatar || '🤖',
         card.soul_md,
-        DEFAULT_USER_MD,
+        '', // v1.20.5: 档案默认空，省 token
         DEFAULT_MEMORY_MD,
         '',
         0.8,
@@ -959,7 +968,7 @@ export function createApp() {
       name: String(name).trim(),
       avatar: avatar || '🤖',
       soul_md: soul_md && String(soul_md).trim() ? String(soul_md) : DEFAULT_SOUL,
-      user_md: user_md && String(user_md).trim() ? String(user_md) : DEFAULT_USER_MD,
+      user_md: user_md && String(user_md).trim() ? String(user_md) : '', // v1.20.5: 档案默认空，省 token；用户填了才注入
       memory_md: DEFAULT_MEMORY_MD,
       model: '',
       temperature: temperature ?? 0.8,
@@ -1419,7 +1428,7 @@ export function createApp() {
     const memberIds = new Set(members.map((m) => m.id));
 
     // @点名：提到谁谁必回（最多 3 个）
-    const mentioned = members.filter((m) => content.includes('@' + m.name)).map((m) => m.id).slice(0, 3);
+    const mentioned = findMentionedIds(content, members).slice(0, 3);
 
     const t = now();
     db.prepare(
@@ -1477,13 +1486,17 @@ export function createApp() {
 
       // 2. 按角色串行流式：每轮重建上下文，后发言者能看到先发言者的回复
       const speakerChars = [];
+      const spokenIds = new Set();
+      const mentionedIds = new Set(); // v1.20.5: 本轮被角色@到的成员（@接龙用）
       let ctxInfo = null;
       let usageInput = 0;
       let usageOutput = 0;
-      for (const sid of speakerIds) {
-        if (res.destroyed) break;
+      // v1.20.5: 单轮发言抽成函数，主流程 + @接龙复用
+      const runTurn = async (sid) => {
+        if (res.destroyed) return;
         const ch = members.find((m) => m.id === sid);
-        if (!ch) continue;
+        if (!ch || spokenIds.has(sid)) return;
+        spokenIds.add(sid);
         const groupCtx = buildGroupContext(members, conv.id, content, chatModel);
         if (!ctxInfo) {
           ctxInfo = { used: groupCtx.usedTokens, budget: groupCtx.budget };
@@ -1531,7 +1544,7 @@ export function createApp() {
           turnUsage = gr.usage;
         } catch (e) {
           send('error', { character_id: ch.id, message: `${ch.name} 回复失败：${String((e && e.message) || e)}` });
-          continue;
+          return; // v1.20.5: runTurn 内用 return 代替原来的 continue
         }
         const outTokens = estimateTokens(full);
         usageOutput += outTokens;
@@ -1571,11 +1584,18 @@ export function createApp() {
           content: full,
           tokens: estimateTokens(full),
         });
-        // v1.10：本轮发言过的角色各跑一次记忆流水线（意图识别/事件驱动，gate 会自动跳过无价值轮）
-        for (const sid of speakerIds) {
-          const sch = members.find((m) => m.id === sid);
-          if (sch) speakerChars.push(sch);
+        // v1.10：本轮发言过的角色跑记忆流水线（意图识别/事件驱动，gate 会自动跳过无价值轮）
+        speakerChars.push(ch);
+        // v1.20.5: @接龙——发言里@了本轮没说过话的成员，记下来追加一轮
+        for (const mid of findMentionedIds(full, members, [ch.id, ...spokenIds])) {
+          mentionedIds.add(mid);
         }
+      };
+
+      for (const sid of speakerIds) await runTurn(sid);
+      // v1.20.5: @接龙只追加一轮（防 A@B@A 死循环），最多 3 人
+      for (const sid of [...mentionedIds].filter((id) => !spokenIds.has(id)).slice(0, 3)) {
+        await runTurn(sid);
       }
 
       if (usePoints) send('points', { balance: pointsBalance });
@@ -1611,6 +1631,28 @@ export function createApp() {
       res.end();
     }
   }
+
+  // v1.20.5: 清空对话全部消息（防上下文污染；顺带清掉已生成的摘要）
+  app.delete('/api/conversations/:id/messages', ah(async (req, res) => {
+    const conv = getConv(req.params.id, req);
+    if (!conv) return conv404(res);
+    db.transaction(() => {
+      db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conv.id);
+      db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ?').run(conv.id);
+      db.prepare('DELETE FROM memory_events WHERE conversation_id = ?').run(conv.id);
+    })();
+    res.json({ ok: true });
+  }));
+
+  // v1.20.5: 删除单条消息（按所属对话鉴权）
+  app.delete('/api/messages/:id', ah(async (req, res) => {
+    const m = db.prepare('SELECT conversation_id FROM messages WHERE id = ?').get(req.params.id);
+    if (!m) return res.status(404).json({ error: '消息不存在' });
+    const conv = getConv(m.conversation_id, req);
+    if (!conv) return conv404(res);
+    db.prepare('DELETE FROM messages WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+  }));
 
   // v1.20.3: 重新生成——删掉最后一条 AI 回复（断流半截时用），返回最后一条用户消息内容，前端拿到后按原问题重发
   app.post('/api/conversations/:id/regenerate', chatLimiter, ah(async (req, res) => {
