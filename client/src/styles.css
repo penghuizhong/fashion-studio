@@ -1930,6 +1930,24 @@ textarea {
   color: var(--text-secondary);
 }
 
+/* v1.20.2: 档案 tab 引导 */
+.profile-guide {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-secondary, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.profile-guide p {
+  margin: 0 0 6px;
+}
+.profile-guide p:last-of-type {
+  margin-bottom: 8px;
+}
+
 /* v1.16.7: 首页角色圆墙（鱼缸式漂移） */
 .home-empty {
   display: flex;
