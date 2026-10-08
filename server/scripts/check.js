@@ -2082,6 +2082,58 @@ async function runMulti() {
     );
   }
 
+  // M57. v1.20.5 消息删除 + @接龙 mention 检测
+  {
+    const { findMentionedIds } = await import('../src/memory.js');
+    const mems = [
+      { id: 'a', name: '小晴' },
+      { id: 'b', name: '阿默' },
+      { id: 'c', name: '小白' },
+    ];
+    const f1 = findMentionedIds('嗨 @阿默 你来说两句', mems, ['a']);
+    const f2 = findMentionedIds('没人被点名', mems, []);
+    const f3 = findMentionedIds('@小晴 @阿默 都来', mems, ['a']);
+    const jarA57 = makeJar();
+    const jarB57 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarA57 });
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB57 });
+    const cv = await req('POST', `/api/characters/${charA}/conversations`, {}, { jar: jarA57 });
+    const convD = cv.json && cv.json.id;
+    const db = getDb();
+    const t = new Date().toISOString();
+    const m1 = db
+      .prepare('INSERT INTO messages(conversation_id, role, content, created_at) VALUES(?,?,?,?)')
+      .run(convD, 'user', 'q1', t);
+    db.prepare('INSERT INTO messages(conversation_id, role, content, created_at) VALUES(?,?,?,?)').run(
+      convD,
+      'assistant',
+      'a1',
+      t
+    );
+    // 删单条
+    const d1 = await req('DELETE', `/api/messages/${m1.lastInsertRowid}`, undefined, { jar: jarA57 });
+    const left1 = db.prepare('SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ?').get(convD).c;
+    // 不存在的消息 → 404
+    const dBad = await req('DELETE', '/api/messages/999999999', undefined, { jar: jarA57 });
+    // 别人的消息 → 404
+    const otherMsg = db.prepare('SELECT id FROM messages WHERE conversation_id = ? LIMIT 1').get(convD);
+    const dOther = await req('DELETE', `/api/messages/${otherMsg.id}`, undefined, { jar: jarB57 });
+    // 清空
+    const c1 = await req('DELETE', `/api/conversations/${convD}/messages`, undefined, { jar: jarA57 });
+    const left2 = db.prepare('SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ?').get(convD).c;
+    ok(
+      'M57. 删单条/清空/404/@检测',
+      JSON.stringify(f1) === JSON.stringify(['b']) &&
+        f2.length === 0 &&
+        JSON.stringify(f3) === JSON.stringify(['b']) &&
+        d1.status === 200 && left1 === 1 &&
+        dBad.status === 404 &&
+        dOther.status === 404 &&
+        c1.status === 200 && left2 === 0,
+      `f1=${JSON.stringify(f1)} d1=${d1.status} left1=${left1} dOther=${dOther.status} clear=${c1.status} left2=${left2}`
+    );
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
