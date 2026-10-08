@@ -26,16 +26,41 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
   // v1.15.0: 扮演模式
   const [roleplayMode, setRoleplayMode] = useState(false);
   const [roleplayPrompt, setRoleplayPrompt] = useState(null); // null=用内置模板
+  // v1.17.7: 生效中的扮演模板（管理员覆盖 > 内置）；前端硬编码 ROLEPLAY_TEMPLATE 仅作请求失败的回退
+  const [defaultRpTemplate, setDefaultRpTemplate] = useState(ROLEPLAY_TEMPLATE);
+  const effectiveRpTemplate = defaultRpTemplate || ROLEPLAY_TEMPLATE;
   // v1.17.0: 破限预设插件化（null=关闭）
   const [jailbreakPreset, setJailbreakPreset] = useState(null);
   const [jbPresets, setJbPresets] = useState([]);
   const [rpDirty, setRpDirty] = useState(false);
   const [rpSaving, setRpSaving] = useState(false);
+  // v1.17.8: 破限模式年龄确认弹窗
+  const [jbGateOpen, setJbGateOpen] = useState(false);
+  // 与发现页共用 soulchat-age-ok：已确认过的不再打扰
+  const jbAgeOk = () => {
+    try { return localStorage.getItem('soulchat-age-ok') === '1'; } catch { return false; }
+  };
+  const handleJbToggle = (e) => {
+    const on = e.target.checked;
+    if (on && !jbAgeOk()) { setJbGateOpen(true); return; } // 未确认年龄：先弹确认框，不直接开启
+    setJailbreakPreset(on ? (jbPresets[0] && jbPresets[0].key) || null : null);
+    setRpDirty(true);
+  };
+  const confirmJbAge = () => {
+    try { localStorage.setItem('soulchat-age-ok', '1'); } catch { /* 忽略 */ }
+    setJbGateOpen(false);
+    setJailbreakPreset((jbPresets[0] && jbPresets[0].key) || null);
+    setRpDirty(true);
+  };
   const [saving, setSaving] = useState(false);
   const [versions, setVersions] = useState([]);
 
   useEffect(() => {
     api.getJailbreakPresets().then((d) => setJbPresets((d && d.presets) || [])).catch(() => {});
+    // v1.17.7: 取生效中的扮演模板（管理员在提示词管理改过的话，这里也要跟上）
+    api.getPromptTemplates()
+      .then((d) => { if (d && d.roleplay_template) setDefaultRpTemplate(d.roleplay_template); })
+      .catch(() => {});
     let cancelled = false;
     (async () => {
       try {
@@ -122,17 +147,17 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
     }
   };
 
-  // v1.15.0: 保存扮演模式（文本框内容与内置模板一致则存 null，吃未来模板升级）
+  // v1.15.0: 保存扮演模式（文本框内容与生效模板一致则存 null，吃未来模板升级）
   const saveRoleplay = async () => {
     setRpSaving(true);
     try {
       const custom = (roleplayPrompt || '').trim();
       await api.updateCharacter(characterId, {
         roleplay_mode: roleplayMode ? 1 : 0,
-        roleplay_prompt: custom && custom !== ROLEPLAY_TEMPLATE ? custom : null,
+        roleplay_prompt: custom && custom !== effectiveRpTemplate ? custom : null,
         jailbreak_preset: jailbreakPreset || null,
       });
-      setRoleplayPrompt(custom && custom !== ROLEPLAY_TEMPLATE ? custom : null);
+      setRoleplayPrompt(custom && custom !== effectiveRpTemplate ? custom : null);
       setRpDirty(false);
       await onCharacterUpdated();
       showToast('扮演模式已保存');
@@ -278,7 +303,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                       <>
                         <textarea
                           className="md-editor roleplay-editor"
-                          value={roleplayPrompt ?? ROLEPLAY_TEMPLATE}
+                          value={roleplayPrompt ?? effectiveRpTemplate}
                           onChange={(e) => {
                             setRoleplayPrompt(e.target.value);
                             setRpDirty(true);
@@ -305,10 +330,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                         <input
                           type="checkbox"
                           checked={!!jailbreakPreset}
-                          onChange={(e) => {
-                            setJailbreakPreset(e.target.checked ? (jbPresets[0] && jbPresets[0].key) || null : null);
-                            setRpDirty(true);
-                          }}
+                          onChange={handleJbToggle}
                         />
                         <span className="roleplay-toggle-label">破限模式</span>
                         <span className="roleplay-toggle-desc">减少 AI 拒绝，角色扮演更放得开</span>
@@ -380,6 +402,26 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
           )}
         </div>
       </div>
+      {/* v1.17.8: 破限模式年龄确认 */}
+      {jbGateOpen && (
+        <div className="modal-overlay" onClick={() => setJbGateOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>年龄确认</h3>
+            <p className="gate-text">
+              破限模式会大幅减少 AI 的拒绝，回复可能包含成人向虚构内容。请确认你已年满 18
+              岁，并知晓角色均为虚构 AI，不提供医疗、法律等专业建议。
+            </p>
+            <div className="modal-actions">
+              <button className="btn secondary" onClick={() => setJbGateOpen(false)}>
+                取消
+              </button>
+              <button className="btn primary" onClick={confirmJbAge}>
+                我已年满 18 岁
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

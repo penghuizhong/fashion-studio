@@ -193,7 +193,14 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
               <button
                 className="btn secondary small"
                 type="button"
-                onClick={() => setRoleplayPrompt(ROLEPLAY_TEMPLATE)}
+                onClick={async () => {
+                  // v1.17.7: 从后端取生效中的模板（管理员可能已在提示词管理里改过）；失败回退硬编码
+                  try {
+                    const r = await api.getPromptTemplates();
+                    if (r && r.roleplay_template) { setRoleplayPrompt(r.roleplay_template); return; }
+                  } catch { /* fall through */ }
+                  setRoleplayPrompt(ROLEPLAY_TEMPLATE);
+                }}
               >
                 一键填入内置模板
               </button>
