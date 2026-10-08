@@ -1,3 +1,19 @@
+## v1.22.0
+- 修 Bug 1：单聊「重新生成」不再重复插入用户消息——`POST /messages` 支持 `regenerate: true`，后端复用最后一条用户消息直接重跑，多次重新生成只保留一条用户输入。
+- 修 Bug 2（群聊断流半截，按单聊 v1.20.3 方案）：群聊 `turn_done` 事件新增 `truncated` 标记（无 finish_reason 或 length 截断时），前端在半截回复下显示"回复好像没说完，" +「↻ 重新生成」；新增 `POST /api/conversations/:id/regenerate-turn`——删掉指定半截回复，只重跑该角色一轮（SSE，复用 `streamGroupTurn`，含计费/水位/记忆流水线）。
+- 重构：群聊单轮流式抽成 `streamGroupTurn(deps, ch, st, opts)`，主流程 runTurn 与 regenerate-turn 共用。
+- 回归：M59（multi 61/61、single 44/44）。
+
+## v1.21.0
+- 群聊上下文架构升级（5 项，源自群聊架构调研）：
+  ① system 新增「# 群成员」段：发言者能看到其他成员的一句话人设（取 soul_md 首行），知道谁在场。
+  ② 摘要与原文去重：`conversation_summaries.message_upto` 覆盖的消息不再取原文（单聊+群聊）；群聊去掉 40 条硬上限，改纯 token 预算裁剪。
+  ③ 导演降本：输入只给名字+一句话人设+近 12 条（原来拼 160 字 soul）；导演调用不再扣用户积分（沉默免费）；禁连续自发言规则保留。
+  ④ 增量历史注入：新表 `group_read_marks` 记每角色已读水位，history = 摘要 + 该角色没见过的新消息；无水位回退摘要+最近 15 条；导演仍用近 12 条。
+  ⑤ 整轮 batch_id：`messages.batch_id`，群聊每轮（用户消息+本轮角色回复+@接龙）共享一个 batch_id，`turn_start`/`turn_done` 事件携带，为整轮删/重生成打基础；用户@点名已是锁定直通（导演不掺入）。
+  ⑥ OpenAI 结构化：history 加 `name` 字段（`m_<character_id>`，兼容字母数字下划线规范）；发言者自己说过的话标 `assistant`，其余标 `user`；「名字：」文本前缀保留双保险。
+- 回归：M58（multi 60/60、single 44/44）。
+
 ## v1.20.5
 - 档案默认空：新建/领养角色时 user_md 默认空串；prompt 组装时档案为空不注入「# 关于用户」段（单聊+群聊）；启动时一次性清理存量默认长注释（用户改过的不动）。省 token。
 - 群聊设置：成员列表头像改用 Avatar 图片组件（之前直接显示源码字符串）；新增「清空群聊消息」（二次确认，顺带清摘要；防上下文污染）。

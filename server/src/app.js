@@ -256,6 +256,8 @@ export function createApp() {
         recordByokUsage(bill.userId, model, reason, usage);
         return;
       }
+      // v1.21.0: 导演决策不扣用户积分（沉默免费——基础设施调用用户无感）
+      if (reason === 'director') return;
       try {
         const pts = calcPoints(model, usage);
         if (pts > 0)
@@ -1395,6 +1397,117 @@ export function createApp() {
     return c.slice(0, 18);
   }
   // ---------- 群聊消息 SSE：导演决策 → 按角色串行流式 ----------
+  // v1.22.0: 群聊单角色流式一轮——主流程 runTurn 与 POST regenerate-turn 复用
+  // deps: { send, res, conv, cfg, bill, chatModel, llmOpts, usePoints, members, query, batchId }
+  // st: { ctxInfo, usageInput, usageOutput, pointsBalance }（可变状态，函数内更新）
+  // opts: { excludeMentionIds }（@接龙排除列表，默认只排除自己）
+  async function streamGroupTurn(deps, ch, st, opts = {}) {
+    const { send, res, conv, cfg, bill, chatModel, llmOpts, usePoints, members, query, batchId } = deps;
+    if (res.destroyed) return null;
+    const groupCtx = buildGroupContext(members, conv.id, query, chatModel);
+    const { apiMessages, usedTokens } = groupCtx.buildFor(ch);
+    if (!st.ctxInfo) {
+      st.ctxInfo = { used: usedTokens, budget: groupCtx.budget };
+      send('context', st.ctxInfo);
+    }
+    st.usageInput += usedTokens;
+    send('turn_start', { character_id: ch.id, character_name: ch.name, character_avatar: ch.avatar, batch_id: batchId });
+    let full = '';
+    let turnUsage = null;
+    let turnFinishReason = null;
+    let turnModel = chatModel;
+    try {
+      // v1.17.1: 内容过滤兜底——被拦截时换无审查模型重试，绝不呈现半截输出
+      const doGroupStream = async (model) => {
+        let text = '';
+        // v1.17.2: 429 自动重试，瞬时限流用户无感
+        const r = await withRetry(() =>
+          chatStream({
+            messages: apiMessages,
+            model,
+            temperature: ch.temperature ?? 0.8,
+            ...llmOpts,
+            onToken: (delta) => {
+              text += delta;
+              send('token', { character_id: ch.id, text: delta });
+            },
+          })
+        );
+        return { text, usage: r.usage, finishReason: r.finishReason };
+      };
+      let gr = await doGroupStream(chatModel);
+      if (gr.finishReason === 'content_filter' && usePoints) {
+        const fb = pickFilterFallbackModel(chatModel);
+        if (fb) {
+          send('filter_retry', { character_id: ch.id, model: fb });
+          gr = await doGroupStream(fb);
+          turnModel = fb;
+        }
+      }
+      if (gr.finishReason === 'content_filter') {
+        full = FILTER_NOTICE;
+      } else {
+        full = gr.text;
+      }
+      turnUsage = gr.usage;
+      turnFinishReason = gr.finishReason;
+    } catch (e) {
+      send('error', { character_id: ch.id, message: `${ch.name} 回复失败：${String((e && e.message) || e)}` });
+      return null;
+    }
+    const outTokens = estimateTokens(full);
+    st.usageOutput += outTokens;
+    // 注册奖励：首次聊天成功后发放（幂等），每轮只发一次由 maybeSignupBonus 保证
+    if (bill.userId) {
+      try { maybeSignupBonus(bill.userId); } catch (e) { console.warn('[points] 注册奖励发放失败:', e.message); }
+    }
+    // 积分扣费（按发言轮次）
+    if (usePoints && !cfg.mockLlm) {
+      const u = turnUsage || { input: usedTokens, output: outTokens };
+      const pts = calcPoints(turnModel, u);
+      if (pts > 0) {
+        try {
+          st.pointsBalance = deductPoints(bill.userId, pts, 'group_chat', 'conversation', conv.id, {
+            tokensInput: u.input,
+            tokensOutput: u.output,
+            model: turnModel,
+          });
+        } catch (e) {
+          console.warn('[points] 扣费失败:', e.message);
+        }
+      }
+    }
+    // v1.19.0: 自带 Key 群聊只记录不扣费
+    if (!usePoints && !cfg.mockLlm) {
+      const u = turnUsage || { input: usedTokens, output: outTokens };
+      recordByokUsage(bill.userId, turnModel, 'group_chat', u);
+    }
+    const row = db
+      .prepare(
+        'INSERT INTO messages(conversation_id, role, content, tokens, character_id, batch_id, created_at) VALUES(?,?,?,?,?,?,?)'
+      )
+      .run(conv.id, 'assistant', full, outTokens, ch.id, batchId, now());
+    const messageId = Number(row.lastInsertRowid);
+    // v1.22.0: 截断标记——流异常结束时前端提示"好像没说完"并给重新生成
+    const truncated = full !== FILTER_NOTICE && (!turnFinishReason || turnFinishReason === 'length');
+    send('turn_done', {
+      character_id: ch.id,
+      message_id: messageId,
+      batch_id: batchId,
+      content: full,
+      tokens: estimateTokens(full),
+      truncated,
+    });
+    // v1.21.0: 更新该角色已读水位（增量历史注入——下次只看没见过的新消息）
+    try {
+      db.prepare(
+        'INSERT INTO group_read_marks(conversation_id, character_id, upto_message_id) VALUES(?,?,?) ON CONFLICT(conversation_id, character_id) DO UPDATE SET upto_message_id = excluded.upto_message_id'
+      ).run(conv.id, ch.id, messageId);
+    } catch (e) { console.warn('[group] 水位更新失败:', e.message); }
+    const mentioned = findMentionedIds(full, members, opts.excludeMentionIds || [ch.id]);
+    return { messageId, content: full, truncated, mentioned, usedTokens, outTokens, turnModel };
+  }
+
   async function handleGroupMessage(req, res, conv, cfg) {
     // 凭证：多用户模式用用户托管 key（忽略请求头），单用户模式保持请求头优先
     const creds = llmCreds(req, cfg, requestApiKey);
@@ -1431,9 +1544,11 @@ export function createApp() {
     const mentioned = findMentionedIds(content, members).slice(0, 3);
 
     const t = now();
+    // v1.21.0: 整轮 batch_id——用户消息 + 本轮所有角色回复 + @接龙共享，支持整轮删/重生成
+    const batchId = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     db.prepare(
-      'INSERT INTO messages(conversation_id, role, content, tokens, character_id, created_at) VALUES(?,?,?,?,?,?)'
-    ).run(conv.id, 'user', content, estimateTokens(content), null, t);
+      'INSERT INTO messages(conversation_id, role, content, tokens, character_id, batch_id, created_at) VALUES(?,?,?,?,?,?,?)'
+    ).run(conv.id, 'user', content, estimateTokens(content), null, batchId, t);
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(t, conv.id);
 
     const send = sseInit(res);
@@ -1492,104 +1607,20 @@ export function createApp() {
       let usageInput = 0;
       let usageOutput = 0;
       // v1.20.5: 单轮发言抽成函数，主流程 + @接龙复用
+      // v1.22.0: 单轮发言走 streamGroupTurn（与 regenerate-turn 复用）
+      const st = { ctxInfo: null, usageInput: 0, usageOutput: 0, pointsBalance };
+      const deps = { send, res, conv, cfg, bill, chatModel, llmOpts, usePoints, members, query: content, batchId };
       const runTurn = async (sid) => {
         if (res.destroyed) return;
         const ch = members.find((m) => m.id === sid);
         if (!ch || spokenIds.has(sid)) return;
         spokenIds.add(sid);
-        const groupCtx = buildGroupContext(members, conv.id, content, chatModel);
-        if (!ctxInfo) {
-          ctxInfo = { used: groupCtx.usedTokens, budget: groupCtx.budget };
-          send('context', ctxInfo);
-        }
-        const { apiMessages, usedTokens } = groupCtx.buildFor(ch);
-        usageInput += usedTokens;
-        send('turn_start', { character_id: ch.id, character_name: ch.name, character_avatar: ch.avatar });
-        let full = '';
-        let turnUsage = null;
-        let turnModel = chatModel;
-        try {
-          // v1.17.1: 内容过滤兜底——被拦截时换无审查模型重试，绝不呈现半截输出
-          const doGroupStream = async (model) => {
-            let text = '';
-            // v1.17.2: 429 自动重试，瞬时限流用户无感
-            const r = await withRetry(() =>
-              chatStream({
-                messages: apiMessages,
-                model,
-                temperature: ch.temperature ?? 0.8,
-                ...llmOpts,
-                onToken: (delta) => {
-                  text += delta;
-                  send('token', { character_id: ch.id, text: delta });
-                },
-              })
-            );
-            return { text, usage: r.usage, finishReason: r.finishReason };
-          };
-          let gr = await doGroupStream(chatModel);
-          if (gr.finishReason === 'content_filter' && usePoints) {
-            const fb = pickFilterFallbackModel(chatModel);
-            if (fb) {
-              send('filter_retry', { character_id: ch.id, model: fb });
-              gr = await doGroupStream(fb);
-              turnModel = fb;
-            }
-          }
-          if (gr.finishReason === 'content_filter') {
-            full = FILTER_NOTICE;
-          } else {
-            full = gr.text;
-          }
-          turnUsage = gr.usage;
-        } catch (e) {
-          send('error', { character_id: ch.id, message: `${ch.name} 回复失败：${String((e && e.message) || e)}` });
-          return; // v1.20.5: runTurn 内用 return 代替原来的 continue
-        }
-        const outTokens = estimateTokens(full);
-        usageOutput += outTokens;
-        // 注册奖励：首次聊天成功后发放（幂等），每轮只发一次由 maybeSignupBonus 保证
-        if (bill.userId) {
-          try { maybeSignupBonus(bill.userId); } catch (e) { console.warn('[points] 注册奖励发放失败:', e.message); }
-        }
-        // 积分扣费（按发言轮次）
-        if (usePoints && !cfg.mockLlm) {
-          const u = turnUsage || { input: usedTokens, output: outTokens };
-          const pts = calcPoints(turnModel, u);
-          if (pts > 0) {
-            try {
-              pointsBalance = deductPoints(bill.userId, pts, 'group_chat', 'conversation', conv.id, {
-                tokensInput: u.input,
-                tokensOutput: u.output,
-                model: turnModel,
-              });
-            } catch (e) {
-              console.warn('[points] 扣费失败:', e.message);
-            }
-          }
-        }
-        // v1.19.0: 自带 Key 群聊只记录不扣费
-        if (!usePoints && !cfg.mockLlm) {
-          const u = turnUsage || { input: usedTokens, output: outTokens };
-          recordByokUsage(bill.userId, turnModel, 'group_chat', u);
-        }
-        const row = db
-          .prepare(
-            'INSERT INTO messages(conversation_id, role, content, tokens, character_id, created_at) VALUES(?,?,?,?,?,?)'
-          )
-          .run(conv.id, 'assistant', full, outTokens, ch.id, now());
-        send('turn_done', {
-          character_id: ch.id,
-          message_id: Number(row.lastInsertRowid),
-          content: full,
-          tokens: estimateTokens(full),
-        });
+        const r = await streamGroupTurn(deps, ch, st, { excludeMentionIds: [ch.id, ...spokenIds] });
+        if (!r) return;
         // v1.10：本轮发言过的角色跑记忆流水线（意图识别/事件驱动，gate 会自动跳过无价值轮）
         speakerChars.push(ch);
         // v1.20.5: @接龙——发言里@了本轮没说过话的成员，记下来追加一轮
-        for (const mid of findMentionedIds(full, members, [ch.id, ...spokenIds])) {
-          mentionedIds.add(mid);
-        }
+        for (const mid of r.mentioned) mentionedIds.add(mid);
       };
 
       for (const sid of speakerIds) await runTurn(sid);
@@ -1598,9 +1629,9 @@ export function createApp() {
         await runTurn(sid);
       }
 
-      if (usePoints) send('points', { balance: pointsBalance });
+      if (usePoints) send('points', { balance: st.pointsBalance });
       if (bill.userId) checkInviteReward(bill.userId);
-      send('done', { title: conv.title, usage: { input: usageInput, output: usageOutput } });
+      send('done', { title: conv.title, usage: { input: st.usageInput, output: st.usageOutput } });
       // 3. 会话级摘要 + v1.10 记忆流水线放后台（并行），不阻塞 done
       const bgOpts = { ...llmOpts, signal: undefined };
       setImmediate(async () => {
@@ -1658,7 +1689,7 @@ export function createApp() {
   app.post('/api/conversations/:id/regenerate', chatLimiter, ah(async (req, res) => {
     const conv = getConv(req.params.id, req);
     if (!conv) return conv404(res);
-    if (conv.type === 'group') return res.status(400).json({ error: '群聊暂不支持重新生成' });
+    if (conv.type === 'group') return res.status(400).json({ error: '群聊请用 regenerate-turn' });
     const last = db
       .prepare('SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 1')
       .get(conv.id);
@@ -1675,13 +1706,102 @@ export function createApp() {
     res.json({ content: prevUser.content });
   }));
 
+  // v1.22.0: 群聊单轮重新生成——删掉指定半截回复，只重跑该角色一轮（SSE）
+  app.post('/api/conversations/:id/regenerate-turn', chatLimiter, ah(async (req, res) => {
+    const conv = getConv(req.params.id, req);
+    if (!conv) return conv404(res);
+    if (conv.type !== 'group') return res.status(400).json({ error: '仅群聊支持' });
+    const { message_id } = req.body || {};
+    const msg = db
+      .prepare('SELECT id, role, character_id FROM messages WHERE id = ? AND conversation_id = ?')
+      .get(message_id, conv.id);
+    if (!msg || msg.role !== 'assistant' || !msg.character_id) {
+      return res.status(400).json({ error: '找不到该角色回复' });
+    }
+    // 删掉半截
+    db.prepare('DELETE FROM messages WHERE id = ?').run(msg.id);
+
+    const cfg = getConfig();
+    // 凭证与计费（同 handleGroupMessage）
+    const creds = llmCreds(req, cfg, requestApiKey);
+    if (!creds.apiKey && !cfg.mockLlm) return res.status(401).json({ error: NO_KEY_MESSAGE });
+    const bill = resolveBilling(req, cfg, creds);
+    if (bill.error) return res.status(402).json({ error: bill.error });
+    const { chatModel, llmOpts } = bill;
+    const ac = new AbortController();
+    req.on('close', () => ac.abort());
+    llmOpts.signal = ac.signal;
+    const usePoints = bill.usePoints;
+    let pointsBalance = bill.balance;
+
+    const members = db
+      .prepare(
+        `SELECT ch.* FROM group_members gm JOIN characters ch ON ch.id = gm.character_id
+         WHERE gm.conversation_id = ? ORDER BY gm.joined_at ASC`
+      )
+      .all(conv.id);
+    const ch = members.find((m) => m.id === msg.character_id);
+    if (!ch) return res.status(400).json({ error: '角色不在群里' });
+    if (!canUseJailbreak(uidOf(req))) ch.jailbreak_preset = null;
+
+    const send = sseInit(res);
+    const kaMs = Math.max(50, parseInt(process.env.SSE_KEEPALIVE_MS || '20000', 10) || 20000);
+    const kaTimer = setInterval(() => {
+      if (!res.destroyed) { try { res.write(': ping\n\n'); } catch {} }
+    }, kaMs);
+
+    try {
+      const lastUser = db
+        .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1")
+        .get(conv.id);
+      const query = lastUser ? lastUser.content : '';
+      const batchId = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      const st = { ctxInfo: null, usageInput: 0, usageOutput: 0, pointsBalance };
+      const deps = { send, res, conv, cfg, bill, chatModel, llmOpts, usePoints, members, query, batchId };
+      const r = await streamGroupTurn(deps, ch, st, {});
+      if (!r) return; // 已通过 send('error') 通知前端
+      if (usePoints) send('points', { balance: st.pointsBalance });
+      send('done', { usage: { input: st.usageInput, output: st.usageOutput }, regenerated: true });
+      // 记忆流水线放后台，不阻塞 done
+      const bgOpts = { ...llmOpts, signal: undefined };
+      setImmediate(async () => {
+        try {
+          await runMemoryPipeline(ch, conv.id, query, {
+            ...bgOpts,
+            model: bill.workerModel,
+            userId: bill.userId || null,
+            onUsage: bgBill(bill, cfg, 'memory', bill.workerModel, (b) => { pointsBalance = b; }),
+          });
+        } catch (e) { console.warn('[bg] 群聊重生成记忆流水线失败:', e.message); }
+      });
+    } catch (e) {
+      send('error', { message: friendlyLlmError(e) });
+    } finally {
+      clearInterval(kaTimer);
+      res.end();
+    }
+  }));
+
   app.post('/api/conversations/:id/messages', chatLimiter, ah(async (req, res) => {
     const cfg = getConfig();
     const conv = getConv(req.params.id, req);
     if (!conv) return conv404(res);
     if (conv.type === 'group') return handleGroupMessage(req, res, conv, cfg);
-    const content = String((req.body && req.body.content) ?? '').trim();
-    if (!content) return res.status(400).json({ error: 'content 不能为空' });
+    // v1.22.0: 重新生成不重复落库用户消息——多次重新生成只保留一条用户输入
+    const isRegen = !!(req.body && req.body.regenerate);
+    let content;
+    if (isRegen) {
+      const lastUser = db
+        .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1")
+        .get(conv.id);
+      if (!lastUser || !String(lastUser.content || '').trim()) {
+        return res.status(400).json({ error: '找不到可重发的问题' });
+      }
+      content = lastUser.content;
+    } else {
+      content = String((req.body && req.body.content) ?? '').trim();
+      if (!content) return res.status(400).json({ error: 'content 不能为空' });
+    }
     const char = getChar(conv.character_id, req);
     // v1.18.1: 破限白名单——权限被收回后，已开破限的角色也不再注入
     if (char.jailbreak_preset && !canUseJailbreak(uidOf(req))) char.jailbreak_preset = null;
@@ -1706,13 +1826,16 @@ export function createApp() {
     };
 
     const t = now();
-    db.prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)').run(
-      conv.id,
-      'user',
-      content,
-      estimateTokens(content),
-      t
-    );
+    // v1.22.0: 重新生成时跳过用户消息落库（复用已有的最后一条用户消息）
+    if (!isRegen) {
+      db.prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)').run(
+        conv.id,
+        'user',
+        content,
+        estimateTokens(content),
+        t
+      );
+    }
 
     let title = conv.title;
     let titleAuto = false; // 首轮且用户没改过名：先规则标题，回复完再 AI 优化
