@@ -35,10 +35,10 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
   const [rpDirty, setRpDirty] = useState(false);
   const [rpSaving, setRpSaving] = useState(false);
   // v1.17.8: 破限模式年龄确认弹窗
+  // v1.17.9: 用破限专用 key（soulchat-jb-age-ok），与发现页分开：勾选破限必弹一次
   const [jbGateOpen, setJbGateOpen] = useState(false);
-  // 与发现页共用 soulchat-age-ok：已确认过的不再打扰
   const jbAgeOk = () => {
-    try { return localStorage.getItem('soulchat-age-ok') === '1'; } catch { return false; }
+    try { return localStorage.getItem('soulchat-jb-age-ok') === '1'; } catch { return false; }
   };
   const handleJbToggle = (e) => {
     const on = e.target.checked;
@@ -47,7 +47,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
     setRpDirty(true);
   };
   const confirmJbAge = () => {
-    try { localStorage.setItem('soulchat-age-ok', '1'); } catch { /* 忽略 */ }
+    try { localStorage.setItem('soulchat-jb-age-ok', '1'); } catch { /* 忽略 */ }
     setJbGateOpen(false);
     setJailbreakPreset((jbPresets[0] && jbPresets[0].key) || null);
     setRpDirty(true);
