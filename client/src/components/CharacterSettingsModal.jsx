@@ -20,7 +20,17 @@ const FILE_FIELD = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
 export default function CharacterSettingsModal({ characterId, onClose, onCharacterUpdated, onCharacterDeleted, showToast }) {
   // v1.18.1: 破限白名单——无权限用户看不到可用开关
   const { user, multiUser } = useAuth();
-  const jbAllowed = !multiUser || (user && user.jailbreak_allowed);
+  // v1.18.2: 每次打开角色设置都刷新权限（管理后台授权后不用刷新页面）
+  const [jbAllowedFresh, setJbAllowedFresh] = useState(null);
+  useEffect(() => {
+    if (!multiUser) return;
+    let cancelled = false;
+    api.getMe().then((d) => {
+      if (!cancelled && d && d.user) setJbAllowedFresh(!!d.user.jailbreak_allowed);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [characterId, multiUser]);
+  const jbAllowed = !multiUser || (jbAllowedFresh !== null ? jbAllowedFresh : !!(user && user.jailbreak_allowed));
   const [tab, setTab] = useState('chat');
   const [character, setCharacter] = useState(null);
   const [settings, setSettings] = useState({ name: '', avatar: '', temperature: 0.7 });

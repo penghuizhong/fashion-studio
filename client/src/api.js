@@ -233,6 +233,8 @@ export const api = {
   // v1.12 记忆写入事件（done 后轮询，做"记住了"轻提示）
   getMemoryEvents: (conversationId, since) =>
     get(`/api/conversations/${conversationId}/memory-events?since=${encodeURIComponent(since)}`),
+  // v1.18.2: 刷新当前登录用户信息（含 jailbreak_allowed；管理后台授权后免刷新生效）
+  getMe: () => get('/api/auth/me'),
 
   listConversations: (characterId) => get(`/api/characters/${characterId}/conversations`),
   createConversation: (characterId, data = {}) => post(`/api/characters/${characterId}/conversations`, data),
