@@ -1818,6 +1818,63 @@ async function runMulti() {
     );
   }
 
+  // M50. v1.18.0 对话标题 A+B：问候开场留占位；有意义首句截 18 字；PUT 改名；第二轮不覆盖自定义名
+  {
+    const jarT = makeJar(); // 独立用户（jarA 在前面的登出测试里已失效）
+    await req('POST', '/api/auth/register', { username: 'm50user', password: 'password123' }, { jar: jarT });
+    const chR = await req('POST', '/api/characters', { name: 'M50标题角色' }, { jar: jarT });
+    const chId = chR.json.id;
+    // 问候开场 → 标题留"新对话"占位（不等 AI，mock 下跳过 AI）
+    const c1 = await req('POST', `/api/characters/${chId}/conversations`, {}, { jar: jarT });
+    const s1 = await postSSE(`/api/conversations/${c1.json.id}/messages`, { content: '你好' }, { jar: jarT });
+    const done1 = s1.events.find((e) => e.event === 'done');
+    // 有意义首句 → 规则标题截 18 字
+    const c2 = await req('POST', `/api/characters/${chId}/conversations`, {}, { jar: jarT });
+    const msg2 = '今天天气真不错我们去公园散步吧然后晚上一起去吃火锅怎么样';
+    const s2 = await postSSE(`/api/conversations/${c2.json.id}/messages`, { content: msg2 }, { jar: jarT });
+    const done2 = s2.events.find((e) => e.event === 'done');
+    // 改名接口
+    const rn = await req('PUT', `/api/conversations/${c2.json.id}`, { title: '我的自定义名' }, { jar: jarT });
+    // 第二轮不覆盖自定义名
+    const s3 = await postSSE(`/api/conversations/${c2.json.id}/messages`, { content: '再聊一句' }, { jar: jarT });
+    const done3 = s3.events.find((e) => e.event === 'done');
+    ok(
+      'M50. 标题：问候留占位/有意义截18字/改名生效/第二轮不覆盖',
+      done1 && done1.data.title === '新对话' &&
+        done2 && done2.data.title === msg2.slice(0, 18) &&
+        rn.status === 200 && rn.json.title === '我的自定义名' &&
+        done3 && done3.data.title === '我的自定义名',
+      `t1=${done1 && done1.data.title} t2=${done2 && done2.data.title} t3=${done3 && done3.data.title} rn=${rn.status}`
+    );
+  }
+
+  // M50b. v1.18.0 genTitle：去引号、截断（fake 上游）
+  {
+    const http = await import('node:http');
+    for (const k of ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy']) delete process.env[k];
+    const { genTitle } = await import(`../src/llm.js?m50=${Date.now()}`);
+    const fake = http.createServer((rq, rs) => {
+      let buf = '';
+      rq.on('data', (c) => { buf += c; });
+      rq.on('end', () => {
+        rs.writeHead(200, { 'Content-Type': 'application/json' });
+        rs.end(JSON.stringify({ choices: [{ message: { content: '「公园散步计划」' } }] }));
+      });
+    });
+    await new Promise((r) => fake.listen(0, '127.0.0.1', r));
+    const port = fake.address().port;
+    const oldMock = process.env.MOCK_LLM;
+    process.env.MOCK_LLM = '';
+    let title = '';
+    try {
+      title = await genTitle({ userText: '去公园', asstText: '好啊', model: 'test/m', apiKey: 'sk-test', baseUrl: `http://127.0.0.1:${port}` });
+    } finally {
+      process.env.MOCK_LLM = oldMock;
+      fake.close();
+    }
+    ok('M50b. genTitle：去引号截断', title === '公园散步计划', `title=${title}`);
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
