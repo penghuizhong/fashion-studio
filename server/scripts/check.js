@@ -1411,7 +1411,7 @@ async function runMulti() {
     // 非法 key 被清洗为 null
     const setBad = await req('PUT', `/api/characters/${charA}`, { jailbreak_preset: 'no-such-preset' }, { jar: jarA41 });
     const got2 = await req('GET', `/api/characters/${charA}`, undefined, { jar: jarA41 });
-    // 注入逻辑：目标模型生效、非目标模型不注入、未启用不注入
+    // 注入逻辑（v1.17.12 起与模型解耦）：选用即注入、未启用不注入
     const { jailbreakPromptOf } = await import('../src/jailbreakPresets.js');
     const jbOnMatch = jailbreakPromptOf({ jailbreak_preset: 'deepseek-rp-light' }, 'deepseek/deepseek-v3.2');
     const jbOnMismatch = jailbreakPromptOf({ jailbreak_preset: 'deepseek-rp-light' }, 'sao10k/l3.3-euryale-70b');
@@ -1419,11 +1419,11 @@ async function runMulti() {
     // 恢复关闭
     await req('PUT', `/api/characters/${charA}`, { jailbreak_preset: null }, { jar: jarA41 });
     ok(
-      'M41. 破限预设：列表/选用/非法key清洗/模型匹配注入',
+      'M41. 破限预设：列表/选用/非法key清洗/选中即注入',
       presets.status === 200 && keys.includes('deepseek-rp-light') &&
         setJb.status === 200 && (got.json.jailbreak_preset === 'deepseek-rp-light') &&
         (got2.json.jailbreak_preset === null || got2.json.jailbreak_preset === undefined) &&
-        jbOnMatch.length > 0 && jbOnMismatch === '' && jbOff === '',
+        jbOnMatch.length > 0 && jbOnMismatch.length > 0 && jbOff === '',
       `presets=${presets.status} keys=${keys.join(',')} set=${setJb.status} got=${got.json.jailbreak_preset} bad=${got2.json.jailbreak_preset}`
     );
   }
@@ -1666,7 +1666,7 @@ async function runMulti() {
     const charOn = { roleplay_mode: 1, roleplay_prompt: '', jailbreak_preset: 'deepseek-rp-light' };
     const effRp0 = roleplayPromptOf(charOn);
     const effJb0 = jailbreakPromptOf(charOn, 'deepseek/deepseek-v3.2');
-    const effJbMismatch = jailbreakPromptOf(charOn, 'sao10k/l3.3-euryale-70b'); // 模型不匹配 → 空
+    const effJbMismatch = jailbreakPromptOf(charOn, 'sao10k/l3.3-euryale-70b'); // v1.17.12: 预设与模型解耦，任何模型都注入
 
     // 2. 管理员覆盖（经 API）
     const put1 = await req('PUT', '/api/admin/settings', {
@@ -1699,7 +1699,7 @@ async function runMulti() {
     ok(
       'M46. 提示词模板：默认/覆盖/角色优先/鉴权/清空恢复',
       defRp.length > 50 && defJb.includes('虚构') &&
-        effRp0 === defRp && effJb0 === defJb && effJbMismatch === '' &&
+        effRp0 === defRp && effJb0 === defJb && effJbMismatch === defJb &&
         put1.status === 200 &&
         get1.json.roleplay_template === '自定义扮演模板A' &&
         get1.json.roleplay_template_custom === true &&
@@ -1790,6 +1790,7 @@ async function runMulti() {
   }
 
   // M49. v1.17.11 Qwen 专用破限预设（deepseek-rp-light 保持原提示词）
+  // v1.17.12: 预设与模型解耦——选中即注入，不限聊天模型
   {
     const { JAILBREAK_PRESETS, jailbreakPresetList, jailbreakPresetPrompt, jailbreakPromptOf, jailbreakPresetAdminList } =
       await import('../src/jailbreakPresets.js');
@@ -1800,17 +1801,18 @@ async function runMulti() {
     const charQwen = { roleplay_mode: 0, roleplay_prompt: '', jailbreak_preset: 'qwen-rp' };
     const charDs = { roleplay_mode: 0, roleplay_prompt: '', jailbreak_preset: 'deepseek-rp-light' };
     ok(
-      'M49. 破限预设：DeepSeek 原词保留/Qwen 新预设/模型匹配隔离',
+      'M49. 破限预设：DeepSeek 原词保留/Qwen 新预设/选中即注入',
       list.length === 2 &&
         list.some((p) => p.key === 'deepseek-rp-light') &&
         list.some((p) => p.key === 'qwen-rp') &&
         dsPrompt.includes('不拒绝、不说教') && // DeepSeek 用回之前那个提示词
         qwenPrompt.includes('虚构文学创作') &&
         qwenPrompt.includes('角色锁定') &&
-        jailbreakPromptOf(charQwen, 'qwen/qwen3.7-plus') === qwenPrompt && // Qwen 模型命中
-        jailbreakPromptOf(charQwen, 'deepseek/deepseek-v3.2') === '' && // 模型不匹配不注入
+        jailbreakPromptOf(charQwen, 'qwen/qwen3.7-plus') === qwenPrompt &&
+        jailbreakPromptOf(charQwen, 'deepseek/deepseek-v3.2') === qwenPrompt && // 不限模型：选 Qwen 就注 Qwen
         jailbreakPromptOf(charDs, 'deepseek/deepseek-v3.2') === dsPrompt &&
-        jailbreakPromptOf(charDs, 'qwen/qwen3.7-plus') === '' &&
+        jailbreakPromptOf(charDs, 'qwen/qwen3.7-plus') === dsPrompt && // 选 DeepSeek 就注 DeepSeek
+        jailbreakPromptOf({ jailbreak_preset: null }, 'qwen/qwen3.7-plus') === '' && // 未选用不注入
         adminList.some((p) => p.key === 'qwen-rp' && (p.models || []).includes('qwen/qwen3.7-plus')),
       `presets=${list.map((p) => p.key).join(',')}`
     );
