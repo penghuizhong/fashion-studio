@@ -15,7 +15,26 @@ export default function App() {
   const { multiUser, user, authReady, logout } = useAuth();
   const [config, setConfig] = useState(null);
   const [characters, setCharacters] = useState([]);
-  const [view, setView] = useState({ type: 'empty' });
+  // v1.20.4: 刷新后回到上次的聊天（只记 chat；切到首页/发现页则清除）
+  const [view, setView] = useState(() => {
+    try {
+      const raw = localStorage.getItem('soulchat-last-view');
+      if (raw) {
+        const v = JSON.parse(raw);
+        if (v && v.type === 'chat' && v.conversationId) return v;
+      }
+    } catch {}
+    return { type: 'empty' };
+  });
+  useEffect(() => {
+    try {
+      if (view.type === 'chat' && view.conversationId) {
+        localStorage.setItem('soulchat-last-view', JSON.stringify(view));
+      } else {
+        localStorage.removeItem('soulchat-last-view');
+      }
+    } catch {}
+  }, [view]);
   const [toast, setToast] = useState(null);
   const [convRefresh, setConvRefresh] = useState(0);
   // 设置弹窗：{ open, tab }
