@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS group_members(
   joined_at TEXT,
   PRIMARY KEY (conversation_id, character_id)
 );
+-- v1.21.0: 群聊每角色已读水位（增量历史注入）
+CREATE TABLE IF NOT EXISTS group_read_marks(
+  conversation_id TEXT NOT NULL,
+  character_id TEXT NOT NULL,
+  upto_message_id INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (conversation_id, character_id)
+);
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id);
 CREATE INDEX IF NOT EXISTS idx_conv_char ON conversations(character_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_group_members_conv ON group_members(conversation_id);
@@ -230,6 +237,8 @@ export function getDb() {
     if (!convCols.includes('type')) _db.exec("ALTER TABLE conversations ADD COLUMN type TEXT DEFAULT 'single'");
     const msgCols = _db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
     if (!msgCols.includes('character_id')) _db.exec('ALTER TABLE messages ADD COLUMN character_id TEXT DEFAULT NULL');
+    // v1.21.0: 群聊整轮 batch_id（老库自动补列）
+    if (!msgCols.includes('batch_id')) _db.exec('ALTER TABLE messages ADD COLUMN batch_id TEXT DEFAULT NULL');
     // 多用户数据隔离：characters / conversations / conversation_summaries 加 user_id（允许 NULL，老数据保持 NULL）
     // group_members 经 conversation 关联，messages/file_versions 经 character/conversation 关联，不加列
     for (const t of ['characters', 'conversations', 'conversation_summaries']) {

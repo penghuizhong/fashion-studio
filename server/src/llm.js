@@ -1,4 +1,5 @@
 import { getConfig} from './config.js';
+import { oneLineDesc } from './memory.js';
 import { ProxyAgent } from 'undici';
 import { isIP } from 'node:net';
 import { thinkingParams, detectProvider } from './providers.js';
@@ -328,7 +329,7 @@ const shuffled = [...members].sort(() => Math.random() - 0.5);
 const memberDesc = shuffled
 .map((m) => {
 const tag = m.id === lastSpeakerId ? '【上轮由TA先发言，注意轮换】' : '';
-return `- ${m.name}（id:${m.id}）${tag}：${String(m.soul_md || '').slice(0, 160).replace(/\n/g, ' ')}`;
+return `- ${m.name}（id:${m.id}）${tag}：${oneLineDesc(m.soul_md) || '（暂无介绍）'}`;
 })
 .join('\n');
 const histText = history.map((h) => `${h.speaker}: ${h.content}`).join('\n').slice(-3000);

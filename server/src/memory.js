@@ -99,6 +99,19 @@ export function findMentionedIds(text, members, excludeIds = []) {
 }
 
 
+// v1.21.0: 一句话人设——取 soul_md 首个有实质内容的行，去 # 前缀，截 60 字（群成员列表/导演输入用）
+// 纯标题行（如 "# 身份"）跳过，取其后的正文行
+export function oneLineDesc(soulMd) {
+const lines = String(soulMd || '').split('\n').map((s) => s.trim()).filter(Boolean);
+for (const line of lines) {
+const t = line.replace(/^#+\s*/, '');
+if (/^#/.test(line) && t.length <= 6) continue;
+if (t) return t.slice(0, 60);
+}
+return '';
+}
+
+
 // 防幻觉系统指令，{name} 会被替换为角色名
 export const ANTI_HALLU = `你是 {name}。回答时只依据以及本次对话中的事实。
 规则：
@@ -139,9 +152,14 @@ sysParts.push(`# 更早对话摘要（按时间从旧到新）\n${s.summary}`);
 }
 const systemContent = sysParts.join('\n\n');
 
+// v1.21.0: 排除已摘要的消息——摘要管老的，原文只取没摘要过的（防摘要+原文双份浪费 token）
+const uptoRow = db
+.prepare('SELECT MAX(message_upto) AS upto FROM conversation_summaries WHERE conversation_id = ?')
+.get(conversationId);
+const upto = (uptoRow && uptoRow.upto) || 0;
 const raw = db
-.prepare('SELECT role, content FROM messages WHERE conversation_id =? ORDER BY id DESC LIMIT 40')
-.all(conversationId)
+.prepare('SELECT role, content FROM messages WHERE conversation_id = ? AND id > ? ORDER BY id DESC LIMIT 40')
+.all(conversationId, upto)
 .reverse();
 
 const tokensOf = (m) => estimateTokens(m.content) + 4; // +4 预留 role 等开销
@@ -175,8 +193,8 @@ content: r.content,
 }));
 }
 
-// 群聊上下文：共享历史（带说话人标签）只组装一次；
-// 返回 buildFor(character) 按角色拼出完整 apiMessages（各角色 soul/user/检索记忆不同）
+// 群聊上下文：摘要 + 增量历史（各角色只看自己没见过的新消息）；
+// 返回 buildFor(character) 按角色拼出完整 apiMessages（各角色 soul/user/检索记忆/role 映射不同）
 // query：本轮用户消息，用于检索相关记忆事实；不传则取本轮最新用户消息
 export function buildGroupContext(members, conversationId, query, modelId) {
 const cfg = getConfig();
@@ -189,30 +207,51 @@ const summaries = db
 .reverse();
 const summaryText = summaries.map((s) => `# 更早对话摘要（按时间从旧到新）\n${s.summary}`).join('\n\n');
 
-const rows = db
-.prepare(
-`SELECT m.role, m.content, m.character_id, ch.name AS character_name
- FROM messages m LEFT JOIN characters ch ON ch.id = m.character_id
- WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT 40`
-)
-.all(conversationId)
-.reverse();
+// v1.21.0: 摘要水位——摘要管老的，原文不再取已摘要的（防双份）
+const uptoRow = db
+.prepare('SELECT MAX(message_upto) AS upto FROM conversation_summaries WHERE conversation_id = ?')
+.get(conversationId);
+const summaryUpto = (uptoRow && uptoRow.upto) || 0;
+
+// v1.21.0: 每角色已读水位（增量历史注入，抄 OpenClaw pending-only）
+const markRows = db
+.prepare('SELECT character_id, upto_message_id FROM group_read_marks WHERE conversation_id = ?')
+.all(conversationId);
+const markByChar = new Map(markRows.map((r) => [r.character_id, r.upto_message_id]));
+
 const byId = {};
 for (const m of members) byId[m.id] = m;
-let history = rows.map((r) => ({
-role: 'user',
-content: `${r.role === 'user' ? '用户' : r.character_name || (byId[r.character_id] && byId[r.character_id].name) || '某人'}：${r.content}`,
-}));
-
-// token 预算：历史只裁一次，预留 2000 给各角色 system
-const tokensOf = (m) => estimateTokens(m.content) + 4;
-let usedHist = history.reduce((a, m) => a + tokensOf(m), 0);
-while (usedHist > budget - 2000 && history.length > 2) {
-const dropped = history.splice(0, Math.min(2, history.length));
-usedHist -= dropped.reduce((a, m) => a + tokensOf(m), 0);
-}
+const HIST_SQL = (lim) =>
+`SELECT m.id, m.role, m.content, m.character_id, ch.name AS character_name
+ FROM messages m LEFT JOIN characters ch ON ch.id = m.character_id
+ WHERE m.conversation_id = ? AND m.id > ? ORDER BY m.id DESC LIMIT ${lim}`;
 
 const buildFor = (character) => {
+// 有水位：只取该角色没见过的新消息；无水位（新群/老数据）：回退摘要+最近 15 条
+const mark = markByChar.get(character.id);
+let rows;
+if (mark != null) {
+rows = db.prepare(HIST_SQL(200)).all(conversationId, Math.max(mark, summaryUpto)).reverse();
+} else {
+rows = db.prepare(HIST_SQL(15)).all(conversationId, summaryUpto).reverse();
+}
+// 兜底：水位已是最新时至少给最近 3 条（仍排除已摘要），保证模型不盲飞
+if (!rows.length) {
+rows = db.prepare(
+`SELECT m.id, m.role, m.content, m.character_id, ch.name AS character_name
+ FROM messages m LEFT JOIN characters ch ON ch.id = m.character_id
+ WHERE m.conversation_id = ? AND m.id > ? ORDER BY m.id DESC LIMIT 3`
+).all(conversationId, summaryUpto).reverse();
+}
+
+// token 预算：历史只裁一次（从旧往新丢，至少留 2 条），预留 2000 给各角色 system
+const tokensOf = (r) => estimateTokens(r.content) + 8;
+let usedHist = rows.reduce((a, r) => a + tokensOf(r), 0);
+while (usedHist > budget - 2000 && rows.length > 2) {
+const dropped = rows.splice(0, Math.min(2, rows.length));
+usedHist -= dropped.reduce((a, r) => a + tokensOf(r), 0);
+}
+
 const sysParts = [
 ANTI_HALLU.replaceAll('{name}', character.name || ''),
 `# 你正在一个群聊里。下面是你的角色设定，群聊消息格式为「说话人：内容」。只以${character.name || '你'}的身份发言，不要冒充别人。`,
@@ -221,6 +260,11 @@ ANTI_HALLU.replaceAll('{name}', character.name || ''),
 // v1.20.5: 档案为空时不注入，省 token
 ...(character.user_md && character.user_md.trim() ? [`# 关于用户\n${character.user_md}`] : []),
 ];
+// v1.21.0: 群成员一句话人设——让模型知道还有谁在场（抄 Agnai）
+const otherLines = members
+.filter((m) => m.id !== character.id)
+.map((m) => `- ${m.name}：${oneLineDesc(m.soul_md) || '（暂无介绍）'}`);
+if (otherLines.length) sysParts.push(`# 群成员\n${otherLines.join('\n')}`);
 const rpGroup = roleplayPromptOf(character);
 if (rpGroup) sysParts.push(`# 回复格式要求\n${rpGroup}`);
 // v1.17.0: 破限预设插件化（放末尾，离生成位置最近）
@@ -231,11 +275,23 @@ if (gfacts.length) sysParts.push(`# 相关记忆\n${gfacts.map((f) => `- ${f.fac
 if (summaryText) sysParts.push(summaryText);
 const systemContent = sysParts.join('\n\n');
 const apiMessages = [{ role: 'system', content: systemContent }];
-for (const m of history) apiMessages.push({ role: m.role, content: m.content });
+// v1.21.0: OpenAI 结构化——自己说过的话标 assistant + name，其余标 user + name；
+// name 取 m_<character_id>（兼容 ^[a-zA-Z0-9_]{1,64}$）；「名字：」前缀保留双保险
+for (const r of rows) {
+const isUser = r.role === 'user';
+const chId = r.character_id;
+const dispName = isUser ? '用户' : r.character_name || (byId[chId] && byId[chId].name) || '某人';
+const safeName = isUser ? 'user' : 'm_' + String(chId || 'x').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 60);
+if (!isUser && chId && chId === character.id) {
+apiMessages.push({ role: 'assistant', name: safeName, content: r.content });
+} else {
+apiMessages.push({ role: 'user', name: safeName, content: `${dispName}：${r.content}` });
+}
+}
 return { apiMessages, usedTokens: estimateTokens(systemContent) + usedHist, budget };
 };
 
-return { buildFor, usedTokens: usedHist, budget };
+return { buildFor, budget };
 }
 
 // 摘要旧消息：未摘要消息 ≥20 条时，取最早 20 条生成一条摘要
