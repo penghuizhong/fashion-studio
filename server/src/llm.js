@@ -258,6 +258,8 @@ let full = '';
 let usage = null;
 // v1.17.1: 捕获 finish_reason，识别上游内容过滤（content_filter）导致的半截输出
 let finishReason = null;
+// v1.25.6: 流停滞标记——上游 25s 无数据时置 true，调用方按截断处理
+let stalled = false;
 const handleLine = (line) => {
 const t = line.trim();
 if (!t.startsWith('data:')) return;
@@ -285,7 +287,23 @@ onToken(delta);
 };
 for (;;) {
 if (signal && signal.aborted) { reader.cancel().catch(() => {}); break; }
-const { done, value} = await reader.read();
+// v1.25.6: 流停滞检测——25 秒收不到任何数据则主动断开，避免上游假死导致前后端一起卡住
+// （根因：此前只有 120s 整请求超时，卡住时用户要盯着冻住的半截文本等 2 分钟）
+let readResult;
+try {
+  readResult = await Promise.race([
+    reader.read(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('STREAM_STALLED')), 25000)),
+  ]);
+} catch (e) {
+  if (e && e.message === 'STREAM_STALLED') {
+    reader.cancel().catch(() => {});
+    stalled = true;
+    break;
+  }
+  throw e;
+}
+const { done, value } = readResult;
 if (done) break;
 buf += decoder.decode(value, { stream: true});
 const lines = buf.split('\n');
@@ -293,7 +311,7 @@ buf = lines.pop();
 for (const l of lines) handleLine(l);
 }
 if (buf.trim()) handleLine(buf);
-return { text: full, usage, finishReason };
+return { text: full, usage, finishReason, stalled };
 }
 
 async function mockChatStream({ messages, onToken}) {
