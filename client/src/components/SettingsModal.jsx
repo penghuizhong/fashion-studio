@@ -1298,7 +1298,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                     </div>
                   )}
                   <div className="card-title" style={{ marginTop: 16 }}>语音模型</div>
-                  <p className="key-desc small">TTS/ASR/音色设计走 DashScope，不选 = 用默认模型。</p>
+                  <p className="key-desc small">TTS/ASR/音色设计走 DashScope，不选 = 用默认模型。DashScope 无公开模型列表，「查看可用模型」展示的是内置清单（非实时）。</p>
                   {/* v1.26.3: 输入框右置拉取按钮，可下拉选择 */}
                   <label>
                     TTS 模型（语音合成）
@@ -1313,7 +1313,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                         />
                       </div>
                       <button className="btn secondary small" onClick={fetchVoiceCatalog} style={{ whiteSpace: 'nowrap' }}>
-                        拉取可用模型
+                        查看可用模型
                       </button>
                     </div>
                   </label>
@@ -1330,7 +1330,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                         />
                       </div>
                       <button className="btn secondary small" onClick={fetchVoiceCatalog} style={{ whiteSpace: 'nowrap' }}>
-                        拉取可用模型
+                        查看可用模型
                       </button>
                     </div>
                   </label>
@@ -1356,7 +1356,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                         />
                       </div>
                       <button className="btn secondary small" onClick={fetchVoiceCatalog} style={{ whiteSpace: 'nowrap' }}>
-                        拉取可用模型
+                        查看可用模型
                       </button>
                     </div>
                   </label>
