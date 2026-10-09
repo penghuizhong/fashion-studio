@@ -1,4 +1,4 @@
-name: Build and deploy
+name: Test and deploy
 
 on:
   push:
@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   test:
@@ -31,39 +30,8 @@ jobs:
           npm ci
           npm run build
 
-  build:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build client
-        working-directory: client
-        run: |
-          npm ci
-          npm run build
-      - name: Extract version
-        id: version
-        run: echo "version=$(node -p "require('./server/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: |
-            ghcr.io/penghuizhong/soulchat:latest
-            ghcr.io/penghuizhong/soulchat:v${{ steps.version.outputs.version }}
-            ghcr.io/penghuizhong/soulchat:${{ github.sha }}
-
   deploy:
-    needs: build
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS
@@ -75,8 +43,10 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd /opt/soulchat-app
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
             cd server && npm ci --omit=dev
             cd ../client && npm ci && npm run build
-            pm2 restart soulchat
-
+            systemctl restart soulchat
+            sleep 3
+            curl -sf http://127.0.0.1:3001/api/config | head -c 200
