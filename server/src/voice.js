@@ -1,18 +1,35 @@
 // v1.26.0: 语音功能——DashScope ASR/TTS 客户端 + VoiceProvider 抽象
+// v1.26.1: 模型改为从 sys_settings 读取（管理员可在模型管理 tab 配置）
 import { getConfig } from './config.js';
+import { getSetting } from './db.js';
 
 const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com';
 
-// 语音模型配置
+// 语音模型配置（默认值；管理员可在模型管理 tab 覆盖）
 export const VOICE_MODELS = {
   asr: {
     flash: 'qwen-audio-3.0-asr-flash',
   },
   tts: {
-    flash: 'qwen3-tts-flash', // 便宜档，0.8元/万字符
-    plus: 'qwen-audio-3.0-tts-plus', // 高质量档，~1.5元/万字符
+    flash: 'qwen3-tts-flash',
+    plus: 'qwen-audio-3.0-tts-plus',
   },
+  design: 'qwen3-tts-vd-2026-01-26',
 };
+
+// 获取实际使用的模型（配置优先，其次默认）
+export function getVoiceModel(type) {
+  // type: 'tts' | 'asr' | 'design'
+  const key = `voice_${type}_model`;
+  try {
+    const v = getSetting(key, '');
+    if (v && v.trim()) return v.trim();
+  } catch {}
+  if (type === 'tts') return VOICE_MODELS.tts.plus;
+  if (type === 'asr') return VOICE_MODELS.asr.flash;
+  if (type === 'design') return VOICE_MODELS.design;
+  return '';
+}
 
 // VoiceProvider 抽象：主供应商 DashScope，预留降级接口
 class DashScopeVoiceProvider {
@@ -23,7 +40,9 @@ class DashScopeVoiceProvider {
 
   // ASR: 音频 Buffer → 文字
   // audioBuffer: Buffer, mimeType: 如 'audio/webm'
-  async asr(audioBuffer, { model = VOICE_MODELS.asr.flash, language = 'zh' } = {}) {
+  async asr(audioBuffer, { model = null, language = 'zh' } = {}) {
+    // v1.26.1: 模型从配置读取
+    const useModel = model || getVoiceModel('asr');
     const cfg = getConfig();
     if (cfg.mockLlm) return { text: '（mock 语音识别）', duration: 0 };
 
@@ -34,7 +53,7 @@ class DashScopeVoiceProvider {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: this._buildFormData(audioBuffer, model, language),
+      body: this._buildFormData(audioBuffer, useModel, language),
     });
     if (!res.ok) {
       const t = await res.text().catch(() => '');
@@ -58,7 +77,9 @@ class DashScopeVoiceProvider {
 
   // TTS: 文字 → 音频 Buffer (mp3)
   // 返回 { audio: Buffer, chars: 计费字符数 }
-  async tts(text, { model = VOICE_MODELS.tts.plus, voice = 'Cherry', speed = 1.0 } = {}) {
+  async tts(text, { model = null, voice = 'Cherry', speed = 1.0 } = {}) {
+    // v1.26.1: 模型从配置读取
+    const useModel = model || getVoiceModel('tts');
     const cfg = getConfig();
     if (cfg.mockLlm) return { audio: Buffer.from('mock'), chars: text.length };
 
@@ -69,7 +90,7 @@ class DashScopeVoiceProvider {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model,
+        model: useModel,
         input: text,
         voice,
         speed,
@@ -102,7 +123,7 @@ class DashScopeVoiceProvider {
       },
       body: JSON.stringify({
         model: 'qwen-voice-design',
-        target_model: 'qwen3-tts-vd-2026-01-26',
+        target_model: getVoiceModel('design'), // v1.26.1: 从配置读取
         action: 'create',
         voice_prompt: prompt,
         preview_text: previewText,
