@@ -254,7 +254,7 @@ usedHist -= dropped.reduce((a, r) => a + tokensOf(r), 0);
 
 const sysParts = [
 ANTI_HALLU.replaceAll('{name}', character.name || ''),
-`# 你正在一个群聊里。下面是你的角色设定，群聊消息格式为「说话人：内容」。只以${character.name || '你'}的身份发言，不要冒充别人。`,
+`# 你正在和几个人一起对话。下面是你的角色设定，对话消息格式为「说话人：内容」。只以${character.name || '你'}的身份发言，不要冒充别人。`,
 `# 当前时间\n${nowBeijingStr()}`,
 `# 角色设定\n${character.soul_md || ''}`,
 // v1.20.5: 档案为空时不注入，省 token
