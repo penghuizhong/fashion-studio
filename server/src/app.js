@@ -1434,7 +1434,7 @@ export function createApp() {
             },
           })
         );
-        return { text, usage: r.usage, finishReason: r.finishReason };
+        return { text, usage: r.usage, finishReason: r.finishReason, stalled: r.stalled };
       };
       let gr = await doGroupStream(chatModel);
       if (gr.finishReason === 'content_filter' && usePoints) {
@@ -1942,7 +1942,7 @@ export function createApp() {
             },
           })
         );
-        return { text, usage: r.usage, finishReason: r.finishReason };
+        return { text, usage: r.usage, finishReason: r.finishReason, stalled: r.stalled };
       };
       let r = await doStream(chatModel);
       if (r.finishReason === 'content_filter' && usePoints) {
