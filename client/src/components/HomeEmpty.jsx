@@ -54,8 +54,8 @@ export default function HomeEmpty({
       const r = await api.adoptCharacterCard(
         presetId ? { preset_id: presetId } : { card, saved_id: savedId || undefined }
       );
-      showToast(`已领养 ${r.character.name} 🎉`);
-      if (r.collection_reward > 0) showToast(`🎉 集齐官方角色卡！+${r.collection_reward} 积分`, 3500);
+      showToast(`已领养 ${r.character.name}`);
+      if (r.collection_reward > 0) showToast(`集齐官方角色卡！+${r.collection_reward} 积分`, 3500);
       onAdopted(r.character.id, r.conversation.id);
     } catch (e) {
       showToast((e && e.message) || '领养失败');
@@ -103,7 +103,7 @@ export default function HomeEmpty({
     <div className="home-empty">
       <header className="home-topbar">
         <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
-          ☰
+          <Icon name="menu" size={22} />
         </button>
         <span className="home-logo">SoulChat</span>
       </header>
@@ -158,10 +158,12 @@ export default function HomeEmpty({
           </button>
         )}
 
-        {/* v1.25.4: 群聊入口 */}
+        {/* v1.25.4: 群聊入口（头像拼图风格） */}
         <button className="wall-collage-strip" onClick={openGroupModal}>
           <span className="collage-row">
-            <span className="group-entry-icon">👥</span>
+            {(wallCards.slice(0, 4).length >= 4 ? wallCards.slice(0, 4) : collageCards.slice(0, 4)).map((c) => (
+              <Avatar key={c.id} src={c.avatar} size={32} />
+            ))}
           </span>
           <span className="collage-label">群聊 · 多角色同场，@点名互动</span>
           <Icon name="chevronRight" size={16} />
@@ -226,7 +228,7 @@ export default function HomeEmpty({
             disabled={generating || !prompt.trim()}
             title="生成角色"
           >
-            {generating ? <span className="spin">⏳</span> : '✨'}
+            {generating ? <span className="spin">⏳</span> : <Icon name="sparkles" size={18} />}
           </button>
         </div>
         <p className="home-gen-hint">
@@ -239,6 +241,10 @@ export default function HomeEmpty({
           characters={characters || []}
           onClose={() => setGroupModalOpen(false)}
           onCreated={onGroupCreated}
+          onCreateCharacter={() => {
+            setGroupModalOpen(false);
+            onOpenSidebar();
+          }}
           showToast={showToast}
         />
       )}

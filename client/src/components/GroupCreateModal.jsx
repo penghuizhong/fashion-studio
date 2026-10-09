@@ -1,13 +1,16 @@
 // v1.25.4: 建群弹窗抽成共用组件（侧边栏 + 首页共用）
+// v1.25.5: 角色不足 2 个时引导先去新建角色
 import { useState } from 'react';
 import { api } from '../api.js';
 import Modal from './Modal.jsx';
 import Avatar from './Avatar.jsx';
+import Icon from './icons.jsx';
 
-export default function GroupCreateModal({ characters, onClose, onCreated, showToast }) {
+export default function GroupCreateModal({ characters, onClose, onCreated, onCreateCharacter, showToast }) {
   const [name, setName] = useState('');
   const [memberIds, setMemberIds] = useState([]);
   const [creating, setCreating] = useState(false);
+  const needMore = Math.max(0, 2 - characters.length);
 
   const toggleMember = (id) => {
     setMemberIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
@@ -52,7 +55,21 @@ export default function GroupCreateModal({ characters, onClose, onCreated, showT
       </label>
       <div className="member-picker">
         <div className="member-picker-title">选择成员（至少 2 个）</div>
-        {characters.length === 0 && <div className="versions-empty">还没有角色，先去新建角色</div>}
+        {needMore > 0 && (
+          <div className="group-need-chars">
+            <Icon name="alert" size={16} />
+            <span>
+              {characters.length === 0
+                ? '你还没有角色，先新建 2 个角色才能建群'
+                : '再新建 1 个角色就能建群了'}
+            </span>
+            {onCreateCharacter && (
+              <button className="btn primary small" onClick={onCreateCharacter}>
+                去新建角色
+              </button>
+            )}
+          </div>
+        )}
         {characters.map((c) => (
           <label key={c.id} className="member-option">
             <input type="checkbox" checked={memberIds.includes(c.id)} onChange={() => toggleMember(c.id)} />
