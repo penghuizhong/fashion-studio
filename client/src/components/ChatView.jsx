@@ -53,6 +53,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   const scrollRef = useRef(null);
   const abortRef = useRef(null);
   const memPollRef = useRef(null); // v1.12 记忆事件轮询定时器
+  const batchIdRef = useRef(null); // v1.22.2 群聊整轮 batch_id（断流补 truncated 用）
+  const doneCidsRef = useRef(new Set()); // v1.22.2 收到 turn_done 的角色（断流时区分半截）
 
   useEffect(() => {
     let cancelled = false;
@@ -212,6 +214,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     setTyping(null);
     setErrorMsg(null);
     setContextInfo(null);
+    batchIdRef.current = null; // v1.22.2
+    doneCidsRef.current = new Set(); // v1.22.2
     let acc = '';
     const accByChar = {};
     const controller = new AbortController();
@@ -237,6 +241,9 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           } else if (ev === 'turn_start') {
             const cid = data && data.character_id;
             accByChar[cid] = '';
+            // v1.22.2: 记 batch_id + 已完成集合——断流时给没收到 turn_done 的半截补 truncated 消息
+            if (data && data.batch_id) batchIdRef.current = data.batch_id;
+            if (cid) doneCidsRef.current.delete(cid);
             setTyping({ character_id: cid, character_name: (data && data.character_name) || '某人' });
             setGroupStreams((s) => ({ ...s, [cid]: '' }));
           } else if (ev === 'token') {
@@ -252,6 +259,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           } else if (ev === 'turn_done') {
             const cid = data && data.character_id;
             const finalText = accByChar[cid] || '';
+            if (cid) doneCidsRef.current.add(cid); // v1.22.2 断流区分用
             setGroupStreams((s) => {
               const next = { ...s };
               delete next[cid];
@@ -322,6 +330,38 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         // v1.17.4: fetch 网络失败（iOS 抛 TypeError: Load failed）转中文，不显示英文原串
         else if (err instanceof TypeError) setErrorMsg('网络连接中断，请检查网络后重试');
         else setErrorMsg(err.message || '网络错误');
+        // v1.22.2: 群聊断流时，没收到 turn_done 的角色半截文本转成 truncated 消息，给重新生成按钮
+        if (isGroup) {
+          const batchId = batchIdRef.current;
+          const incomplete = Object.entries(accByChar).filter(
+            ([cid, text]) => text && text.trim() && !doneCidsRef.current.has(cid)
+          );
+          if (incomplete.length) {
+            setMessages((m) => [
+              ...m,
+              ...incomplete.map(([cid, text]) => {
+                const mem = memberOf(cid);
+                return {
+                  id: `tmp-trunc-${cid}-${Date.now()}`,
+                  role: 'assistant',
+                  character_id: cid,
+                  character_name: (mem && mem.name) || '某人',
+                  character_avatar: (mem && mem.avatar) || '✨',
+                  content: text,
+                  created_at: new Date().toISOString(),
+                  truncated: true,
+                  // 无 message_id——重新生成时按角色+batch 定位后端半截
+                  batchRegen: batchId ? { character_id: cid, batch_id: batchId } : null,
+                };
+              }),
+            ]);
+            setGroupStreams((s) => {
+              const next = { ...s };
+              for (const [cid] of incomplete) delete next[cid];
+              return next;
+            });
+          }
+        }
       }
     } finally {
       setSending(false);
@@ -383,9 +423,11 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   };
 
   // v1.22.0: 群聊单轮重新生成——删掉指定半截回复，只重跑该角色一轮
+  // v1.22.2: 断流补的 truncated 消息无 message_id，改按 character_id+batch_id 定位后端半截
   const regenerateGroupTurn = async (msg) => {
     if (sending || regenerating || !isGroup) return;
     if (!msg || msg.role !== 'assistant' || !msg.character_id) return;
+    const locator = msg.batchRegen || { message_id: msg.id };
     setRegenerating(true);
     setErrorMsg(null);
     // 先从界面上拿掉半截消息
@@ -394,11 +436,19 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     setGroupStreams((s) => ({ ...s, [cid]: '' }));
     const controller = new AbortController();
     abortRef.current = controller;
+    // v1.22.2: 重新生成断流时也补 truncated（按新 batch 定位）
+    let regenBatchId = null;
+    let regenText = '';
+    let regenDone = false;
     try {
-      await api.regenerateGroupTurn(conversationId, msg.id, (ev, data) => {
-        if (ev === 'token' && data && data.character_id === cid) {
+      await api.regenerateGroupTurn(conversationId, locator, (ev, data) => {
+        if (ev === 'turn_start' && data && data.batch_id) {
+          regenBatchId = data.batch_id;
+        } else if (ev === 'token' && data && data.character_id === cid) {
+          regenText += data.text || '';
           setGroupStreams((s) => ({ ...s, [cid]: (s[cid] || '') + (data.text || '') }));
         } else if (ev === 'turn_done' && data && data.character_id === cid) {
+          regenDone = true;
           const finalText = data.content || '';
           setGroupStreams((s) => {
             const next = { ...s };
@@ -433,8 +483,28 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
       }, controller.signal);
     } catch (err) {
       if (err.name !== 'AbortError') {
-        showToast(err.message || '重新生成失败');
-        setMessages((m) => [...m, msg]);
+        // v1.22.2: 重新生成也断流→半截转 truncated（按新 batch 定位），无半截才放回原消息
+        if (regenText.trim() && !regenDone) {
+          const mem = memberOf(cid);
+          showToast(err.message || '重新生成中断，可再试一次');
+          setMessages((m) => [
+            ...m,
+            {
+              id: `tmp-trunc-${cid}-${Date.now()}`,
+              role: 'assistant',
+              character_id: cid,
+              character_name: (mem && mem.name) || msg.character_name || '某人',
+              character_avatar: (mem && mem.avatar) || msg.character_avatar || '✨',
+              content: regenText,
+              created_at: new Date().toISOString(),
+              truncated: true,
+              batchRegen: regenBatchId ? { character_id: cid, batch_id: regenBatchId } : null,
+            },
+          ]);
+        } else {
+          showToast(err.message || '重新生成失败');
+          setMessages((m) => [...m, msg]);
+        }
       }
       setGroupStreams((s) => {
         const next = { ...s };
