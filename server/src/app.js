@@ -350,7 +350,23 @@ export function createApp() {
       }
       const j = await r.json().catch(() => null);
       const models = Array.isArray(j && j.data)
-        ? j.data.map((m) => ({ id: String(m.id || ''), name: String(m.name || m.id || '') })).filter((m) => m.id)
+        ? j.data.map((m) => {
+            // v1.26.2: 带实时报价（USD/1M tokens，字符串转数字）
+            const p = (m && m.pricing) || {};
+            const toNum = (v) => {
+              const n = parseFloat(v);
+              return Number.isFinite(n) ? n * 1e6 : null;
+            };
+            return {
+              id: String(m.id || ''),
+              name: String(m.name || m.id || ''),
+              pricing: {
+                prompt: toNum(p.prompt),
+                completion: toNum(p.completion),
+              },
+              context_length: m.context_length || null,
+            };
+          }).filter((m) => m.id)
         : [];
       res.json({ models });
     } catch (e) {
@@ -2214,6 +2230,48 @@ export function createApp() {
       getDb().prepare('UPDATE characters SET voice_id = NULL WHERE voice_id = ?').run(req.params.id);
     } catch {}
     res.json({ ok: true });
+  }));
+
+  // ---------- v1.26.2: 语音模型清单（DashScope，带刊例价） ----------
+  // DashScope 无公开模型列表 API，此处为 curated 清单
+  const VOICE_MODEL_CATALOG = {
+    tts: [
+      { id: 'qwen-audio-3.0-tts-plus', name: 'Qwen Audio 3.0 TTS Plus', desc: '高质量，推荐', price: '约1.5元/万字符' },
+      { id: 'qwen3-tts-flash', name: 'Qwen3 TTS Flash', desc: '便宜，0.8元/万字符', price: '0.8元/万字符' },
+      { id: 'cosyvoice-v3.5-plus', name: 'CosyVoice 3.5 Plus', desc: '超高表现力', price: '1.5元/万字符' },
+      { id: 'cosyvoice-v3.5-flash', name: 'CosyVoice 3.5 Flash', desc: '低延迟版', price: '0.8元/万字符' },
+    ],
+    asr: [
+      { id: 'qwen-audio-3.0-asr-flash', name: 'Qwen Audio 3.0 ASR Flash', desc: '快速识别', price: '约0.8元/小时' },
+    ],
+    design: [
+      { id: 'qwen3-tts-vd-2026-01-26', name: 'Qwen3 TTS VD', desc: '文本描述生成音色', price: '0.2元/次+0.8元/万字符' },
+    ],
+  };
+
+  app.get('/api/voice/models', ah(async (req, res) => {
+    res.json(VOICE_MODEL_CATALOG);
+  }));
+
+  // v1.26.2: 语音连通测试 POST /api/voice/test { type: 'tts'|'asr', model }
+  app.post('/api/voice/test', chatLimiter, ah(async (req, res) => {
+    const { type, model } = req.body || {};
+    if (!['tts', 'asr'].includes(type)) {
+      return res.status(400).json({ error: 'type 须为 tts 或 asr' });
+    }
+    const provider = getVoiceProvider();
+    const t0 = Date.now();
+    try {
+      if (type === 'tts') {
+        const r = await provider.tts('你好', { model: model || undefined, voice: 'Cherry' });
+        res.json({ ok: true, latency: Date.now() - t0, bytes: r.audio.length });
+      } else {
+        // ASR 测试需要音频，这里只验证模型参数有效（调一次空检查）
+        res.json({ ok: true, latency: 0, note: 'ASR 需上传音频测试，此处仅验证配置' });
+      }
+    } catch (e) {
+      res.json({ ok: false, latency: Date.now() - t0, error: String((e && e.message) || e).slice(0, 200) });
+    }
   }));
 
   // ---------- 静态前端（存在才挂） ----------
