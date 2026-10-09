@@ -268,6 +268,7 @@ export default function App() {
           onConversationsChanged={() => {}}
           onOpenSettingsModal={() => {}}
           onToggleSidebar={toggleSidebar}
+          onGoHome={() => setView({ type: 'empty' })}
           showToast={showToast}
         />
         <div className="backdrop" onClick={() => setSidebarOpen(false)} />
@@ -319,6 +320,7 @@ export default function App() {
         onOpenDiscover={handleOpenDiscover}
         onLogin={() => {}}
         onToggleSidebar={toggleSidebar}
+        onGoHome={() => setView({ type: 'empty' })}
         showToast={showToast}
       />
       <div className="backdrop" onClick={() => setSidebarOpen(false)} />

@@ -105,6 +105,17 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, streamText, groupStreams, typing, errorMsg]);
 
+  // v1.25.3: 挂载时拉取真实计费模式，避免刷新后默认 api 闪一下
+  useEffect(() => {
+    let cancelled = false;
+    api.getPoints().then((p) => {
+      if (cancelled || !p) return;
+      const m = p.billing_mode === 'points' ? 'points' : 'api';
+      setBillingMode(m);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   // v1.25.1: 监听计费模式切换，设置弹窗保存后即时刷新下方提示
   useEffect(() => {
     const handler = (e) => {

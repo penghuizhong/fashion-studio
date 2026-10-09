@@ -24,6 +24,7 @@ export default function Sidebar({
   onOpenDiscover,
   onLogin,
   onToggleSidebar,
+  onGoHome,
   showToast,
 }) {
   const [apiCfg, setApiCfg] = useState(() => getApiConfig());
@@ -229,7 +230,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
-        <span className="brand">SoulChat</span>
+        <span className="brand" onClick={onGoHome} style={{ cursor: 'pointer' }}>SoulChat</span>
         <button className="collapse-btn" title="收起侧边栏" onClick={onToggleSidebar}>
           ‹
         </button>
