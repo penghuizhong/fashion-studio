@@ -2282,6 +2282,38 @@ async function runMulti() {
     ok('M60. regenerate-turn按character_id+batch_id定位', b1 && b2, `b1=${b1} b2=${b2}`);
   }
 
+  // M61. v1.24.0: 裸名提及检测 + 轻模型兜底
+{
+  const { findMentionedIds } = await import('../src/memory.js');
+  const { detectMentions } = await import('../src/llm.js');
+  const mems = [
+    { id: 'a', name: '小晴' },
+    { id: 'b', name: '阿默' },
+    { id: 'c', name: '风' }, // 单字名
+  ];
+  const g1 = findMentionedIds('嗨 @阿默 你来说', mems, []);
+  const g2 = findMentionedIds('小晴，你说得对', mems, []);
+  const g3 = findMentionedIds('阿默你觉得呢？', mems, []);
+  const g4 = findMentionedIds('小晴！快来', mems, []);
+  const g5 = findMentionedIds('今天风很大', mems, []);
+  const g6 = findMentionedIds('问下 @风', mems, []);
+  const g7 = findMentionedIds('大家好', mems, []);
+  const g8 = await detectMentions({ text: '小晴你说得对', members: mems, excludeIds: [] });
+  ok(
+    'M61. 裸名提及/单字名防误触/轻模型mock',
+    JSON.stringify(g1) === JSON.stringify(['b']) &&
+      JSON.stringify(g2) === JSON.stringify(['a']) &&
+      JSON.stringify(g3) === JSON.stringify(['b']) &&
+      JSON.stringify(g4) === JSON.stringify(['a']) &&
+      g5.length === 0 &&
+      JSON.stringify(g6) === JSON.stringify(['c']) &&
+      g7.length === 0 &&
+      Array.isArray(g8) && g8.length === 0,
+    `g1=${JSON.stringify(g1)} g2=${JSON.stringify(g2)} g5=${JSON.stringify(g5)} g8=${JSON.stringify(g8)}`
+  );
+}
+
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
