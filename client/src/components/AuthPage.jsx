@@ -146,7 +146,7 @@ export default function AuthPage({ theme, onToggleTheme }) {
     return (
       <div className="auth-page">
         <div className="auth-card">
-          <div className="auth-logo">🎉</div>
+          <div className="auth-logo"><Icon name="chat" size={40} /></div>
           <h1 className="auth-title">注册成功</h1>
           <p className="auth-sub">欢迎，{justRegistered.username}！请保存好你的密码重置码</p>
           <div className="recovery-show">
@@ -177,10 +177,10 @@ export default function AuthPage({ theme, onToggleTheme }) {
         title={theme === 'black' ? '切换到白色主题' : '切换到黑色主题'}
         onClick={onToggleTheme}
       >
-        {theme === 'black' ? '☀️' : '🌙'}
+        {theme === 'black' ? <Icon name="sun" size={20} /> : <Icon name="moon" size={20} />}
       </button>
       <div className="auth-card">
-        <div className="auth-logo">💬</div>
+        <div className="auth-logo"><Icon name="chat" size={40} /></div>
         <h1 className="auth-title">SoulChat</h1>
         <p className="auth-sub">
           {mode === 'login' ? '欢迎回来' : mode === 'register' ? '创建你的账号，开始聊天' : '凭重置码自助找回密码'}
@@ -283,7 +283,7 @@ export default function AuthPage({ theme, onToggleTheme }) {
             {mode === 'register' && (
               <>
                 注册成功后自动登录。
-                {inviteCode && <> 🎁 通过邀请链接注册，额外获赠积分。</>}
+                {inviteCode && <> <Icon name="gift" size={16} /> 通过邀请链接注册，额外获赠积分。</>}
               </>
             )}
           </p>

@@ -122,8 +122,8 @@ export default function DiscoverView({
   };
 
   const afterAdopt = (r, savedId) => {
-    showToast(`已领养 ${r.character.name} 🎉`);
-    if (r.collection_reward > 0) showToast(`🎉 集齐官方角色卡！+${r.collection_reward} 积分`, 3500);
+    showToast(`已领养 ${r.character.name}`);
+    if (r.collection_reward > 0) showToast(`集齐官方角色卡！+${r.collection_reward} 积分`, 3500);
     setDetail(null);
     setGenResult(null);
     setGenOpen(false);
@@ -178,7 +178,7 @@ export default function DiscoverView({
         <header className="discover-header">
           <div className="discover-header-inner">
             <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
-              ☰
+              <Icon name="menu" size={22} />
             </button>
             <h2>发现角色</h2>
           </div>
@@ -186,7 +186,7 @@ export default function DiscoverView({
         <div className="discover-inner">
         <div className="discover-gate">
           <div className="gate-card">
-          <div className="gate-emoji">🧭</div>
+          <div className="gate-emoji"><Icon name="compass" size={40} /></div>
           <h2>发现角色</h2>
           <p>官方预设、玩家广场、AI 生成，开始前请确认：</p>
           <button className="btn primary" onClick={() => setGateOpen(true)}>
@@ -229,7 +229,7 @@ export default function DiscoverView({
       <header className="discover-header">
         <div className="discover-header-inner">
           <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
-            ☰
+            <Icon name="menu" size={22} />
           </button>
           <h2>发现角色</h2>
         </div>
@@ -264,7 +264,7 @@ export default function DiscoverView({
 
       <div className="gen-entry">
         <button className="gen-entry-btn" onClick={() => setGenOpen((o) => !o)}>
-          <span className="gen-spark">✨</span> AI 一键生成角色
+          <Icon name="sparkles" size={16} /> AI 一键生成角色
           <Icon name="chevronDown" size={16} />
         </button>
         {genOpen && (
@@ -401,7 +401,7 @@ export default function DiscoverView({
             <p className="key-desc">加载中…</p>
           ) : savedCards.length === 0 ? (
             <div className="dex-empty">
-              <p className="key-desc">还没有收藏，去「官方预设」用 AI 生成一张吧 ✨</p>
+              <p className="key-desc">还没有收藏，去「官方预设」用 AI 生成一张吧</p>
               <button className="btn secondary" onClick={() => setSection('presets')}>去生成</button>
             </div>
           ) : (
@@ -446,7 +446,7 @@ function CardDetailModal({ card, categories, onClose, onAdopt, adopting, extraAc
         <div className="modal-head">
           <h3>{card.name}</h3>
           <button className="modal-close" onClick={onClose}>
-            ✕
+            <Icon name="x" size={18} />
           </button>
         </div>
         <div className="card-detail">
@@ -642,7 +642,7 @@ function SquareSection({ loggedIn, categories, showToast, onRequireLogin, onAdop
               <div className="shared-stats">
                 <span className="shared-author">by {item.author_name}</span>
                 <span className="shared-nums">
-                  🔥{item.adopt_count} · ❤{item.like_count}
+                  {item.adopt_count} 领养 · {item.like_count} 赞
                 </span>
               </div>
               <div className="shared-card-btns">
@@ -664,7 +664,7 @@ function SquareSection({ loggedIn, categories, showToast, onRequireLogin, onAdop
                     toggleLike(item);
                   }}
                 >
-                  {item.liked ? '❤️' : '🤍'} {item.like_count}
+                  {item.liked ? <Icon name="heart" size={16} /> : <Icon name="heart" size={16} />} {item.like_count}
                 </button>
               </div>
             </div>
@@ -688,7 +688,7 @@ function SquareSection({ loggedIn, categories, showToast, onRequireLogin, onAdop
                 className={`btn secondary${detail.liked ? ' liked-text' : ''}`}
                 onClick={() => toggleLike(detail)}
               >
-                {detail.liked ? '❤️ 已赞' : '🤍 点赞'} {detail.like_count}
+                {detail.liked ? <><Icon name="heart" size={16} /> 已赞</> : <><Icon name="heart" size={16} /> 点赞</>} {detail.like_count}
               </button>
               <button
                 className="link-btn"
@@ -816,7 +816,7 @@ function PublishModal({ categories, showToast, onClose, onDone }) {
         <div className="modal-head">
           <h3>发布角色到广场</h3>
           <button className="modal-close" onClick={onClose}>
-            ✕
+            <Icon name="x" size={18} />
           </button>
         </div>
         <label>
@@ -924,7 +924,7 @@ function MyPublishedModal({ showToast, onClose }) {
         <div className="modal-head">
           <h3>我的投稿</h3>
           <button className="modal-close" onClick={onClose}>
-            ✕
+            <Icon name="x" size={18} />
           </button>
         </div>
         {list.length === 0 ? (
@@ -937,7 +937,7 @@ function MyPublishedModal({ showToast, onClose }) {
                 <div className="my-pub-meta">
                   <div className="my-pub-name">{item.card.name}</div>
                   <div className="my-pub-sub">
-                    🔥{item.adopt_count} · ❤{item.like_count}
+                    {item.adopt_count} 领养 · {item.like_count} 赞
                   </div>
                   {item.status === 'rejected' && item.reject_reason && (
                     <div className="my-pub-reject">打回原因：{item.reject_reason}</div>
@@ -983,9 +983,9 @@ function DexSection({ categories, showToast, onGoPresets }) {
         </div>
         <div className="dex-reward">
           {data.reward_claimed
-            ? '🎉 集齐奖励已领取（+200 积分）'
+            ? '集齐奖励已领取（+200 积分）'
             : remain === 0
-              ? '🎉 已集齐！奖励稍后到账'
+              ? '已集齐！奖励稍后到账'
               : `还差 ${remain} 张集齐，集齐奖 ${data.reward_points} 积分`}
         </div>
       </div>
@@ -999,7 +999,7 @@ function DexSection({ categories, showToast, onGoPresets }) {
             }}
             title={p.adopted ? p.tagline : '去官方预设领养'}
           >
-            <span className="dex-avatar">{p.adopted ? p.avatar || '🤖' : '❓'}</span>
+            <span className="dex-avatar">{p.adopted ? <Avatar src={p.avatar} size={40} /> : <Icon name="eyeOff" size={20} />}</span>
             <span className="dex-name">{p.name}</span>
             <span className="dex-cat">{categories[p.category] || p.category}</span>
           </div>
@@ -1013,7 +1013,7 @@ function DexSection({ categories, showToast, onGoPresets }) {
               <div key={s.id} className="preset-card" style={{ cursor: 'default' }}>
                 <CardFace card={s.card} categories={categories} />
                 <div className="shared-stats">
-                  <span className="shared-nums">🔥{s.adopt_count} 人领养</span>
+                  <span className="shared-nums">{s.adopt_count} 人领养</span>
                   <span className="tag-badge">已领养</span>
                 </div>
               </div>
@@ -1034,7 +1034,7 @@ function DexSection({ categories, showToast, onGoPresets }) {
                 className={`dex-item${g.in_dex ? '' : ' locked'}`}
                 title={g.in_dex ? (g.tagline || g.name) : `养成中：${g.fact_count}/${data.dex_threshold || 5} 条记忆`}
               >
-                <span className="dex-avatar">{g.in_dex ? g.avatar || '🤖' : '🌱'}</span>
+                <span className="dex-avatar">{g.in_dex ? <Avatar src={g.avatar} size={40} /> : <Icon name="sparkles" size={20} />}</span>
                 <span className="dex-name">{g.name}</span>
                 <span className="dex-cat">
                   {g.in_dex ? '已收录' : `${g.fact_count}/${data.dex_threshold || 5} 记忆`}

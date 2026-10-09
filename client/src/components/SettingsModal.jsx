@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api, fetchModels, DEFAULT_BASE_URL } from '../api.js';
 import Icon from './icons.jsx';
+import Avatar from './Avatar.jsx';
 
 // 自研模型下拉（iOS Safari 不支持原生 datalist）
 function ModelPicker({ value, onChange, models, placeholder, openSignal }) {
@@ -847,7 +848,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
               </label>
               {(() => {
                 const p = (providers || []).find((x) => x.id === (form.provider || 'custom'));
-                return p && p.note ? <p className="key-desc small">⚠️ {p.note}</p> : null;
+                return p && p.note ? <p className="key-desc small"><Icon name="alert" size={14} /> {p.note}</p> : null;
               })()}
               <label>
                 API 地址
@@ -1217,13 +1218,13 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   {reviewList.map((item) => (
                     <div key={item.id} className="review-card">
                       <div className="review-head">
-                        <span className="preset-avatar">{item.card.avatar || '🤖'}</span>
+                        <span className="preset-avatar"><Avatar src={item.card.avatar} size={40} /></span>
                         <div className="review-meta">
                           <div className="review-name">{item.card.name}</div>
                           <div className="review-sub">
                             by {item.author_name} · {item.card.tagline}
                             {item.report_count > 0 && (
-                              <span className="report-flag"> ⚠被举报 {item.report_count} 次</span>
+                              <span className="report-flag"><Icon name="alert" size={14} />被举报 {item.report_count} 次</span>
                             )}
                           </div>
                         </div>
