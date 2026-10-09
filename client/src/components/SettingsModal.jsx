@@ -229,7 +229,6 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   // v1.26.2: 拉取可用模型（带实时报价）+ 连通测试
   const [orModels, setOrModels] = useState([]);
   const [orLoading, setOrLoading] = useState(false);
-  const [orSearch, setOrSearch] = useState('');
   const [testResult, setTestResult] = useState(null);
   const [testing, setTesting] = useState(false);
   // v1.26.2: 语音模型清单 + 测试
@@ -1230,53 +1229,48 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                       ))}
                     </select>
                   </label>
-                  <p className="key-desc small">上游内容过滤拦截时，按顺序自动换模型重试一次；两个都选「不设置」并保存 = 关闭回退；不碰这里 = 默认 Euryale → Cydonia。</p>
+                  <p className="key-desc small">上游内容过滤拦截时，按顺序自动换模型重试一次；两个都选「不设置」并保存 = 关闭回退；不碰这里 = 用系统默认回退链。</p>
                   <div className="key-input-row" style={{ marginTop: 8 }}>
                     <button className="btn primary" onClick={saveModelCfg} disabled={modelCfgSaving}>
                       {modelCfgSaving ? '保存中…' : '保存模型配置'}
                     </button>
                   </div>
                   <div className="card-title" style={{ marginTop: 4 }}>上架新模型</div>
-                  {/* v1.26.2: 先拉取可用模型（含实时报价） */}
-                  <div className="key-input-row" style={{ marginBottom: 8 }}>
-                    <button className="btn secondary" onClick={fetchOrModels} disabled={orLoading}>
-                      {orLoading ? '拉取中…' : '拉取可用模型'}
-                    </button>
-                    {orModels.length > 0 && (
-                      <input
-                        value={orSearch}
-                        onChange={(e) => setOrSearch(e.target.value)}
-                        placeholder="搜索模型…"
-                        style={{ flex: 1 }}
-                      />
-                    )}
-                  </div>
-                  {orModels.length > 0 && (
-                    <div className="or-model-list">
-                      {orModels
-                        .filter((m) => !orSearch || m.id.toLowerCase().includes(orSearch.toLowerCase()) || (m.name || '').toLowerCase().includes(orSearch.toLowerCase()))
-                        .slice(0, 50)
-                        .map((m) => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            className="or-model-item"
-                            onClick={() => pickOrModel(m)}
-                            title={m.id}
-                          >
-                            <span className="or-model-name">{m.name || m.id}</span>
-                            <span className="or-model-price">
-                              {m.pricing?.prompt != null ? `$${m.pricing.prompt.toFixed(2)}` : '?'}/
-                              {m.pricing?.completion != null ? `$${m.pricing.completion.toFixed(2)}` : '?'} /1M
-                            </span>
-                          </button>
-                        ))}
-                    </div>
-                  )}
+                  {/* v1.26.3: 模型 ID 输入框右置拉取按钮，可下拉选择；下方显示真实报价 */}
                   <label>
                     模型 ID（须与 OpenRouter 一致）
-                    <input value={pmForm.model_id} onChange={(e) => setPmForm((f) => ({ ...f, model_id: e.target.value }))} placeholder="如 openai/gpt-7-mini" spellCheck={false} autoComplete="off" />
+                    <div className="key-input-row">
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <ModelPicker
+                          value={pmForm.model_id}
+                          onChange={(v) => {
+                            setPmForm((f) => ({ ...f, model_id: v }));
+                            // 选中后自动填报价
+                            const m = orModels.find((x) => x.id === v);
+                            if (m) pickOrModel(m);
+                          }}
+                          models={orModels}
+                          placeholder="如 openai/gpt-7-mini"
+                          openSignal={orModels.length}
+                        />
+                      </div>
+                      <button className="btn secondary" onClick={fetchOrModels} disabled={orLoading} style={{ whiteSpace: 'nowrap' }}>
+                        {orLoading ? '拉取中…' : '拉取可用模型'}
+                      </button>
+                    </div>
                   </label>
+                  {/* 真实报价展示 */}
+                  {(() => {
+                    const m = orModels.find((x) => x.id === pmForm.model_id.trim());
+                    if (!m || !m.pricing) return null;
+                    const p = m.pricing;
+                    return (
+                      <p className="key-desc small" style={{ margin: '4px 0 8px' }}>
+                        实时报价：输入 {p.prompt != null ? `$${p.prompt.toFixed(2)}` : '?'} / 输出 {p.completion != null ? `$${p.completion.toFixed(2)}` : '?'}（USD/1M tokens）
+                        {m.context_length ? ` · 上下文 ${Math.round(m.context_length / 1000)}K` : ''}
+                      </p>
+                    );
+                  })()}
                   <label>
                     显示名
                     <input value={pmForm.name} onChange={(e) => setPmForm((f) => ({ ...f, name: e.target.value }))} placeholder="留空则用模型 ID" spellCheck={false} autoComplete="off" />
@@ -1305,56 +1299,38 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   )}
                   <div className="card-title" style={{ marginTop: 16 }}>语音模型</div>
                   <p className="key-desc small">TTS/ASR/音色设计走 DashScope，不选 = 用默认模型。</p>
-                  {/* v1.26.2: 拉取语音模型清单 */}
-                  <div className="key-input-row" style={{ marginBottom: 8 }}>
-                    <button className="btn secondary small" onClick={fetchVoiceCatalog}>
-                      拉取语音模型清单
-                    </button>
-                  </div>
-                  {voiceCatalog && voiceCatalog.tts && (
-                    <div className="key-desc small" style={{ marginBottom: 8 }}>
-                      可用 TTS：{voiceCatalog.tts.map((m) => `${m.id}（${m.price}）`).join('、')}
-                    </div>
-                  )}
+                  {/* v1.26.3: 输入框右置拉取按钮，可下拉选择 */}
                   <label>
                     TTS 模型（语音合成）
                     <div className="key-input-row">
-                      <select
-                        value={modelCfg.voice_tts_model || ""}
-                        onChange={(e) => setModelCfg((f) => ({ ...f, voice_tts_model: e.target.value }))}
-                        style={{ flex: 1 }}
-                      >
-                        <option value="">默认（qwen-audio-3.0-tts-plus）</option>
-                        {(voiceCatalog?.tts || [
-                          { id: 'qwen-audio-3.0-tts-plus', name: '高质量' },
-                          { id: 'qwen3-tts-flash', name: '便宜' },
-                          { id: 'cosyvoice-v3.5-plus', name: '超高表现力' },
-                        ]).map((m) => (
-                          <option key={m.id} value={m.id}>{m.id}{m.price ? `（${m.price}）` : m.name ? `（${m.name}）` : ''}</option>
-                        ))}
-                      </select>
-                      <button className="btn secondary small" onClick={() => testVoice('tts')} disabled={voiceTesting === 'tts'}>
-                        {voiceTesting === 'tts' ? '测试中…' : '连通测试'}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <ModelPicker
+                          value={modelCfg.voice_tts_model || ''}
+                          onChange={(v) => setModelCfg((f) => ({ ...f, voice_tts_model: v }))}
+                          models={(voiceCatalog?.tts || []).map((m) => ({ id: m.id, name: m.name }))}
+                          placeholder="默认：qwen-audio-3.0-tts-plus"
+                          openSignal={voiceCatalog?.tts?.length}
+                        />
+                      </div>
+                      <button className="btn secondary small" onClick={fetchVoiceCatalog} style={{ whiteSpace: 'nowrap' }}>
+                        拉取可用模型
                       </button>
                     </div>
                   </label>
                   <label>
                     ASR 模型（语音识别）
                     <div className="key-input-row">
-                      <select
-                        value={modelCfg.voice_asr_model || ""}
-                        onChange={(e) => setModelCfg((f) => ({ ...f, voice_asr_model: e.target.value }))}
-                        style={{ flex: 1 }}
-                      >
-                        <option value="">默认（qwen-audio-3.0-asr-flash）</option>
-                        {(voiceCatalog?.asr || [
-                          { id: 'qwen-audio-3.0-asr-flash', name: '' },
-                        ]).map((m) => (
-                          <option key={m.id} value={m.id}>{m.id}{m.price ? `（${m.price}）` : ''}</option>
-                        ))}
-                      </select>
-                      <button className="btn secondary small" onClick={() => testVoice('asr')} disabled={voiceTesting === 'asr'}>
-                        {voiceTesting === 'asr' ? '测试中…' : '连通测试'}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <ModelPicker
+                          value={modelCfg.voice_asr_model || ''}
+                          onChange={(v) => setModelCfg((f) => ({ ...f, voice_asr_model: v }))}
+                          models={(voiceCatalog?.asr || []).map((m) => ({ id: m.id, name: m.name }))}
+                          placeholder="默认：qwen-audio-3.0-asr-flash"
+                          openSignal={voiceCatalog?.asr?.length}
+                        />
+                      </div>
+                      <button className="btn secondary small" onClick={fetchVoiceCatalog} style={{ whiteSpace: 'nowrap' }}>
+                        拉取可用模型
                       </button>
                     </div>
                   </label>
@@ -1369,19 +1345,27 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   )}
                   <label>
                     音色设计模型
-                    <select
-                      value={modelCfg.voice_design_model || ""}
-                      onChange={(e) => setModelCfg((f) => ({ ...f, voice_design_model: e.target.value }))}
-                    >
-                      <option value="">默认（qwen3-tts-vd-2026-01-26）</option>
-                      {(voiceCatalog?.design || []).map((m) => (
-                        <option key={m.id} value={m.id}>{m.id}{m.price ? `（${m.price}）` : ''}</option>
-                      ))}
-                    </select>
+                    <div className="key-input-row">
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <ModelPicker
+                          value={modelCfg.voice_design_model || ''}
+                          onChange={(v) => setModelCfg((f) => ({ ...f, voice_design_model: v }))}
+                          models={(voiceCatalog?.design || []).map((m) => ({ id: m.id, name: m.name }))}
+                          placeholder="默认：qwen3-tts-vd-2026-01-26"
+                          openSignal={voiceCatalog?.design?.length}
+                        />
+                      </div>
+                      <button className="btn secondary small" onClick={fetchVoiceCatalog} style={{ whiteSpace: 'nowrap' }}>
+                        拉取可用模型
+                      </button>
+                    </div>
                   </label>
                   <div className="key-input-row" style={{ marginTop: 8 }}>
                     <button className="btn primary" onClick={saveModelCfg} disabled={modelCfgSaving}>
                       {modelCfgSaving ? "保存中…" : "保存模型配置"}
+                    </button>
+                    <button className="btn secondary" onClick={() => testVoice('tts')} disabled={voiceTesting === 'tts'}>
+                      {voiceTesting === 'tts' ? '测试中…' : '连通测试'}
                     </button>
                   </div>
             </>
