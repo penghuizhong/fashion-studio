@@ -161,7 +161,7 @@ MOCK_LLM=true npm run check
 ## 部署到公网给陌生人用（v1.0.0 多用户模式）
 
 v1.0.0 新增多用户模式：注册/登录、数据按用户隔离、Key 后端加密托管。
-完整步骤见 **[DEPLOY.md](./DEPLOY.md)**（Caddy + PM2 + 自动 HTTPS）。
+完整步骤见 **[DEPLOY.md](./DEPLOY.md)**（1Panel + OpenResty + systemd）。
 
 `.env` 关键配置：
 
@@ -209,4 +209,4 @@ localStorage 不再存 key 明文。
 - 对话搜索、角色搜索框（UI 已有，搜索逻辑未接）
 - 记忆条目的逐条编辑/删除（现在是全文编辑）
 - 多用户/登录、数据云同步
-- Docker 一键部署、移动端适配
+- 移动端适配
