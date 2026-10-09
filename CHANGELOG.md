@@ -1,3 +1,6 @@
+## v1.27.0
+- 音色克隆：定制音色弹窗新增「音频克隆」模式，上传参考音频（15-60秒清晰人声）→ 调用 DashScope `qwen-voice-enrollment` 克隆 → 返回 voice_id 存入定制音色列表。克隆一次后永久使用 voice_id，TTS 不重复传音频；7 天音频缓存照常生效。20 积分/次。
+
 ## v1.26.4
 - 语音模型「拉取可用模型」改名为「查看可用模型」，加说明：DashScope 无公开模型列表，展示的是内置清单（非实时）。
 - 新增 `DASHSCOPE_BASE_URL` 环境变量：支持自定义 DashScope API 地址（千问 token-plan 等），不填则默认官方 `https://dashscope.aliyuncs.com` 保底。
