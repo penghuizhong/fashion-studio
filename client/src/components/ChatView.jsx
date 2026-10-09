@@ -38,6 +38,9 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   const [contextInfo, setContextInfo] = useState(null);
   const [roundUsage, setRoundUsage] = useState(0);
   const [totalUsage, setTotalUsage] = useState(0);
+  const [billingMode, setBillingMode] = useState('api'); // v1.25.0: 'points' | 'api'
+  const [roundPoints, setRoundPoints] = useState(0);
+  const [totalPoints, setTotalPoints] = useState(0);
 
   const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
   const [errorMsg, setErrorMsg] = useState(null);
@@ -309,6 +312,15 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
               const t = (data.usage.input || 0) + (data.usage.output || 0);
               setRoundUsage(t);
               setTotalUsage((x) => x + t);
+            }
+            // v1.25.0: 计费模式 + 积分消耗
+            if (data && data.billingMode) {
+              setBillingMode(data.billingMode);
+              if (data.billingMode === 'points') {
+                const p = data.pointsUsed || 0;
+                setRoundPoints(p);
+                setTotalPoints((x) => x + p);
+              }
             }
             if (data && data.title) {
               setTitle(data.title);
@@ -761,8 +773,19 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         </div>
         <div className="composer-hint">
           Enter 发送 · Shift+Enter 换行{isGroup ? ' · 一次最多 3 位角色回应' : ''}
-          {roundUsage > 0 && ` · 本轮 ≈ ${fmtTokens(roundUsage)} tokens`}
-          {totalUsage > 0 && ` · 累计 ≈ ${fmtTokens(totalUsage)}`}
+          {billingMode === 'points' ? (
+            <>
+              {' · 积分模式'}
+              {roundPoints > 0 && ` · 本轮 ${roundPoints} 积分`}
+              {totalPoints > 0 && ` · 累计 ${totalPoints}`}
+            </>
+          ) : (
+            <>
+              {' · API 模式'}
+              {roundUsage > 0 && ` · 本轮 ≈ ${fmtTokens(roundUsage)} tokens`}
+              {totalUsage > 0 && ` · 累计 ≈ ${fmtTokens(totalUsage)}`}
+            </>
+          )}
         </div>
       </div>
 
