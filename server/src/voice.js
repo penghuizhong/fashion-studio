@@ -1,0 +1,292 @@
+// v1.26.0: 语音功能——DashScope ASR/TTS 客户端 + VoiceProvider 抽象
+import { getConfig } from './config.js';
+
+const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com';
+
+// 语音模型配置
+export const VOICE_MODELS = {
+  asr: {
+    flash: 'qwen-audio-3.0-asr-flash',
+  },
+  tts: {
+    flash: 'qwen3-tts-flash', // 便宜档，0.8元/万字符
+    plus: 'qwen-audio-3.0-tts-plus', // 高质量档，~1.5元/万字符
+  },
+};
+
+// VoiceProvider 抽象：主供应商 DashScope，预留降级接口
+class DashScopeVoiceProvider {
+  constructor(apiKey) {
+    this.apiKey = apiKey;
+    this.name = 'dashscope';
+  }
+
+  // ASR: 音频 Buffer → 文字
+  // audioBuffer: Buffer, mimeType: 如 'audio/webm'
+  async asr(audioBuffer, { model = VOICE_MODELS.asr.flash, language = 'zh' } = {}) {
+    const cfg = getConfig();
+    if (cfg.mockLlm) return { text: '（mock 语音识别）', duration: 0 };
+
+    // DashScope 录音文件识别：先上传音频获取 URL，或用 base64
+    // 使用兼容模式的 transcription 接口
+    const res = await fetch(`${DASHSCOPE_BASE}/compatible-mode/v1/audio/transcriptions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: this._buildFormData(audioBuffer, model, language),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      throw new Error(`ASR 失败 (${res.status}): ${t.slice(0, 200)}`);
+    }
+    const json = await res.json();
+    return {
+      text: json.text || '',
+      duration: json.duration || 0,
+    };
+  }
+
+  _buildFormData(audioBuffer, model, language) {
+    const form = new FormData();
+    const blob = new Blob([audioBuffer], { type: 'audio/webm' });
+    form.append('file', blob, 'audio.webm');
+    form.append('model', model);
+    if (language) form.append('language', language);
+    return form;
+  }
+
+  // TTS: 文字 → 音频 Buffer (mp3)
+  // 返回 { audio: Buffer, chars: 计费字符数 }
+  async tts(text, { model = VOICE_MODELS.tts.plus, voice = 'Cherry', speed = 1.0 } = {}) {
+    const cfg = getConfig();
+    if (cfg.mockLlm) return { audio: Buffer.from('mock'), chars: text.length };
+
+    const res = await fetch(`${DASHSCOPE_BASE}/compatible-mode/v1/audio/speech`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        input: text,
+        voice,
+        speed,
+        response_format: 'mp3',
+      }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      throw new Error(`TTS 失败 (${res.status}): ${t.slice(0, 200)}`);
+    }
+    const audio = Buffer.from(await res.arrayBuffer());
+    // 计费字符数：汉字按 2 字符计（百炼口径）
+    const chars = [...text].reduce((n, ch) => n + (ch.codePointAt(0) > 0xff ? 2 : 1), 0);
+    return { audio, chars };
+  }
+
+  // ============ v1.26.0: 声音设计（文本描述 → 定制音色） ============
+  // prompt: 音色描述（如"温柔的年轻女性声音，略带沙哑"）
+  // 返回 { voiceId, previewAudio(base64), name }
+  async designVoice({ prompt, previewText = '你好，很高兴认识你。', name, language = 'zh' }) {
+    const cfg = getConfig();
+    if (cfg.mockLlm) {
+      return { voiceId: `mock_voice_${Date.now()}`, previewAudio: null, name: name || 'mock' };
+    }
+    const res = await fetch(`${DASHSCOPE_BASE}/api/v1/services/audio/tts/customization`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'qwen-voice-design',
+        target_model: 'qwen3-tts-vd-2026-01-26',
+        action: 'create',
+        voice_prompt: prompt,
+        preview_text: previewText,
+        preferred_name: name,
+        language,
+      }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      throw new Error(`声音设计失败 (${res.status}): ${t.slice(0, 200)}`);
+    }
+    const json = await res.json();
+    const out = json.output || json;
+    return {
+      voiceId: out.voice?.name || out.voice_id || out.name,
+      previewAudio: out.audio?.data || out.preview_audio || null,
+      name: name,
+    };
+  }
+}
+
+// Provider 单例（懒初始化）
+let _provider = null;
+export function getVoiceProvider() {
+  if (_provider) return _provider;
+  const cfg = getConfig();
+  const key = (process.env.DASHSCOPE_API_KEY || '').trim();
+  if (!key && !cfg.mockLlm) throw new Error('未配置 DASHSCOPE_API_KEY');
+  _provider = new DashScopeVoiceProvider(key);
+  return _provider;
+}
+
+// ============ v1.26.0: 语音积分定价 ============
+// 1元 = 100积分
+// ASR: 成本 ~0.022积分/秒 → 收 1积分/10秒（向上取整，最少1）
+// TTS: 成本 ~0.015积分/字符(汉字×2) → 收 1积分/30字符（向上取整，最少1）
+export const VOICE_PRICING = {
+  asrPer10s: 1,
+  ttsPer30Chars: 1,
+  // 余额低于此值时 TTS 自动降级 flash
+  downgradeThreshold: 50,
+};
+
+export function calcAsrPoints(durationSec) {
+  const units = Math.max(1, Math.ceil((durationSec || 0) / 10));
+  return units * VOICE_PRICING.asrPer10s;
+}
+
+export function calcTtsPoints(chars) {
+  const units = Math.max(1, Math.ceil((chars || 0) / 30));
+  return units * VOICE_PRICING.ttsPer30Chars;
+}
+
+// ============ v1.26.0: 音频缓存（7天） ============
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+
+function voiceCacheDir() {
+  const cfg = getConfig();
+  const dir = path.join(cfg.dataDir, 'voice_cache');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function cacheKey(text, voice, speed, model) {
+  return crypto.createHash('sha256').update(`${text}|${voice}|${speed}|${model}`).digest('hex');
+}
+
+export function getCachedAudio(text, voice, speed, model) {
+  try {
+    const key = cacheKey(text, voice, speed, model);
+    const fp = path.join(voiceCacheDir(), `${key}.mp3`);
+    if (!fs.existsSync(fp)) return null;
+    const stat = fs.statSync(fp);
+    // 7天过期
+    if (Date.now() - stat.mtimeMs > 7 * 24 * 3600 * 1000) {
+      fs.unlinkSync(fp);
+      return null;
+    }
+    return fs.readFileSync(fp);
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedAudio(text, voice, speed, model, audioBuffer) {
+  try {
+    const key = cacheKey(text, voice, speed, model);
+    const fp = path.join(voiceCacheDir(), `${key}.mp3`);
+    fs.writeFileSync(fp, audioBuffer);
+  } catch (e) {
+    console.warn('[voice] 缓存写入失败:', e.message);
+  }
+}
+
+// 供测试重置
+export function resetVoiceProvider() {
+  _provider = null;
+}
+
+// ============ v1.26.0: 对白提取（三层启发式） ============
+
+// 清理 markdown，不适合朗读的符号
+export function cleanForTts(text) {
+  if (!text) return '';
+  return (
+    String(text)
+      // 代码块
+      .replace(/```[\s\S]*?```/g, '')
+      // 行内代码
+      .replace(/`([^`]*)`/g, '$1')
+      // 加粗/斜体
+      .replace(/(\*\*|__)(.*?)\1/g, '$2')
+      .replace(/(\*|_)(.*?)\1/g, '$2')
+      // 标题
+      .replace(/^#{1,6}\s+/gm, '')
+      // 链接 [text](url) → text
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      // 图片 ![alt](url)
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+      // 多余空行
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  );
+}
+
+// 第一层：引号提取 「」『』""
+function extractQuoted(text) {
+  const re = /「([^」]*)」|『([^』]*)』|"([^"]*)"|"([^"]*)"/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const s = (m[1] || m[2] || m[3] || m[4] || '').trim();
+    if (s) out.push(s);
+  }
+  return out;
+}
+
+// 第二层：冒号/破折号行内对话
+function extractLined(text) {
+  const out = [];
+  for (const line of String(text).split('\n')) {
+    const t = line.trim();
+    // "名字：对白" 或 "- 对白"
+    let m = t.match(/^(?:[^：:]{1,12}[：:])\s*(.+)$/);
+    if (m && m[1].trim()) {
+      out.push(m[1].trim());
+      continue;
+    }
+    m = t.match(/^[-–—]\s*(.+)$/);
+    if (m && m[1].trim()) out.push(m[1].trim());
+  }
+  return out;
+}
+
+// 主入口：返回对白数组；都没命中返回 null（调用方决定兜底）
+export function extractDialogue(text) {
+  const clean = cleanForTts(text);
+  if (!clean) return null;
+  const q = extractQuoted(clean);
+  if (q.length) return q;
+  const l = extractLined(clean);
+  if (l.length) return l;
+  return null;
+}
+
+// ============ 句子切分 ============
+// 按 。！？\n 切，超长句按 ，二次切
+export function splitSentences(text, maxLen = 50) {
+  if (!text) return [];
+  const parts = String(text)
+    .split(/(?<=[。！？\n])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out = [];
+  for (const p of parts) {
+    if ([...p].length <= maxLen || !p.includes('，')) {
+      out.push(p);
+    } else {
+      // 长句按逗号切
+      const subs = p.split(/(?<=，)/).map((s) => s.trim()).filter(Boolean);
+      out.push(...subs);
+    }
+  }
+  return out;
+}

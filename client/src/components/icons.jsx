@@ -109,6 +109,20 @@ const PATHS = {
   ),
   send: <path d="M22 2 11 13M22 2l-7 20-4-9-9-4z" />,
   heart: <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />,
+  // v1.26.0: 语音图标
+  mic: (
+    <>
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0M12 17v4M9 21h6" />
+    </>
+  ),
+  stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+  volume: (
+    <>
+      <path d="M11 5 6 9H2v6h4l5 4z" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14" />
+    </>
+  ),
 };
 
 export default function Icon({ name, size = 20, className = '' }) {
