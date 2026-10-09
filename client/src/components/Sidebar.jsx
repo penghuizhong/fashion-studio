@@ -285,7 +285,7 @@ export default function Sidebar({
                         title="删除对话"
                         onClick={(e) => handleDeleteConversation(e, c.id, conv.id)}
                       >
-                        ✕
+                        <Icon name="x" size={14} />
                       </button>
                     </div>
                   ))}
@@ -302,7 +302,7 @@ export default function Sidebar({
       {groups.length > 0 && (
         <div className="group-section">
           <div className="group-section-head">
-            <span>👥 群聊</span>
+            <span class="nav-icon-text"><Icon name="users" size={18} /> 群聊</span>
             <span className="conv-badge">{groups.length}</span>
           </div>
           {groups.map((g) => (
@@ -319,7 +319,7 @@ export default function Sidebar({
                 title="解散群聊"
                 onClick={(e) => handleDeleteGroup(e, g.id)}
               >
-                ✕
+                <Icon name="x" size={14} />
               </button>
             </div>
           ))}
@@ -391,6 +391,10 @@ export default function Sidebar({
           characters={characters}
           onClose={() => setGroupModalOpen(false)}
           onCreated={handleGroupCreated}
+          onCreateCharacter={() => {
+            setGroupModalOpen(false);
+            setModalOpen(true);
+          }}
           showToast={showToast}
         />
       )}
@@ -426,7 +430,7 @@ export default function Sidebar({
                 setConvMenu(null);
               }}
             >
-              ✏️ 改名
+              <Icon name="pencil" size={14} /> 改名
             </button>
             <button
               className="conv-menu-item danger"
@@ -436,7 +440,7 @@ export default function Sidebar({
                 doDeleteConv(charId, conv.id);
               }}
             >
-              🗑️ 删除
+              <Icon name="trash" size={14} /> 删除
             </button>
           </div>
         </div>

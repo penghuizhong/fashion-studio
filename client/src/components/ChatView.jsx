@@ -201,7 +201,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           if (e.created_at > newest) newest = e.created_at;
           lastNewAt = Date.now();
           const who = e.character_name || (e.character_id ? (memberOf(e.character_id) || {}).name : null);
-          showToast(who ? `${who} 记住了 ✨` : '已记住 ✨', 2500);
+          showToast(who ? `${who} 记住了` : '已记住', 2500);
         }
         cursor = newest;
       } catch {
@@ -305,7 +305,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                 role: 'assistant',
                 character_id: cid,
                 character_name: (data && data.character_name) || (mem && mem.name) || '某人',
-                character_avatar: (mem && mem.avatar) || '✨',
+                character_avatar: (mem && mem.avatar) || null,
                 content: finalText,
                 created_at: new Date().toISOString(),
                 truncated,
@@ -313,7 +313,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             ]);
           } else if (ev === 'memory_updated') {
             const who = data && data.character_id ? (memberOf(data.character_id) || {}).name : null;
-            showToast(who ? `${who} 记住了 ✨` : '已记住 ✨', 2500);
+            showToast(who ? `${who} 记住了` : '已记住', 2500);
           } else if (ev === 'points') {
             // 积分扣费后余额变化：广播出去，API 设置弹窗（如开着）刷新余额
             window.dispatchEvent(new CustomEvent('soulchat-points-changed', { detail: data || {} }));
@@ -384,7 +384,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                   role: 'assistant',
                   character_id: cid,
                   character_name: (mem && mem.name) || '某人',
-                  character_avatar: (mem && mem.avatar) || '✨',
+                  character_avatar: (mem && mem.avatar) || null,
                   content: text,
                   created_at: new Date().toISOString(),
                   truncated: true,
@@ -502,7 +502,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
               role: 'assistant',
               character_id: cid,
               character_name: (data && data.character_name) || (mem && mem.name) || msg.character_name || '某人',
-              character_avatar: (mem && mem.avatar) || msg.character_avatar || '✨',
+              character_avatar: (mem && mem.avatar) || msg.character_avatar || null,
               content: finalText,
               created_at: new Date().toISOString(),
               truncated,
@@ -532,7 +532,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
               role: 'assistant',
               character_id: cid,
               character_name: (mem && mem.name) || msg.character_name || '某人',
-              character_avatar: (mem && mem.avatar) || msg.character_avatar || '✨',
+              character_avatar: (mem && mem.avatar) || msg.character_avatar || null,
               content: regenText,
               created_at: new Date().toISOString(),
               truncated: true,
@@ -586,10 +586,10 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
       <header className="chat-header">
         <div className="chat-header-main">
           <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
-            ☰
+            <Icon name="menu" size={22} />
           </button>
           {isGroup ? (
-            <span className="chat-avatar">👥</span>
+            <span className="chat-avatar"><Icon name="users" size={20} /></span>
           ) : (
             <Avatar src={headerAvatarSrc} size={32} className="chat-avatar" />
           )}
@@ -642,7 +642,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         {!loading && messages.length === 0 && !sending && (
           <div className="chat-empty">
             <div className="chat-empty-avatar">
-              {isGroup ? '👥' : <Avatar src={headerAvatarSrc} size={64} />}
+              {isGroup ? <Icon name="users" size={32} /> : <Avatar src={headerAvatarSrc} size={64} />}
             </div>
             <p>
               {isGroup ? (
@@ -736,7 +736,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         {errorMsg && !sending && (
           <div className="msg-row assistant">
             <div className="bubble error-bubble">
-              ⚠️ {errorMsg}
+              <Icon name="alert" size={16} /> {errorMsg}
               <button className="btn secondary small" style={{ marginLeft: 8 }} onClick={retrySend}>重试</button>
             </div>
           </div>
@@ -768,7 +768,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         {!isGroup && suggestions.length > 0 && (
           <div className="suggestion-nudge">
             <div className="suggestion-text">
-              💡 检测到你想给「{character ? character.name : 'TA'}」加个设定：「{suggestions[0].proposed}」
+              检测到你想给「{character ? character.name : 'TA'}」加个设定：「{suggestions[0].proposed}」
             </div>
             <div className="suggestion-actions">
               <button className="btn small primary" onClick={() => handleApplySuggestion(suggestions[0].id)}>
@@ -794,7 +794,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             disabled={sending}
           />
           <button className="send-btn" onClick={send} disabled={sending || !input.trim()} title="发送">
-            ➤
+            <Icon name="send" size={18} />
           </button>
         </div>
         <div className="composer-hint">
