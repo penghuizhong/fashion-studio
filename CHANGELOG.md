@@ -1,3 +1,7 @@
+## v1.26.1
+- 系统结构优化：用户设置新增「模型管理」tab（管理员），原统计 tab 里的「积分可用模型」「模型配置」「上架新模型」整体迁移至此，统计 tab 只保留用量统计。
+- 语音模型可配置：模型管理 tab 新增「语音模型」区，三项下拉——TTS 模型（语音合成）、ASR 模型（语音识别）、音色设计模型；存 `sys_settings`（`voice_tts_model`/`voice_asr_model`/`voice_design_model`），不选 = 用默认；`voice.js` 经 `getVoiceModel()` 读取配置替代硬编码。
+
 ## v1.26.0
 - 语音功能（丐版单聊）：按住说话（最长 60 秒，波形+计时，防抖防误触）→ ASR 转文字（可编辑再发送）→ 现有聊天管线 → TTS 逐句合成 → 音频队列顺序播放。
 - 模型：`qwen-audio-3.0-asr-flash`（识别）+ `qwen-audio-3.0-tts-plus`（合成）；VoiceProvider 抽象预留降级。

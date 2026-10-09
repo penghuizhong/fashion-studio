@@ -16,5 +16,5 @@
     "prebuild": "sh ../scripts/decode-avatars.sh"
   },
   "type": "module",
-  "version": "1.26.0"
+  "version": "1.26.1"
 }
