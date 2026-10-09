@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { getConfig, getVersion, assertMultiUserConfig } from './config.js';
 import { getDb, getSetting } from './db.js';
 import { ah, apiErrorHandler } from './asyncHandler.js';
-import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, generateCardJson, generateSoulMd, friendlyLlmError, withRetry, genTitle } from './llm.js';
+import { chatStream, NO_KEY_MESSAGE, llmFetch, decideSpeakers, detectMentions, generateCardJson, generateSoulMd, friendlyLlmError, withRetry, genTitle } from './llm.js';
 import {
   getPresetCards,
   getPresetCard,
@@ -1400,12 +1400,12 @@ export function createApp() {
   // v1.22.0: 群聊单角色流式一轮——主流程 runTurn 与 POST regenerate-turn 复用
   // deps: { send, res, conv, cfg, bill, chatModel, llmOpts, usePoints, members, query, batchId }
   // st: { ctxInfo, usageInput, usageOutput, pointsBalance }（可变状态，函数内更新）
-  // opts: { excludeMentionIds }（@接龙排除列表，默认只排除自己）
+  // opts: { excludeMentionIds, wakeHint }（@接龙排除列表，默认只排除自己；wakeHint 为被点名时的唤醒提示）
   async function streamGroupTurn(deps, ch, st, opts = {}) {
     const { send, res, conv, cfg, bill, chatModel, llmOpts, usePoints, members, query, batchId } = deps;
     if (res.destroyed) return null;
     const groupCtx = buildGroupContext(members, conv.id, query, chatModel);
-    const { apiMessages, usedTokens } = groupCtx.buildFor(ch);
+    const { apiMessages, usedTokens } = groupCtx.buildFor(ch, opts.wakeHint);
     if (!st.ctxInfo) {
       st.ctxInfo = { used: usedTokens, budget: groupCtx.budget };
       send('context', st.ctxInfo);
@@ -1602,7 +1602,8 @@ export function createApp() {
       // 2. 按角色串行流式：每轮重建上下文，后发言者能看到先发言者的回复
       const speakerChars = [];
       const spokenIds = new Set();
-      const mentionedIds = new Set(); // v1.20.5: 本轮被角色@到的成员（@接龙用）
+      const mentionedBy = new Map(); // v1.24.0: 被提及成员 id -> 提及者名字（@接龙唤醒提示用）
+      let lastTurn = null; // v1.24.0: 最后一个发言者的 { ch, content }（轻模型检测用）
       let ctxInfo = null;
       let usageInput = 0;
       let usageOutput = 0;
@@ -1610,23 +1611,48 @@ export function createApp() {
       // v1.22.0: 单轮发言走 streamGroupTurn（与 regenerate-turn 复用）
       const st = { ctxInfo: null, usageInput: 0, usageOutput: 0, pointsBalance };
       const deps = { send, res, conv, cfg, bill, chatModel, llmOpts, usePoints, members, query: content, batchId };
-      const runTurn = async (sid) => {
+      const runTurn = async (sid, wakerName) => {
         if (res.destroyed) return;
         const ch = members.find((m) => m.id === sid);
         if (!ch || spokenIds.has(sid)) return;
         spokenIds.add(sid);
-        const r = await streamGroupTurn(deps, ch, st, { excludeMentionIds: [ch.id, ...spokenIds] });
+        const turnOpts = { excludeMentionIds: [ch.id, ...spokenIds] };
+        // v1.24.0: @接龙唤醒提示
+        if (wakerName) turnOpts.wakeHint = `【${wakerName}刚才提到了你，请自然地回应他/她】`;
+        const r = await streamGroupTurn(deps, ch, st, turnOpts);
         if (!r) return;
+        lastTurn = { ch, content: r.content };
         // v1.10：本轮发言过的角色跑记忆流水线（意图识别/事件驱动，gate 会自动跳过无价值轮）
         speakerChars.push(ch);
         // v1.20.5: @接龙——发言里@了本轮没说过话的成员，记下来追加一轮
-        for (const mid of r.mentioned) mentionedIds.add(mid);
+        for (const mid of r.mentioned) {
+          if (!mentionedBy.has(mid)) mentionedBy.set(mid, ch.name);
+        }
       };
 
       for (const sid of speakerIds) await runTurn(sid);
       // v1.20.5: @接龙只追加一轮（防 A@B@A 死循环），最多 3 人
-      for (const sid of [...mentionedIds].filter((id) => !spokenIds.has(id)).slice(0, 3)) {
-        await runTurn(sid);
+      for (const [sid, waker] of [...mentionedBy].filter(([id]) => !spokenIds.has(id)).slice(0, 3)) {
+        await runTurn(sid, waker);
+      }
+      // v1.24.0: 轻模型裸名检测——整轮结束后查最后一个发言者是否裸名提及他人（文本匹配漏网时兜底）
+      // 只查一次、不递归；走后台模型，不扣用户积分
+      if (lastTurn && !res.destroyed) {
+        try {
+          const detected = await detectMentions({
+            text: lastTurn.content,
+            members,
+            excludeIds: [...spokenIds],
+            model: workerModel,
+            ...llmOpts,
+            onUsage: bgBill(bill, cfg, 'mention_detect', workerModel, updBal),
+          });
+          for (const sid of detected.filter((id) => !spokenIds.has(id)).slice(0, 2)) {
+            await runTurn(sid, lastTurn.ch.name);
+          }
+        } catch (e) {
+          console.warn('[group] 提及检测失败:', e.message);
+        }
       }
 
       if (usePoints) send('points', { balance: st.pointsBalance });
