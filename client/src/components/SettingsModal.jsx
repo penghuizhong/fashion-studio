@@ -226,6 +226,16 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   // 积分模型管理
   const [pmModels, setPmModels] = useState([]);
   const [pmForm, setPmForm] = useState({ model_id: '', name: '', description: '', input_per_1m: '', output_per_1m: '' });
+  // v1.26.2: 拉取可用模型（带实时报价）+ 连通测试
+  const [orModels, setOrModels] = useState([]);
+  const [orLoading, setOrLoading] = useState(false);
+  const [orSearch, setOrSearch] = useState('');
+  const [testResult, setTestResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+  // v1.26.2: 语音模型清单 + 测试
+  const [voiceCatalog, setVoiceCatalog] = useState(null);
+  const [voiceTesting, setVoiceTesting] = useState('');
+  const [voiceTestResult, setVoiceTestResult] = useState(null);
   const [pmAdding, setPmAdding] = useState(false);
   const [pmEditing, setPmEditing] = useState(null); // 正在编辑的行 id
   const [pmEditForm, setPmEditForm] = useState({});
@@ -679,6 +689,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         output_per_1m: Math.floor(Number(f.output_per_1m)),
       });
       setPmForm({ model_id: '', name: '', description: '', input_per_1m: '', output_per_1m: '' });
+      setTestResult(null);
       await refreshPmModels();
       await refreshPoints();
       showToast('已上架', 2000);
@@ -686,6 +697,83 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       showToast((e && e.message) || '添加失败', 2600);
     } finally {
       setPmAdding(false);
+    }
+  };
+
+  // v1.26.2: 拉取 OpenRouter 可用模型（带实时报价）
+  const fetchOrModels = async () => {
+    setOrLoading(true);
+    setTestResult(null);
+    try {
+      const models = await fetchModels();
+      // 按输入价格排序
+      models.sort((a, b) => (a.pricing?.prompt ?? 999) - (b.pricing?.prompt ?? 999));
+      setOrModels(models);
+      showToast(`拉取到 ${models.length} 个模型`, 2000);
+    } catch (e) {
+      showToast((e && e.message) || '拉取失败', 2600);
+    } finally {
+      setOrLoading(false);
+    }
+  };
+
+  // v1.26.2: 选中模型自动填表单（含实时报价）
+  const pickOrModel = (m) => {
+    const p = m.pricing || {};
+    // USD/1M tokens → 积分/1M tokens（按 1元=100积分，汇率7.2估算）
+    const toPoints = (usd) => (usd == null ? '' : String(Math.round(usd * 7.2 * 100)));
+    setPmForm((f) => ({
+      ...f,
+      model_id: m.id,
+      name: m.name || m.id,
+      input_per_1m: toPoints(p.prompt),
+      output_per_1m: toPoints(p.completion),
+    }));
+    showToast(`已填入 ${m.id}`, 2000);
+  };
+
+  // v1.26.2: 连通测试
+  const testModel = async () => {
+    const mid = pmForm.model_id.trim();
+    if (!mid) {
+      showToast('请先填写模型 ID', 2000);
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await api.testChatModel(mid);
+      setTestResult(r);
+    } catch (e) {
+      setTestResult({ ok: false, error: (e && e.message) || '测试失败' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  // v1.26.2: 拉取语音模型清单
+  const fetchVoiceCatalog = async () => {
+    try {
+      const c = await api.listVoiceModels();
+      setVoiceCatalog(c);
+    } catch (e) {
+      showToast((e && e.message) || '拉取失败', 2600);
+    }
+  };
+
+  // v1.26.2: 语音连通测试
+  const testVoice = async (type) => {
+    const modelKey = type === 'tts' ? 'voice_tts_model' : 'voice_asr_model';
+    const model = modelCfg[modelKey] || '';
+    setVoiceTesting(type);
+    setVoiceTestResult(null);
+    try {
+      const r = await api.testVoiceModel({ type, model: model || undefined });
+      setVoiceTestResult({ type, ...r });
+    } catch (e) {
+      setVoiceTestResult({ type, ok: false, error: (e && e.message) || '测试失败' });
+    } finally {
+      setVoiceTesting('');
     }
   };
 
@@ -1149,6 +1237,42 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                     </button>
                   </div>
                   <div className="card-title" style={{ marginTop: 4 }}>上架新模型</div>
+                  {/* v1.26.2: 先拉取可用模型（含实时报价） */}
+                  <div className="key-input-row" style={{ marginBottom: 8 }}>
+                    <button className="btn secondary" onClick={fetchOrModels} disabled={orLoading}>
+                      {orLoading ? '拉取中…' : '拉取可用模型'}
+                    </button>
+                    {orModels.length > 0 && (
+                      <input
+                        value={orSearch}
+                        onChange={(e) => setOrSearch(e.target.value)}
+                        placeholder="搜索模型…"
+                        style={{ flex: 1 }}
+                      />
+                    )}
+                  </div>
+                  {orModels.length > 0 && (
+                    <div className="or-model-list">
+                      {orModels
+                        .filter((m) => !orSearch || m.id.toLowerCase().includes(orSearch.toLowerCase()) || (m.name || '').toLowerCase().includes(orSearch.toLowerCase()))
+                        .slice(0, 50)
+                        .map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            className="or-model-item"
+                            onClick={() => pickOrModel(m)}
+                            title={m.id}
+                          >
+                            <span className="or-model-name">{m.name || m.id}</span>
+                            <span className="or-model-price">
+                              {m.pricing?.prompt != null ? `$${m.pricing.prompt.toFixed(2)}` : '?'}/
+                              {m.pricing?.completion != null ? `$${m.pricing.completion.toFixed(2)}` : '?'} /1M
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  )}
                   <label>
                     模型 ID（须与 OpenRouter 一致）
                     <input value={pmForm.model_id} onChange={(e) => setPmForm((f) => ({ ...f, model_id: e.target.value }))} placeholder="如 openai/gpt-7-mini" spellCheck={false} autoComplete="off" />
@@ -1164,32 +1288,85 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                   <div className="key-input-row">
                     <input value={pmForm.input_per_1m} onChange={(e) => setPmForm((f) => ({ ...f, input_per_1m: e.target.value }))} placeholder="输入单价 /1M" inputMode="numeric" autoComplete="off" />
                     <input value={pmForm.output_per_1m} onChange={(e) => setPmForm((f) => ({ ...f, output_per_1m: e.target.value }))} placeholder="输出单价 /1M" inputMode="numeric" autoComplete="off" />
+                    <button className="btn secondary" onClick={testModel} disabled={testing}>
+                      {testing ? '测试中…' : '连通测试'}
+                    </button>
                     <button className="btn primary" onClick={pmAdd} disabled={pmAdding}>{pmAdding ? '上架中…' : '上架'}</button>
                   </div>
+                  {/* v1.26.2: 连通测试结果 */}
+                  {testResult && (
+                    <div className={`test-result${testResult.ok ? ' ok' : ' fail'}`}>
+                      {testResult.ok ? (
+                        <>✓ 连通正常（{testResult.latency}ms）{testResult.reply && ` · 回复: ${testResult.reply}`}</>
+                      ) : (
+                        <>✗ {testResult.error || '连接失败'}{testResult.latency != null && `（${testResult.latency}ms）`}</>
+                      )}
+                    </div>
+                  )}
                   <div className="card-title" style={{ marginTop: 16 }}>语音模型</div>
                   <p className="key-desc small">TTS/ASR/音色设计走 DashScope，不选 = 用默认模型。</p>
+                  {/* v1.26.2: 拉取语音模型清单 */}
+                  <div className="key-input-row" style={{ marginBottom: 8 }}>
+                    <button className="btn secondary small" onClick={fetchVoiceCatalog}>
+                      拉取语音模型清单
+                    </button>
+                  </div>
+                  {voiceCatalog && voiceCatalog.tts && (
+                    <div className="key-desc small" style={{ marginBottom: 8 }}>
+                      可用 TTS：{voiceCatalog.tts.map((m) => `${m.id}（${m.price}）`).join('、')}
+                    </div>
+                  )}
                   <label>
                     TTS 模型（语音合成）
-                    <select
-                      value={modelCfg.voice_tts_model || ""}
-                      onChange={(e) => setModelCfg((f) => ({ ...f, voice_tts_model: e.target.value }))}
-                    >
-                      <option value="">默认（qwen-audio-3.0-tts-plus）</option>
-                      <option value="qwen-audio-3.0-tts-plus">qwen-audio-3.0-tts-plus（高质量）</option>
-                      <option value="qwen3-tts-flash">qwen3-tts-flash（便宜）</option>
-                      <option value="cosyvoice-v3.5-plus">cosyvoice-v3.5-plus（超高表现力）</option>
-                    </select>
+                    <div className="key-input-row">
+                      <select
+                        value={modelCfg.voice_tts_model || ""}
+                        onChange={(e) => setModelCfg((f) => ({ ...f, voice_tts_model: e.target.value }))}
+                        style={{ flex: 1 }}
+                      >
+                        <option value="">默认（qwen-audio-3.0-tts-plus）</option>
+                        {(voiceCatalog?.tts || [
+                          { id: 'qwen-audio-3.0-tts-plus', name: '高质量' },
+                          { id: 'qwen3-tts-flash', name: '便宜' },
+                          { id: 'cosyvoice-v3.5-plus', name: '超高表现力' },
+                        ]).map((m) => (
+                          <option key={m.id} value={m.id}>{m.id}{m.price ? `（${m.price}）` : m.name ? `（${m.name}）` : ''}</option>
+                        ))}
+                      </select>
+                      <button className="btn secondary small" onClick={() => testVoice('tts')} disabled={voiceTesting === 'tts'}>
+                        {voiceTesting === 'tts' ? '测试中…' : '连通测试'}
+                      </button>
+                    </div>
                   </label>
                   <label>
                     ASR 模型（语音识别）
-                    <select
-                      value={modelCfg.voice_asr_model || ""}
-                      onChange={(e) => setModelCfg((f) => ({ ...f, voice_asr_model: e.target.value }))}
-                    >
-                      <option value="">默认（qwen-audio-3.0-asr-flash）</option>
-                      <option value="qwen-audio-3.0-asr-flash">qwen-audio-3.0-asr-flash</option>
-                    </select>
+                    <div className="key-input-row">
+                      <select
+                        value={modelCfg.voice_asr_model || ""}
+                        onChange={(e) => setModelCfg((f) => ({ ...f, voice_asr_model: e.target.value }))}
+                        style={{ flex: 1 }}
+                      >
+                        <option value="">默认（qwen-audio-3.0-asr-flash）</option>
+                        {(voiceCatalog?.asr || [
+                          { id: 'qwen-audio-3.0-asr-flash', name: '' },
+                        ]).map((m) => (
+                          <option key={m.id} value={m.id}>{m.id}{m.price ? `（${m.price}）` : ''}</option>
+                        ))}
+                      </select>
+                      <button className="btn secondary small" onClick={() => testVoice('asr')} disabled={voiceTesting === 'asr'}>
+                        {voiceTesting === 'asr' ? '测试中…' : '连通测试'}
+                      </button>
+                    </div>
                   </label>
+                  {voiceTestResult && (
+                    <div className={`test-result${voiceTestResult.ok ? ' ok' : ' fail'}`}>
+                      {voiceTestResult.ok ? (
+                        <>✓ {voiceTestResult.type === 'tts' ? 'TTS' : 'ASR'} 连通正常（{voiceTestResult.latency}ms{voiceTestResult.bytes ? `，${voiceTestResult.bytes}字节` : ''}）</>
+                      ) : (
+                        <>✗ {voiceTestResult.error || '连接失败'}</>
+                      )}
+                    </div>
+                  )}
                   <label>
                     音色设计模型
                     <select
@@ -1197,7 +1374,9 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                       onChange={(e) => setModelCfg((f) => ({ ...f, voice_design_model: e.target.value }))}
                     >
                       <option value="">默认（qwen3-tts-vd-2026-01-26）</option>
-                      <option value="qwen3-tts-vd-2026-01-26">qwen3-tts-vd-2026-01-26</option>
+                      {(voiceCatalog?.design || []).map((m) => (
+                        <option key={m.id} value={m.id}>{m.id}{m.price ? `（${m.price}）` : ''}</option>
+                      ))}
                     </select>
                   </label>
                   <div className="key-input-row" style={{ marginTop: 8 }}>
