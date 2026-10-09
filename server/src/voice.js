@@ -3,7 +3,8 @@
 import { getConfig } from './config.js';
 import { getSetting } from './db.js';
 
-const DASHSCOPE_BASE = 'https://dashscope.aliyuncs.com';
+const DASHSCOPE_BASE = (process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com').replace(/\/+$/, '');
+// v1.26.4: 支持自定义 DashScope API 地址（千问 token-plan 等），默认官方地址保底
 
 // 语音模型配置（默认值；管理员可在模型管理 tab 覆盖）
 export const VOICE_MODELS = {
