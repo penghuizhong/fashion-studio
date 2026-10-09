@@ -230,7 +230,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [pmEditing, setPmEditing] = useState(null); // 正在编辑的行 id
   const [pmEditForm, setPmEditForm] = useState({});
   // v1.12 模型配置（管理员）：后台模型 / 聊天默认模型
-  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null });
+  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null, voice_tts_model: '', voice_asr_model: '', voice_design_model: '' });
   const [modelCfgSaving, setModelCfgSaving] = useState(false);
   const loadModelCfg = async () => {
     try {
@@ -239,6 +239,9 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         worker_model: (s && s.worker_model) || '',
         chat_default_model: (s && s.chat_default_model) || '',
         filter_fallback_models: (s && Array.isArray(s.filter_fallback_models)) ? s.filter_fallback_models : null,
+        voice_tts_model: (s && s.voice_tts_model) || '',
+        voice_asr_model: (s && s.voice_asr_model) || '',
+        voice_design_model: (s && s.voice_design_model) || '',
       });
       // v1.18.1: 注册送积分（管理员可配）
       if (s && typeof s.signup_bonus === 'number') setSignupBonus(String(s.signup_bonus));
@@ -324,6 +327,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     { id: 'invite', icon: 'gift', label: '邀请' },
   ];
   if (isAdmin) TABS.push({ id: 'stats', icon: 'chart', label: '统计' });
+  if (isAdmin) TABS.push({ id: 'models', icon: 'cpu', label: '模型管理' });
   if (isAdmin) TABS.push({ id: 'prompts', icon: 'chat', label: '提示词' });
   if (isAdmin) TABS.push({ id: 'review', icon: 'shield', label: '审核' });
 
@@ -423,8 +427,6 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         // v1.19.0: 自带 Key 模型分布（失败不影响主统计）
         const am = await api.adminStatsApiModels().catch(() => []);
         if (!cancelled) setStats({ ov, da: da || [], mo: mo || [], tu: tu || [], am: am || [] });
-        const pm = await api.adminPointsModels().catch(() => []);
-        if (!cancelled) setPmModels(Array.isArray(pm) ? pm : []);
         if (!cancelled) await loadModelCfg();
       } catch (e) {
         showToast((e && e.message) || '读取统计失败', 2600);
@@ -634,6 +636,22 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       showToast(link, 4000);
     }
   };
+
+  // v1.26.1: 模型管理 tab 懒加载
+  useEffect(() => {
+    if (tab !== 'models' || !isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const pm = await api.adminPointsModels().catch(() => []);
+        if (!cancelled) setPmModels(Array.isArray(pm) ? pm : []);
+        if (!cancelled) await loadModelCfg();
+      } catch (e) {
+        showToast((e && e.message) || '读取模型列表失败', 2200);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tab, isAdmin]);
 
   // ---- 积分模型管理 ----
   const refreshPmModels = async () => {
@@ -1012,6 +1030,14 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                     <button className="btn secondary" onClick={saveSignupBonus} disabled={signupBonusSaving}>{signupBonusSaving ? '保存中…' : '保存'}</button>
                   </div>
                   <p className="key-desc small">新用户首次聊天成功后到账；只影响新用户，已发放的不追溯。</p>
+                </>
+              ) : (
+                <p className="key-desc small">暂无数据</p>
+              )}
+            </>
+          )}
+          {tab === 'models' && isAdmin && (
+            <>
                   <div className="card-title" style={{ marginTop: 4 }}>积分可用模型</div>
                   <p className="key-desc small">上架后用户可在「积分」tab 选用；单价单位：积分 / 1M tokens；后台任务用的模型在下方「模型配置」里指定（不选则自动用最便宜的）。</p>
                   <div className="pm-list">
@@ -1140,10 +1166,45 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                     <input value={pmForm.output_per_1m} onChange={(e) => setPmForm((f) => ({ ...f, output_per_1m: e.target.value }))} placeholder="输出单价 /1M" inputMode="numeric" autoComplete="off" />
                     <button className="btn primary" onClick={pmAdd} disabled={pmAdding}>{pmAdding ? '上架中…' : '上架'}</button>
                   </div>
-                </>
-              ) : (
-                <p className="key-desc small">暂无数据</p>
-              )}
+                  <div className="card-title" style={{ marginTop: 16 }}>语音模型</div>
+                  <p className="key-desc small">TTS/ASR/音色设计走 DashScope，不选 = 用默认模型。</p>
+                  <label>
+                    TTS 模型（语音合成）
+                    <select
+                      value={modelCfg.voice_tts_model || ""}
+                      onChange={(e) => setModelCfg((f) => ({ ...f, voice_tts_model: e.target.value }))}
+                    >
+                      <option value="">默认（qwen-audio-3.0-tts-plus）</option>
+                      <option value="qwen-audio-3.0-tts-plus">qwen-audio-3.0-tts-plus（高质量）</option>
+                      <option value="qwen3-tts-flash">qwen3-tts-flash（便宜）</option>
+                      <option value="cosyvoice-v3.5-plus">cosyvoice-v3.5-plus（超高表现力）</option>
+                    </select>
+                  </label>
+                  <label>
+                    ASR 模型（语音识别）
+                    <select
+                      value={modelCfg.voice_asr_model || ""}
+                      onChange={(e) => setModelCfg((f) => ({ ...f, voice_asr_model: e.target.value }))}
+                    >
+                      <option value="">默认（qwen-audio-3.0-asr-flash）</option>
+                      <option value="qwen-audio-3.0-asr-flash">qwen-audio-3.0-asr-flash</option>
+                    </select>
+                  </label>
+                  <label>
+                    音色设计模型
+                    <select
+                      value={modelCfg.voice_design_model || ""}
+                      onChange={(e) => setModelCfg((f) => ({ ...f, voice_design_model: e.target.value }))}
+                    >
+                      <option value="">默认（qwen3-tts-vd-2026-01-26）</option>
+                      <option value="qwen3-tts-vd-2026-01-26">qwen3-tts-vd-2026-01-26</option>
+                    </select>
+                  </label>
+                  <div className="key-input-row" style={{ marginTop: 8 }}>
+                    <button className="btn primary" onClick={saveModelCfg} disabled={modelCfgSaving}>
+                      {modelCfgSaving ? "保存中…" : "保存模型配置"}
+                    </button>
+                  </div>
             </>
           )}
           {tab === 'prompts' && isAdmin && (
