@@ -4136,3 +4136,183 @@ textarea {
   background: var(--bg);
   color: var(--text);
 }
+
+/* ============ v1.26.0: 语音 ============ */
+.mic-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.mic-btn:active, .mic-btn.recording {
+  background: var(--accent-bg, #f0f0f0);
+  color: #e74c3c;
+}
+.mic-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.recording-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  pointer-events: none;
+}
+.recording-box {
+  background: var(--bg, #fff);
+  border-radius: 16px;
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+.recording-wave {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+}
+.recording-wave span {
+  width: 4px;
+  border-radius: 2px;
+  background: #e74c3c;
+  height: calc(8px + var(--level, 0) * 32px);
+  transition: height 0.1s;
+}
+.recording-wave span:nth-child(2) { transition-delay: 0.05s; }
+.recording-wave span:nth-child(3) { transition-delay: 0.1s; }
+.recording-wave span:nth-child(4) { transition-delay: 0.05s; }
+.recording-time {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.recording-tip {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+/* 朗读按钮播放中状态 */
+.regen-row .btn.playing {
+  color: #e74c3c;
+  border-color: #e74c3c;
+}
+
+/* v1.26.0: 语音设置 */
+.speed-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.form-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 12px;
+  line-height: 1.5;
+}
+
+/* v1.26.0: 音色选择器 */
+.voice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.voice-option {
+  display: flex;
+  align-items: stretch;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg);
+  transition: border-color 0.15s;
+}
+.voice-option.selected {
+  border-color: var(--accent, #007aff);
+  background: var(--accent-bg, #f0f7ff);
+}
+.voice-option-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.voice-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.voice-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.voice-test {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.voice-test.testing {
+  color: #e74c3c;
+}
+.voice-test:hover {
+  background: var(--hover-bg, #f5f5f5);
+}
+.field-optional {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: normal;
+}
+
+/* v1.26.0: 定制音色 */
+.voice-option.custom {
+  border-style: dashed;
+}
+.voice-option.custom.selected {
+  border-style: solid;
+}
+.voice-design-btn {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.form-error {
+  color: #e74c3c;
+  font-size: 13px;
+  margin: 8px 0;
+}

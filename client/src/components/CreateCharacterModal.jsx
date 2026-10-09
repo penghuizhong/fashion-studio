@@ -4,6 +4,8 @@ import { api, isMultiUserMode } from '../api.js';
 import Modal from './Modal.jsx';
 import Icon from './icons.jsx';
 import AvatarPicker from './AvatarPicker.jsx';
+// v1.26.0: 音色选择
+import VoicePicker from './VoicePicker.jsx';
 import { AVATAR_LIST } from '../avatars.js';
 import { ROLEPLAY_TEMPLATE } from '../roleplayTemplate.js';
 
@@ -30,6 +32,7 @@ const SOUL_TEMPLATE_TEXT = {
 export default function CreateCharacterModal({ onClose, onCreated, showToast }) {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState(AVATAR_LIST[0]);
+  const [voiceId, setVoiceId] = useState(null); // v1.26.0: 音色（null=跟随全局）
   const [soul, setSoul] = useState('');
   const [userMd, setUserMd] = useState('');
   const [roleplayMode, setRoleplayMode] = useState(false);
@@ -80,6 +83,7 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
         name: name.trim(),
         avatar: effectiveAvatar,
         roleplay_mode: roleplayMode ? 1 : 0,
+        voice_id: voiceId || null, // v1.26.0: 音色
       };
       // v1.16.4: 新建时可自定义扮演指令（空=用内置模板）
       if (roleplayMode && roleplayPrompt.trim()) {
@@ -122,6 +126,12 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
       <div>
         <div className="field-label">头像</div>
         <AvatarPicker value={avatar} onChange={setAvatar} />
+      </div>
+
+      {/* v1.26.0: 音色选择 */}
+      <div>
+        <div className="field-label">音色 <span className="field-optional">（不选=跟随全局默认）</span></div>
+        <VoicePicker value={voiceId} onChange={setVoiceId} />
       </div>
 
       <div>
