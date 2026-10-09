@@ -1694,7 +1694,13 @@ export function createApp() {
   app.delete('/api/conversations/:id/messages', ah(async (req, res) => {
     const conv = getConv(req.params.id, req);
     if (!conv) return conv404(res);
+    // v1.25.2: 清空时级联删该对话消息来源的 facts（facts 按角色存，需先取消息 ID 列表）
+    const msgIds = db.prepare('SELECT id FROM messages WHERE conversation_id = ?').all(conv.id).map((r) => r.id);
     db.transaction(() => {
+      if (msgIds.length) {
+        const placeholders = msgIds.map(() => '?').join(',');
+        db.prepare(`DELETE FROM memory_facts WHERE source_message_id IN (${placeholders})`).run(...msgIds);
+      }
       db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conv.id);
       db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ?').run(conv.id);
       db.prepare('DELETE FROM memory_events WHERE conversation_id = ?').run(conv.id);
@@ -1703,12 +1709,18 @@ export function createApp() {
   }));
 
   // v1.20.5: 删除单条消息（按所属对话鉴权）
+  // v1.25.2: 级联清理——删该消息来源的 facts；若消息已被摘要（含在 message_upto 内），删相关摘要以便重生成
   app.delete('/api/messages/:id', ah(async (req, res) => {
     const m = db.prepare('SELECT conversation_id FROM messages WHERE id = ?').get(req.params.id);
     if (!m) return res.status(404).json({ error: '消息不存在' });
     const conv = getConv(m.conversation_id, req);
     if (!conv) return conv404(res);
-    db.prepare('DELETE FROM messages WHERE id = ?').run(req.params.id);
+    const mid = Number(req.params.id);
+    db.transaction(() => {
+      db.prepare('DELETE FROM messages WHERE id = ?').run(mid);
+      db.prepare('DELETE FROM memory_facts WHERE source_message_id = ?').run(mid);
+      db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ? AND message_upto >= ?').run(conv.id, mid);
+    })();
     res.json({ ok: true });
   }));
 
