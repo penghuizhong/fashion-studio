@@ -1,3 +1,6 @@
+## v1.23.0
+- better-sqlite3 `^11.10.0` → `^12.11.1`：v11 在 Node 24+ 上编译失败/随机崩溃（V8 删了它用的 API）；v12 自带 Node 20–26 预编译二进制，无需现场编译。本地 Node 24 验证：single 44/44、multi 62/62，一次通过、无 teardown 崩溃。VPS 可直接上 Node 26。
+
 ## v1.22.2
 - 修群聊断流漏网（用户反馈 A：半截消息下不出"重新生成"按钮）：SSE 异常断开时 `turn_done` 到不了前端，半截文本卡在流式气泡里永远变不成消息。现前端记 `batch_id` + 已完成角色集合，`catch` 里把没收到 `turn_done` 的半截转成 `truncated` 消息补上按钮；`POST /regenerate-turn` 支持按 `{character_id, batch_id}` 定位后端半截（无 `message_id` 时），找不到（后端崩在落库前）则直接重跑；重新生成自身断流也同样补半截。
 
