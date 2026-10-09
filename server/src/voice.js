@@ -108,6 +108,61 @@ class DashScopeVoiceProvider {
     return { audio, chars };
   }
 
+  // ============ v1.27.0: 音色克隆（音频文件 → 定制音色） ============
+  // audioBuffer: 参考音频（15-60秒，清晰人声，无背景音乐）
+  // 返回 { voiceId, name }
+  async cloneVoice(audioBuffer, { name, mimeType = 'audio/wav' } = {}) {
+    const cfg = getConfig();
+    if (cfg.mockLlm) {
+      return { voiceId: `mock_clone_${Date.now()}`, name: name || 'mock' };
+    }
+    // 构建 multipart/form-data
+    const boundary = `----soulchat${Date.now()}`;
+    const parts = [];
+    const enc = new TextEncoder();
+    // 文件部分
+    parts.push(enc.encode(`--${boundary}\r\n`));
+    parts.push(enc.encode(`Content-Disposition: form-data; name="file"; filename="voice_sample.wav"\r\n`));
+    parts.push(enc.encode(`Content-Type: ${mimeType}\r\n\r\n`));
+    parts.push(audioBuffer);
+    parts.push(enc.encode(`\r\n`));
+    // 参数部分
+    const fields = {
+      model: 'qwen-voice-enrollment',
+      target_model: 'qwen3-tts-vc-2026-01-22',
+      action: 'create',
+      preferred_name: name,
+    };
+    for (const [k, v] of Object.entries(fields)) {
+      parts.push(enc.encode(`--${boundary}\r\n`));
+      parts.push(enc.encode(`Content-Disposition: form-data; name="${k}"\r\n\r\n`));
+      parts.push(enc.encode(`${v}\r\n`));
+    }
+    parts.push(enc.encode(`--${boundary}--\r\n`));
+    // 合并
+    const totalLen = parts.reduce((s, p) => s + p.length, 0);
+    const body = new Uint8Array(totalLen);
+    let off = 0;
+    for (const p of parts) { body.set(p, off); off += p.length; }
+
+    const res = await fetch(`${DASHSCOPE_BASE}/api/v1/services/audio/tts/customization`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      throw new Error(`音色克隆失败 (${res.status}): ${t.slice(0, 200)}`);
+    }
+    const json = await res.json();
+    const voiceId = json?.output?.voice || json?.output?.voice_id;
+    if (!voiceId) throw new Error('音色克隆失败：未返回 voice_id');
+    return { voiceId, name };
+  }
+
   // ============ v1.26.0: 声音设计（文本描述 → 定制音色） ============
   // prompt: 音色描述（如"温柔的年轻女性声音，略带沙哑"）
   // 返回 { voiceId, previewAudio(base64), name }
