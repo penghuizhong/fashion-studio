@@ -75,5 +75,6 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd /opt/soulchat
+            docker image prune -af
             docker compose pull soulchat
             docker compose up -d soulchat
