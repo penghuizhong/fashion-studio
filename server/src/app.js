@@ -1711,15 +1711,37 @@ export function createApp() {
     const conv = getConv(req.params.id, req);
     if (!conv) return conv404(res);
     if (conv.type !== 'group') return res.status(400).json({ error: '仅群聊支持' });
-    const { message_id } = req.body || {};
-    const msg = db
-      .prepare('SELECT id, role, character_id FROM messages WHERE id = ? AND conversation_id = ?')
-      .get(message_id, conv.id);
-    if (!msg || msg.role !== 'assistant' || !msg.character_id) {
-      return res.status(400).json({ error: '找不到该角色回复' });
+    const { message_id, character_id, batch_id } = req.body || {};
+    let msg = null;
+    if (message_id) {
+      msg = db
+        .prepare('SELECT id, role, character_id FROM messages WHERE id = ? AND conversation_id = ?')
+        .get(message_id, conv.id);
+    } else if (character_id && batch_id) {
+      // v1.22.2: SSE 断流时前端没收到 turn_done、拿不到 message_id——按角色+整轮 batch 定位半截消息
+      msg = db
+        .prepare(
+          `SELECT id, role, character_id FROM messages WHERE conversation_id = ? AND character_id = ?
+           AND batch_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1`
+        )
+        .get(conv.id, character_id, batch_id);
+      // 后端崩在落库前则无半截可删，直接重跑即可，不报错
     }
-    // 删掉半截
-    db.prepare('DELETE FROM messages WHERE id = ?').run(msg.id);
+    if (message_id) {
+      // 明确指定 message_id 但找不到→报错（调用方逻辑错误）
+      if (!msg || msg.role !== 'assistant' || !msg.character_id) {
+        return res.status(400).json({ error: '找不到该角色回复' });
+      }
+      // 删掉半截
+      db.prepare('DELETE FROM messages WHERE id = ?').run(msg.id);
+    } else {
+      // character_id+batch_id 定位：找到就删掉半截，找不到（后端崩在落库前）则直接重跑
+      if (msg && msg.role === 'assistant' && msg.character_id) {
+        db.prepare('DELETE FROM messages WHERE id = ?').run(msg.id);
+      } else {
+        msg = { character_id, role: 'assistant' };
+      }
+    }
 
     const cfg = getConfig();
     // 凭证与计费（同 handleGroupMessage）

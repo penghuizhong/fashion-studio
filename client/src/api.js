@@ -199,12 +199,13 @@ export async function regenerateMessage(conversationId) {
 }
 
 // v1.22.0: 群聊单轮重新生成——删掉指定半截回复，只重跑该角色一轮（SSE）
-export async function regenerateGroupTurn(conversationId, messageId, onEvent, signal) {
+// v1.22.2: locator 为 {message_id} 或 {character_id, batch_id}（断流补的半截无 message_id）
+export async function regenerateGroupTurn(conversationId, locator, onEvent, signal) {
   const res = await fetch(`/api/conversations/${conversationId}/regenerate-turn`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     credentials: 'same-origin',
-    body: JSON.stringify({ message_id: messageId }),
+    body: JSON.stringify(locator),
     signal,
   });
   if (!res.ok) throw await httpError(res, '重新生成失败');
