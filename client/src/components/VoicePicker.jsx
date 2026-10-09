@@ -210,32 +210,65 @@ export default function VoicePicker({ value, onChange }) {
 
 // 定制音色弹窗
 function VoiceDesignModal({ onClose, onCreated }) {
+  const [mode, setMode] = useState('design'); // 'design' | 'clone'
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [audioFile, setAudioFile] = useState(null);
+  const [audioBase64, setAudioBase64] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+
+  const handleFileChange = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) {
+      setError('文件过大（限 10MB）');
+      return;
+    }
+    setAudioFile(f);
+    setError('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = String(reader.result).split(',')[1] || '';
+      setAudioBase64(b64);
+    };
+    reader.readAsDataURL(f);
+  };
 
   const handleCreate = async () => {
     if (!name.trim()) {
       setError('请给音色起个名字');
       return;
     }
-    if (!prompt.trim()) {
+    if (mode === 'design' && !prompt.trim()) {
       setError('请描述想要的音色');
+      return;
+    }
+    if (mode === 'clone' && !audioBase64) {
+      setError('请上传参考音频');
       return;
     }
     setCreating(true);
     setError('');
     try {
-      const r = await api.voiceDesign({
-        name: name.trim(),
-        prompt: prompt.trim(),
-        previewText: '你好，我是你的专属定制音色，很高兴为你服务。',
-      });
-      // 试听生成的音色
-      if (r.preview_audio) {
-        const audio = new Audio(`data:audio/mp3;base64,${r.preview_audio}`);
-        audio.play().catch(() => {});
+      let r;
+      if (mode === 'clone') {
+        r = await api.voiceClone({
+          name: name.trim(),
+          audio: audioBase64,
+          mimeType: audioFile.type || 'audio/wav',
+        });
+      } else {
+        r = await api.voiceDesign({
+          name: name.trim(),
+          prompt: prompt.trim(),
+          previewText: '你好，我是你的专属定制音色，很高兴为你服务。',
+        });
+        // 试听生成的音色
+        if (r.preview_audio) {
+          const audio = new Audio(`data:audio/mp3;base64,${r.preview_audio}`);
+          audio.play().catch(() => {});
+        }
       }
       onCreated(r);
     } catch (e) {
@@ -255,6 +288,23 @@ function VoiceDesignModal({ onClose, onCreated }) {
           </button>
         </div>
         <div className="modal-body">
+          {/* v1.27.0: 描述生成 / 音频克隆 双模式 */}
+          <div className="key-input-row" style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              className={`btn small ${mode === 'design' ? 'primary' : 'secondary'}`}
+              onClick={() => setMode('design')}
+            >
+              描述生成
+            </button>
+            <button
+              type="button"
+              className={`btn small ${mode === 'clone' ? 'primary' : 'secondary'}`}
+              onClick={() => setMode('clone')}
+            >
+              音频克隆
+            </button>
+          </div>
           <div className="form-group">
             <label>音色名字</label>
             <input
@@ -264,24 +314,39 @@ function VoiceDesignModal({ onClose, onCreated }) {
               maxLength={16}
             />
           </div>
-          <div className="form-group">
-            <label>音色描述</label>
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="例如：一个温柔的年轻女性声音，略带沙哑，说话节奏缓慢，有知性美"
-              rows={3}
-              maxLength={500}
-            />
-          </div>
+          {mode === 'design' ? (
+            <div className="form-group">
+              <label>音色描述</label>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="例如：一个温柔的年轻女性声音，略带沙哑，说话节奏缓慢，有知性美"
+                rows={3}
+                maxLength={500}
+              />
+            </div>
+          ) : (
+            <div className="form-group">
+              <label>参考音频</label>
+              <input
+                type="file"
+                accept="audio/*"
+                onChange={handleFileChange}
+              />
+              {audioFile && (
+                <p className="form-hint">已选择：{audioFile.name}（{(audioFile.size / 1024).toFixed(0)} KB）</p>
+              )}
+              <p className="form-hint">15-60 秒清晰人声，无背景音乐，单人说话。克隆一次后永久使用 voice_id，不重复传音频。</p>
+            </div>
+          )}
           {error && <div className="form-error">{error}</div>}
-          <p className="form-hint">每次生成消耗 20 积分。描述越具体，生成的音色越贴合。</p>
+          <p className="form-hint">每次生成消耗 20 积分。{mode === 'design' ? '描述越具体，生成的音色越贴合。' : '音频质量越好，克隆效果越像。'}</p>
           <button
             className="btn primary"
             onClick={handleCreate}
             disabled={creating}
           >
-            {creating ? '生成中…' : '生成音色（20 积分）'}
+            {creating ? '生成中…' : mode === 'clone' ? '克隆音色（20 积分）' : '生成音色（20 积分）'}
           </button>
         </div>
       </div>

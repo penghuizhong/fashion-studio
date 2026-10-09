@@ -375,4 +375,6 @@ export const api = {
   testChatModel: (model_id) => post('/api/admin/models/test', { model_id }),
   listVoiceModels: () => get('/api/voice/models'),
   testVoiceModel: (data) => post('/api/voice/test', data),
+  // v1.27.0: 音色克隆
+  voiceClone: (data) => post('/api/voice/clone', data),
 };
