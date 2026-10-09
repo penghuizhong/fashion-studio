@@ -53,7 +53,10 @@ import {
   COLLECTION_REWARD,
   hasSignupBonus,
   recordByokUsage,
+  getBalance,
 } from './points.js';
+// v1.26.0: 语音功能
+import { getVoiceProvider, extractDialogue, splitSentences, cleanForTts, VOICE_MODELS, VOICE_PRICING, calcAsrPoints, calcTtsPoints, getCachedAudio, setCachedAudio } from './voice.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
 const FILE_FIELDS = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
@@ -956,7 +959,8 @@ export function createApp() {
   app.post('/api/characters', (req, res) => {
     // v1.16.0: 新建角色弹窗改版，支持 soul_md / user_md / roleplay_mode
     // v1.16.4: 支持 roleplay_prompt（空=用内置模板）
-    const { name, avatar, temperature, soul_md, user_md, roleplay_mode, roleplay_prompt, jailbreak_preset } = req.body || {};
+    // v1.26.0: 支持 voice_id（音色）
+    const { name, avatar, temperature, soul_md, user_md, roleplay_mode, roleplay_prompt, jailbreak_preset, voice_id } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'name 不能为空' });
     // v1.18.1: 破限白名单——无权限用户不能建开着破限的角色
     if (jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] && !canUseJailbreak(uidOf(req))) {
@@ -977,11 +981,12 @@ export function createApp() {
       roleplay_mode: roleplay_mode ? 1 : 0,
       roleplay_prompt: roleplay_prompt && String(roleplay_prompt).trim() ? String(roleplay_prompt).trim() : null,
       jailbreak_preset: jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] ? jailbreak_preset : null,
+      voice_id: voice_id || null, // v1.26.0
       created_at: t,
       updated_at: t,
     };
     db.prepare(
-      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,roleplay_mode,roleplay_prompt,jailbreak_preset,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,roleplay_mode,roleplay_prompt,jailbreak_preset,voice_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
     ).run(
       row.id,
       row.user_id,
@@ -995,6 +1000,7 @@ export function createApp() {
       row.roleplay_mode,
       row.roleplay_prompt,
       row.jailbreak_preset,
+      row.voice_id,
       row.created_at,
       row.updated_at
     );
@@ -1010,7 +1016,7 @@ export function createApp() {
   app.put('/api/characters/:id', (req, res) => {
     const c = getChar(req.params.id, req);
     if (!c) return char404(res);
-    const { name, avatar, temperature, roleplay_mode, roleplay_prompt, jailbreak_preset } = req.body || {};
+    const { name, avatar, temperature, roleplay_mode, roleplay_prompt, jailbreak_preset, voice_id } = req.body || {};
     // v1.18.1: 破限白名单——无权限用户不能开启破限（关闭永远允许）
     if (jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] && !canUseJailbreak(uidOf(req))) {
       return res.status(403).json({ error: '破限模式需管理员授权' });
@@ -1035,11 +1041,13 @@ export function createApp() {
           : jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset]
             ? jailbreak_preset
             : null,
+      // v1.26.0: 音色（null=跟随全局默认）
+      voice_id: voice_id === undefined ? (c.voice_id || null) : (voice_id || null),
       updated_at: now(),
     };
     if (!next.name) return res.status(400).json({ error: 'name 不能为空' });
     db.prepare(
-      'UPDATE characters SET name=?, avatar=?, model=?, temperature=?, roleplay_mode=?, roleplay_prompt=?, jailbreak_preset=?, updated_at=? WHERE id=?'
+      'UPDATE characters SET name=?, avatar=?, model=?, temperature=?, roleplay_mode=?, roleplay_prompt=?, jailbreak_preset=?, voice_id=?, updated_at=? WHERE id=?'
     ).run(
       next.name,
       next.avatar,
@@ -1048,6 +1056,7 @@ export function createApp() {
       next.roleplay_mode,
       next.roleplay_prompt,
       next.jailbreak_preset,
+      next.voice_id,
       next.updated_at,
       c.id
     );
@@ -2031,6 +2040,179 @@ export function createApp() {
       clearInterval(kaTimer);
       res.end();
     }
+  }));
+
+  // ---------- v1.26.0: 语音接口 ----------
+  // 语音积分模式判断（多用户 + billing_mode=points）
+  const isVoicePointsMode = (req) => {
+    const cfg = getConfig();
+    const uid = (req && req.userId) || null;
+    if (!cfg.multiUser || !uid) return null;
+    try {
+      const u = db.prepare('SELECT billing_mode FROM users WHERE id = ?').get(uid);
+      if (u && (u.billing_mode || 'points') === 'points') return uid;
+    } catch {}
+    return null;
+  };
+
+  // ASR: 音频(base64) → 文字（积分模式按时长扣费）
+  app.post('/api/voice/asr', chatLimiter, ah(async (req, res) => {
+    const { audio, mimeType } = req.body || {};
+    if (!audio) return res.status(400).json({ error: 'audio 不能为空' });
+    const buf = Buffer.from(audio, 'base64');
+    if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ error: '音频过大（>10MB）' });
+    const provider = getVoiceProvider();
+    const r = await provider.asr(buf, { mimeType });
+    // v1.26.0: 积分模式按时长扣费
+    const asrUid = isVoicePointsMode(req);
+    if (asrUid) {
+      const pts = calcAsrPoints(r.duration);
+      if (pts > 0) {
+        try { deductPoints(asrUid, pts, 'voice_asr', null, null, { duration: r.duration }); }
+        catch (e) { console.warn('[voice] ASR 扣费失败:', e.message); }
+      }
+    }
+    res.json({ text: r.text, duration: r.duration });
+  }));
+
+  // TTS: 文字 → 音频(base64 mp3)（积分模式按字符扣费，余额低自动降级 flash）
+  // 只合成对白部分；无对白返回 { skipped: true }
+  app.post('/api/voice/tts', chatLimiter, ah(async (req, res) => {
+    const { text, voice, speed, forceAll } = req.body || {};
+    if (!text || !String(text).trim()) return res.status(400).json({ error: 'text 不能为空' });
+    let speakText = String(text);
+    if (!forceAll) {
+      const dialogues = extractDialogue(speakText);
+      if (!dialogues || !dialogues.length) {
+        return res.json({ skipped: true, reason: 'no_dialogue' });
+      }
+      speakText = dialogues.join(' ');
+    } else {
+      speakText = cleanForTts(speakText);
+    }
+    // 兜底：超长截断前 500 字
+    const chars = [...speakText];
+    if (chars.length > 500) speakText = chars.slice(0, 500).join('');
+    // v1.26.0: 余额低自动降级 flash
+    const ttsUid = isVoicePointsMode(req);
+    let model = VOICE_MODELS.tts.plus;
+    if (ttsUid) {
+      try {
+        const bal = getBalance(ttsUid);
+        if (bal < VOICE_PRICING.downgradeThreshold) model = VOICE_MODELS.tts.flash;
+      } catch {}
+    }
+    // v1.26.0: 解析定制音色（voice 参数可能是 custom_voices.id）
+    let actualVoice = voice || 'Cherry';
+    let ttsModel = model;
+    if (uid) {
+      try {
+        const cv = getDb().prepare('SELECT voice_id FROM custom_voices WHERE id = ? AND user_id = ?').get(voice, uid);
+        if (cv) {
+          actualVoice = cv.voice_id;
+          ttsModel = 'qwen3-tts-vd-2026-01-26'; // 定制音色必须用 VD 模型
+        }
+      } catch {}
+    }
+    const provider = getVoiceProvider();
+    // v1.26.0: 查音频缓存（命中则不扣费）
+    const cached = getCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel);
+    let audioBuf, billChars;
+    if (cached) {
+      audioBuf = cached;
+      billChars = [...speakText].reduce((n, ch) => n + (ch.codePointAt(0) > 0xff ? 2 : 1), 0);
+    } else {
+      const r = await provider.tts(speakText, { model: ttsModel, voice: actualVoice, speed });
+      audioBuf = r.audio;
+      billChars = r.chars;
+      setCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel, audioBuf);
+    }
+    // v1.26.0: 积分模式按字符扣费（缓存命中不扣）
+    if (ttsUid && !cached) {
+      const pts = calcTtsPoints(billChars);
+      if (pts > 0) {
+        try { deductPoints(ttsUid, pts, 'voice_tts', null, null, { chars: billChars, model: ttsModel }); }
+        catch (e) { console.warn('[voice] TTS 扣费失败:', e.message); }
+      }
+    }
+    res.json({
+      audio: audioBuf.toString('base64'),
+      chars: billChars,
+      text: speakText,
+      model: ttsModel,
+      cached: !!cached,
+    });
+  }));
+
+  // ---------- v1.26.0: 定制音色 ----------
+  // 声音设计：文本描述 → 定制音色（0.2元/次 = 20积分）
+  app.post('/api/voice/design', chatLimiter, ah(async (req, res) => {
+    const { prompt, name, previewText } = req.body || {};
+    if (!prompt || !String(prompt).trim()) return res.status(400).json({ error: '请描述想要的音色' });
+    if (!name || !String(name).trim()) return res.status(400).json({ error: '请给音色起个名字' });
+    const cleanName = String(name).trim().replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '').slice(0, 16);
+    if (!cleanName) return res.status(400).json({ error: '名字只支持中文/字母/数字/下划线' });
+
+    const uid = (req && req.userId) || null;
+    // 检查重名
+    const exists = db.prepare('SELECT id FROM custom_voices WHERE user_id = ? AND name = ?').get(uid, cleanName);
+    if (exists) return res.status(400).json({ error: '已有同名音色' });
+
+    const provider = getVoiceProvider();
+    const r = await provider.designVoice({
+      prompt: String(prompt).trim().slice(0, 500),
+      previewText: String(previewText || '你好，很高兴认识你。').slice(0, 100),
+      name: `soulchat_${uid ? uid.slice(0, 8) : 'anon'}_${Date.now()}`,
+      language: 'zh',
+    });
+    if (!r.voiceId) return res.status(500).json({ error: '音色生成失败' });
+
+    // 落库
+    const id = randomUUID();
+    db.prepare(
+      'INSERT INTO custom_voices(id, user_id, voice_id, name, prompt, created_at) VALUES(?,?,?,?,?,?)'
+    ).run(id, uid, r.voiceId, cleanName, String(prompt).trim().slice(0, 500), new Date().toISOString());
+
+    // 积分模式扣 20 积分（0.2元）
+    if (uid) {
+      try {
+        const u = db.prepare('SELECT billing_mode FROM users WHERE id = ?').get(uid);
+        if (u && (u.billing_mode || 'points') === 'points') {
+          deductPoints(uid, 20, 'voice_design', 'custom_voice', id, { name: cleanName });
+        }
+      } catch (e) {
+        console.warn('[voice] 定制音色扣费失败:', e.message);
+      }
+    }
+
+    res.json({
+      id,
+      voice_id: r.voiceId,
+      name: cleanName,
+      preview_audio: r.previewAudio,
+    });
+  }));
+
+  // 我的定制音色列表
+  app.get('/api/voice/custom', ah(async (req, res) => {
+    const uid = (req && req.userId) || null;
+    if (!uid) return res.json([]);
+    const rows = getDb()
+      .prepare('SELECT id, voice_id, name, prompt, created_at FROM custom_voices WHERE user_id = ? ORDER BY created_at DESC')
+      .all(uid);
+    res.json(rows);
+  }));
+
+  // 删除定制音色
+  app.delete('/api/voice/custom/:id', ah(async (req, res) => {
+    const uid = (req && req.userId) || null;
+    const r = getDb().prepare('DELETE FROM custom_voices WHERE id = ? AND user_id = ?').run(req.params.id, uid);
+    if (!r.changes) return res.status(404).json({ error: '未找到' });
+    // 把用了该音色的角色重置为 null（跟随全局）
+    try {
+      getDb().prepare('UPDATE characters SET voice_id = NULL WHERE voice_id = ?').run(req.params.id);
+    } catch {}
+    res.json({ ok: true });
   }));
 
   // ---------- 静态前端（存在才挂） ----------
