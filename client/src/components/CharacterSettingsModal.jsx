@@ -4,6 +4,8 @@ import { api, formatFullTime } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
 import AvatarPicker from './AvatarPicker.jsx';
+// v1.26.0: 音色选择
+import VoicePicker from './VoicePicker.jsx';
 import MemoryFacts from './MemoryFacts.jsx';
 import { ROLEPLAY_TEMPLATE } from '../roleplayTemplate.js';
 import { useAuth } from '../auth.jsx';
@@ -152,6 +154,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
         name: settings.name.trim(),
         avatar: settings.avatar,
         temperature: Number(settings.temperature),
+        voice_id: settings.voice_id || null, // v1.26.0: 音色
       });
       await onCharacterUpdated();
       showToast('已保存');
@@ -300,6 +303,14 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                 <AvatarPicker
                   value={settings.avatar}
                   onChange={(a) => setS('avatar')({ target: { value: a } })}
+                />
+              </div>
+              {/* v1.26.0: 音色选择（与头像同一 tab） */}
+              <div>
+                <div className="field-label">音色</div>
+                <VoicePicker
+                  value={settings.voice_id}
+                  onChange={(v) => setS('voice_id')({ target: { value: v } })}
                 />
               </div>
               <label>
