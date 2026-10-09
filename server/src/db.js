@@ -239,6 +239,9 @@ export function getDb() {
     if (!msgCols.includes('character_id')) _db.exec('ALTER TABLE messages ADD COLUMN character_id TEXT DEFAULT NULL');
     // v1.21.0: 群聊整轮 batch_id（老库自动补列）
     if (!msgCols.includes('batch_id')) _db.exec('ALTER TABLE messages ADD COLUMN batch_id TEXT DEFAULT NULL');
+    // v1.25.2: facts 来源消息 ID，用于删除消息时级联清理（老库自动补列）
+    const factCols = _db.prepare('PRAGMA table_info(memory_facts)').all().map((c) => c.name);
+    if (!factCols.includes('source_message_id')) _db.exec('ALTER TABLE memory_facts ADD COLUMN source_message_id INTEGER DEFAULT NULL');
     // 多用户数据隔离：characters / conversations / conversation_summaries 加 user_id（允许 NULL，老数据保持 NULL）
     // group_members 经 conversation 关联，messages/file_versions 经 character/conversation 关联，不加列
     for (const t of ['characters', 'conversations', 'conversation_summaries']) {

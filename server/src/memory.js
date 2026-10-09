@@ -449,9 +449,11 @@ changes.suggestion = { id: Number(info.lastInsertRowid), proposed: cls.soul_upda
 if (!cls.worth) return changes;
 // 条目级提取
 const rounds = db
-.prepare('SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 20')
+.prepare('SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 20')
 .all(conversationId)
 .reverse();
+// v1.25.2: 记录最新消息 ID 作为 facts 来源，用于删除消息时级联清理
+const sourceMsgId = rounds.length ? rounds[rounds.length - 1].id : null;
 if (!rounds.length) return changes;
 const existing = retrieveFacts(character.id, conversationId, userText, 20).map((f) => ({ id: f.id, fact: f.fact }));
 const ext = await extractFacts({
@@ -478,7 +480,7 @@ changes.userMdChanged = true;
 character.user_md = ext.user_md;
 }
 const insFact = db.prepare(
-'INSERT INTO memory_facts(character_id, fact, importance, created_at, source) VALUES(?,?,?,?,?)'
+'INSERT INTO memory_facts(character_id, fact, importance, created_at, source, source_message_id) VALUES(?,?,?,?,?,?)'
 );
 for (const f of ext.facts || []) {
 if (f.op === 'NOOP') continue;
@@ -487,14 +489,14 @@ const target = db
 .prepare('SELECT id FROM memory_facts WHERE id = ? AND character_id = ? AND superseded_by IS NULL')
 .get(f.supersedes_id, character.id);
 if (target) {
-const r = insFact.run(character.id, f.text, f.importance, now, 'chat');
+const r = insFact.run(character.id, f.text, f.importance, now, 'chat', sourceMsgId);
 db.prepare('UPDATE memory_facts SET superseded_by = ? WHERE id = ?').run(Number(r.lastInsertRowid), target.id);
 changes.factsAdded++;
 continue;
 }
 // supersedes_id 无效 → 降级为 ADD
 }
-insFact.run(character.id, f.text, f.importance, now, 'chat');
+insFact.run(character.id, f.text, f.importance, now, 'chat', sourceMsgId);
 changes.factsAdded++;
 }
 // v1.12：有实际写入时记一条事件，前端轮询做"记住了"轻提示
