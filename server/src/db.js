@@ -301,22 +301,7 @@ export function getDb() {
       });
       tx();
     }
-    // v1.16.9: RP 模型补进积分白名单（老库 INSERT OR IGNORE，已有不覆盖；定价 = USD单价×7.1×100×1.86）
-    {
-      const now = new Date().toISOString();
-      const rpSeed = [
-        ['sao10k/l3.3-euryale-70b', 'Euryale 70B', 'RP 专用无审查，角色扮演口碑王', 860, 1000, 3],
-        ['thedrummer/cydonia-24b-v4.1', 'Cydonia 24B', 'RP 新贵，性价比之王', 400, 660, 4],
-        ['deepseek/deepseek-v3.2', 'DeepSeek V3.2', '便宜大碗，中文 RP 首选', 370, 560, 5],
-      ];
-      const insRp = _db.prepare(
-        'INSERT OR IGNORE INTO points_models(model_id, name, description, input_per_1m, output_per_1m, is_active, sort_order, created_at) VALUES(?,?,?,?,?,?,?,?)'
-      );
-      const txRp = _db.transaction(() => {
-        for (const [mid, name, desc, ip, op, so] of rpSeed) insRp.run(mid, name, desc, ip, op, 1, so, now);
-      });
-      txRp();
-    }
+    // v1.26.3: 移除硬编码模型种子——所有可用模型必须由管理员经模型管理 tab 上架，不再预置
     // 首个注册用户自动成为管理员（只执行一次）
     const firstUser = _db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
     if (firstUser) {
