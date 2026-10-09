@@ -105,6 +105,21 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, streamText, groupStreams, typing, errorMsg]);
 
+  // v1.25.1: 监听计费模式切换，设置弹窗保存后即时刷新下方提示
+  useEffect(() => {
+    const handler = (e) => {
+      const mode = e && e.detail && e.detail.mode;
+      if (mode === 'points' || mode === 'api') {
+        setBillingMode(mode);
+        // 切换模式后清零本轮计数，避免旧模式残留
+        setRoundUsage(0);
+        setRoundPoints(0);
+      }
+    };
+    window.addEventListener('soulchat-billing-changed', handler);
+    return () => window.removeEventListener('soulchat-billing-changed', handler);
+  }, []);
+
   // v1.10：轮询待确认的灵魂修改建议（仅单聊）
   useEffect(() => {
     if (isGroup || !characterId) {

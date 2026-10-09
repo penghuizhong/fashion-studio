@@ -498,6 +498,8 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     setLoading(true);
     try {
       await api.setBillingMode(m);
+      // v1.25.1: 广播计费模式变更，聊天页即时刷新下方提示，无需等下次聊天
+      window.dispatchEvent(new CustomEvent('soulchat-billing-changed', { detail: { mode: m === 'points' ? 'points' : 'api' } }));
       if (m === 'points') {
         const wl = ((pointsInfo && pointsInfo.models) || []).map((mi) => mi.id);
         const model = wl.includes(pointsModel.trim()) ? pointsModel.trim() : wl[0] || '';
