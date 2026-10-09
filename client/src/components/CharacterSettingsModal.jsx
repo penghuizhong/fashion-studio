@@ -403,7 +403,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                             </select>
                           )}
                           <p className="jb-warning">
-                            🔞 温馨提示：破限模式会大幅减少 AI 的拒绝，但回复可能包含成人向内容，请确认你已年满 18
+                            温馨提示：破限模式会大幅减少 AI 的拒绝，但回复可能包含成人向内容，请确认你已年满 18
                             岁。破限指令约 0.5KB，按正常对话计费。
                           </p>
                         </>

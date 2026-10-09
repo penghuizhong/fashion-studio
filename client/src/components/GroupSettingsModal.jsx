@@ -86,7 +86,7 @@ export default function GroupSettingsModal({ group, onClose, onSaved, onMessages
         {allChars.map((c) => (
           <label key={c.id} className="member-option">
             <input type="checkbox" checked={memberIds.includes(c.id)} onChange={() => toggle(c.id)} />
-            <Avatar src={c.avatar || '✨'} size={28} className="member-avatar" />
+            <Avatar src={c.avatar || null} size={28} className="member-avatar" />
             <span>{c.name}</span>
           </label>
         ))}
