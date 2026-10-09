@@ -4,6 +4,7 @@ import { useAuth } from '../auth.jsx';
 import Icon from './icons.jsx';
 import ProfilePanel from './ProfilePanel.jsx';
 import CreateCharacterModal from './CreateCharacterModal.jsx';
+import GroupCreateModal from './GroupCreateModal.jsx';
 import Avatar from './Avatar.jsx';
 import Modal from './Modal.jsx';
 
@@ -40,8 +41,6 @@ export default function Sidebar({
   // 群聊
   const [groups, setGroups] = useState([]);
   const [groupModalOpen, setGroupModalOpen] = useState(false);
-  const [groupForm, setGroupForm] = useState({ name: '', memberIds: [] });
-  const [creatingGroup, setCreatingGroup] = useState(false);
   // v1.18.0: 对话长按菜单（改名/删除）
   const [convMenu, setConvMenu] = useState(null); // { charId, conv, x, y }
   const [renamingConv, setRenamingConv] = useState(null); // { charId, convId, value }
@@ -158,32 +157,9 @@ export default function Sidebar({
     }
   };
 
-  const toggleGroupMember = (charId) => {
-    setGroupForm((f) => ({
-      ...f,
-      memberIds: f.memberIds.includes(charId)
-        ? f.memberIds.filter((id) => id !== charId)
-        : [...f.memberIds, charId],
-    }));
-  };
-
-  const handleCreateGroup = async () => {
-    if (groupForm.memberIds.length < 2) {
-      showToast('群聊至少选择 2 个角色');
-      return;
-    }
-    setCreatingGroup(true);
-    try {
-      const g = await api.createGroup({ name: groupForm.name.trim(), member_ids: groupForm.memberIds });
-      setGroupModalOpen(false);
-      setGroupForm({ name: '', memberIds: [] });
-      await loadGroups();
-      onSelectConversation(null, g.id, true);
-    } catch (err) {
-      showToast(err.message || '建群失败');
-    } finally {
-      setCreatingGroup(false);
-    }
+  const handleGroupCreated = async (g) => {
+    await loadGroups();
+    onSelectConversation(null, g.id, true);
   };
 
   const handleDeleteGroup = async (e, groupId) => {
@@ -411,45 +387,12 @@ export default function Sidebar({
       </div>
 
       {groupModalOpen && (
-        <Modal
-          title="新建群聊"
-          size="s"
+        <GroupCreateModal
+          characters={characters}
           onClose={() => setGroupModalOpen(false)}
-          footer={
-            <>
-              <button className="btn secondary" onClick={() => setGroupModalOpen(false)}>
-                取消
-              </button>
-              <button className="btn primary" onClick={handleCreateGroup} disabled={creatingGroup}>
-                {creatingGroup ? '建群中…' : `建群（${groupForm.memberIds.length} 人）`}
-              </button>
-            </>
-          }
-        >
-          <label>
-            群名
-            <input
-              value={groupForm.name}
-              onChange={(e) => setGroupForm((f) => ({ ...f, name: e.target.value }))}
-              placeholder="留空用成员名自动生成"
-            />
-          </label>
-          <div className="member-picker">
-            <div className="member-picker-title">选择成员（至少 2 个）</div>
-            {characters.length === 0 && <div className="versions-empty">还没有角色，先去新建角色</div>}
-            {characters.map((c) => (
-              <label key={c.id} className="member-option">
-                <input
-                  type="checkbox"
-                  checked={groupForm.memberIds.includes(c.id)}
-                  onChange={() => toggleGroupMember(c.id)}
-                />
-                <Avatar src={c.avatar} size={28} className="member-avatar" />
-                <span>{c.name}</span>
-              </label>
-            ))}
-          </div>
-        </Modal>
+          onCreated={handleGroupCreated}
+          showToast={showToast}
+        />
       )}
 
       {modalOpen && (
