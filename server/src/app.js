@@ -1415,6 +1415,7 @@ export function createApp() {
     let full = '';
     let turnUsage = null;
     let turnFinishReason = null;
+    let turnStalled = false; // v1.25.6
     let turnModel = chatModel;
     try {
       // v1.17.1: 内容过滤兜底——被拦截时换无审查模型重试，绝不呈现半截输出
@@ -1451,6 +1452,7 @@ export function createApp() {
       }
       turnUsage = gr.usage;
       turnFinishReason = gr.finishReason;
+      turnStalled = !!gr.stalled; // v1.25.6: 上游流停滞也算截断
     } catch (e) {
       send('error', { character_id: ch.id, message: `${ch.name} 回复失败：${String((e && e.message) || e)}` });
       return null;
@@ -1490,7 +1492,8 @@ export function createApp() {
       .run(conv.id, 'assistant', full, outTokens, ch.id, batchId, now());
     const messageId = Number(row.lastInsertRowid);
     // v1.22.0: 截断标记——流异常结束时前端提示"好像没说完"并给重新生成
-    const truncated = full !== FILTER_NOTICE && (!turnFinishReason || turnFinishReason === 'length');
+    // v1.25.6: 上游流停滞（25s 无数据）也算截断
+    const truncated = full !== FILTER_NOTICE && (!turnFinishReason || turnFinishReason === 'length' || turnStalled);
     send('turn_done', {
       character_id: ch.id,
       message_id: messageId,
@@ -2002,7 +2005,7 @@ export function createApp() {
           }
         } catch (e) { console.warn('[title] AI 标题生成失败:', e.message); }
       }
-      send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens }, truncated: full !== FILTER_NOTICE && (!r.finishReason || r.finishReason === 'length'), billingMode: usePoints ? 'points' : 'api', pointsUsed });
+      send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens }, truncated: full !== FILTER_NOTICE && (!r.finishReason || r.finishReason === 'length' || r.stalled), billingMode: usePoints ? 'points' : 'api', pointsUsed });
       // 摘要 + v1.10 记忆流水线（意图识别/事件驱动）放后台，不阻塞 done；去掉请求级 signal
       const bgOpts = { ...llmOpts, signal: undefined };
       setImmediate(async () => {
