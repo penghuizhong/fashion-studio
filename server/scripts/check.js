@@ -2245,6 +2245,43 @@ async function runMulti() {
     );
   }
 
+  // M60. v1.22.2: regenerate-turn 支持 character_id+batch_id 定位（断流无 message_id 时）
+  {
+    const db = getDb();
+    const jarA60 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarA60 });
+    const gc1 = await req('POST', '/api/characters', { name: 'M60A' }, { jar: jarA60 });
+    const gc2 = await req('POST', '/api/characters', { name: 'M60B' }, { jar: jarA60 });
+    const gg = await req('POST', '/api/groups', { member_ids: [gc1.json.id, gc2.json.id] }, { jar: jarA60 });
+    const gid = gg.json && gg.json.id;
+    let b1 = false, b2 = false;
+    if (gid) {
+      const gs = await postSSE(`/api/conversations/${gid}/messages`, { content: '来说两句@M60A' }, { jar: jarA60 });
+      const turnDones = gs.events.filter((e) => e.event === 'turn_done');
+      const td = turnDones[0] && turnDones[0].data;
+      const cid = td && td.character_id;
+      const batchId = td && td.batch_id;
+      // 用 character_id+batch_id（不用 message_id）调 regenerate-turn，应同样删半截重跑
+      if (cid && batchId) {
+        const rs = await postSSE(
+          `/api/conversations/${gid}/regenerate-turn`,
+          { character_id: cid, batch_id: batchId },
+          { jar: jarA60 }
+        );
+        const rTurns = rs.events.filter((e) => e.event === 'turn_done');
+        const msgCount = db.prepare('SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ?').get(gid).c;
+        b1 = rs.status === 200 && rTurns.length === 1 && msgCount === 2;
+      }
+      // message_id 指向不存在的消息应 400（明确引用错误不静默）
+      const bad = await req('POST', `/api/conversations/${gid}/regenerate-turn`, { message_id: 99999999 }, { jar: jarA60 });
+      b2 = bad.status === 400;
+      await req('DELETE', `/api/conversations/${gid}`, undefined, { jar: jarA60 });
+    }
+    if (gc1.json) await req('DELETE', `/api/characters/${gc1.json.id}`, undefined, { jar: jarA60 });
+    if (gc2.json) await req('DELETE', `/api/characters/${gc2.json.id}`, undefined, { jar: jarA60 });
+    ok('M60. regenerate-turn按character_id+batch_id定位', b1 && b2, `b1=${b1} b2=${b2}`);
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
