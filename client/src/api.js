@@ -371,4 +371,8 @@ export const api = {
   voiceDesign: (data) => post('/api/voice/design', data),
   listCustomVoices: () => get('/api/voice/custom'),
   deleteCustomVoice: (id) => del(`/api/voice/custom/${id}`),
+  // v1.26.2: 模型连通测试 + 语音模型清单
+  testChatModel: (model_id) => post('/api/admin/models/test', { model_id }),
+  listVoiceModels: () => get('/api/voice/models'),
+  testVoiceModel: (data) => post('/api/voice/test', data),
 };
