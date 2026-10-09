@@ -365,4 +365,10 @@ export const api = {
   // 广场审核（管理员）
   adminSharedCards: (status = 'pending') => get(`/api/admin/shared-cards?status=${encodeURIComponent(status)}`),
   adminReviewSharedCard: (id, approve, reason) => post(`/api/admin/shared-cards/${id}/review`, { approve, reason }),
+  // v1.26.0: 语音
+  voiceAsr: (data) => post('/api/voice/asr', data),
+  voiceTts: (data) => post('/api/voice/tts', data),
+  voiceDesign: (data) => post('/api/voice/design', data),
+  listCustomVoices: () => get('/api/voice/custom'),
+  deleteCustomVoice: (id) => del(`/api/voice/custom/${id}`),
 };
