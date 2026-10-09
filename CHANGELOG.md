@@ -1,3 +1,7 @@
+## v1.26.4
+- 语音模型「拉取可用模型」改名为「查看可用模型」，加说明：DashScope 无公开模型列表，展示的是内置清单（非实时）。
+- 新增 `DASHSCOPE_BASE_URL` 环境变量：支持自定义 DashScope API 地址（千问 token-plan 等），不填则默认官方 `https://dashscope.aliyuncs.com` 保底。
+
 ## v1.26.3
 - 模型管理优化：①删除硬编码模型种子（Euryale/Cydonia/DeepSeek），所有可用模型必须经后台上架；②上架新模型：模型 ID 输入框右置「拉取可用模型」按钮，输入框可下拉选择，下方显示该模型的实时报价（USD/1M tokens）；③语音模型：删除「拉取语音模型清单」按钮，TTS/ASR/Design 输入框各右置拉取按钮、可下拉选择，「保存模型配置」旁加「连通测试」。
 
