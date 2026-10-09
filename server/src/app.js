@@ -56,7 +56,7 @@ import {
   getBalance,
 } from './points.js';
 // v1.26.0: 语音功能
-import { getVoiceProvider, extractDialogue, splitSentences, cleanForTts, VOICE_MODELS, VOICE_PRICING, calcAsrPoints, calcTtsPoints, getCachedAudio, setCachedAudio } from './voice.js';
+import { getVoiceProvider, extractDialogue, splitSentences, cleanForTts, VOICE_MODELS, VOICE_PRICING, calcAsrPoints, calcTtsPoints, getCachedAudio, setCachedAudio, getVoiceModel } from './voice.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
 const FILE_FIELDS = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
@@ -2095,7 +2095,8 @@ export function createApp() {
     if (chars.length > 500) speakText = chars.slice(0, 500).join('');
     // v1.26.0: 余额低自动降级 flash
     const ttsUid = isVoicePointsMode(req);
-    let model = VOICE_MODELS.tts.plus;
+    // v1.26.1: TTS 模型从配置读取（管理员可在模型管理 tab 指定）
+    let model = getVoiceModel('tts');
     if (ttsUid) {
       try {
         const bal = getBalance(ttsUid);
@@ -2110,7 +2111,7 @@ export function createApp() {
         const cv = getDb().prepare('SELECT voice_id FROM custom_voices WHERE id = ? AND user_id = ?').get(voice, uid);
         if (cv) {
           actualVoice = cv.voice_id;
-          ttsModel = 'qwen3-tts-vd-2026-01-26'; // 定制音色必须用 VD 模型
+          ttsModel = getVoiceModel('design'); // v1.26.1: 定制音色用配置的 VD 模型
         }
       } catch {}
     }
