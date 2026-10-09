@@ -2073,15 +2073,23 @@ textarea {
 .wall-collage-strip:active {
   transform: scale(0.98);
 }
-/* v1.25.4: 首页群聊入口图标 */
-.group-entry-icon {
-  font-size: 28px;
-  line-height: 1;
-  display: inline-flex;
+/* v1.25.5: 建群时角色不足的引导 */
+.group-need-chars {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.group-need-chars .btn.small {
+  margin-left: auto;
+  padding: 6px 12px;
+  font-size: 13px;
 }
 .collage-row {
   display: flex;

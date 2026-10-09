@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { api, isMultiUserMode } from '../api.js';
 import Modal from './Modal.jsx';
+import Icon from './icons.jsx';
 import AvatarPicker from './AvatarPicker.jsx';
 import { AVATAR_LIST } from '../avatars.js';
 import { ROLEPLAY_TEMPLATE } from '../roleplayTemplate.js';
@@ -87,7 +88,7 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
       if (soul.trim()) payload.soul_md = soul;
       if (userMd.trim()) payload.user_md = userMd;
       const char = await api.createCharacter(payload);
-      showToast(`已创建 ${char.name} 🎉`);
+      showToast(`已创建 ${char.name}`);
       onCreated(char);
       onClose();
     } catch (e) {
@@ -139,7 +140,7 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
               ))}
             </select>
             <button className="btn secondary small" onClick={() => setShowGen((s) => !s)}>
-              ✨ AI 生成
+              <Icon name="sparkles" size={16} /> AI 生成
             </button>
           </span>
         </div>
