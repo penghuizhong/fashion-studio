@@ -1472,6 +1472,7 @@ export function createApp() {
             tokensOutput: u.output,
             model: turnModel,
           });
+          st.pointsUsed += pts; // v1.25.0: 累计本轮积分消耗
         } catch (e) {
           console.warn('[points] 扣费失败:', e.message);
         }
@@ -1609,7 +1610,7 @@ export function createApp() {
       let usageOutput = 0;
       // v1.20.5: 单轮发言抽成函数，主流程 + @接龙复用
       // v1.22.0: 单轮发言走 streamGroupTurn（与 regenerate-turn 复用）
-      const st = { ctxInfo: null, usageInput: 0, usageOutput: 0, pointsBalance };
+      const st = { ctxInfo: null, usageInput: 0, usageOutput: 0, pointsBalance, pointsUsed: 0 };
       const deps = { send, res, conv, cfg, bill, chatModel, llmOpts, usePoints, members, query: content, batchId };
       const runTurn = async (sid, wakerName) => {
         if (res.destroyed) return;
@@ -1657,7 +1658,7 @@ export function createApp() {
 
       if (usePoints) send('points', { balance: st.pointsBalance });
       if (bill.userId) checkInviteReward(bill.userId);
-      send('done', { title: conv.title, usage: { input: st.usageInput, output: st.usageOutput } });
+      send('done', { title: conv.title, usage: { input: st.usageInput, output: st.usageOutput }, billingMode: usePoints ? 'points' : 'api', pointsUsed: st.pointsUsed || 0 });
       // 3. 会话级摘要 + v1.10 记忆流水线放后台（并行），不阻塞 done
       const bgOpts = { ...llmOpts, signal: undefined };
       setImmediate(async () => {
@@ -1804,12 +1805,12 @@ export function createApp() {
         .get(conv.id);
       const query = lastUser ? lastUser.content : '';
       const batchId = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      const st = { ctxInfo: null, usageInput: 0, usageOutput: 0, pointsBalance };
+      const st = { ctxInfo: null, usageInput: 0, usageOutput: 0, pointsBalance, pointsUsed: 0 };
       const deps = { send, res, conv, cfg, bill, chatModel, llmOpts, usePoints, members, query, batchId };
       const r = await streamGroupTurn(deps, ch, st, {});
       if (!r) return; // 已通过 send('error') 通知前端
       if (usePoints) send('points', { balance: st.pointsBalance });
-      send('done', { usage: { input: st.usageInput, output: st.usageOutput }, regenerated: true });
+      send('done', { usage: { input: st.usageInput, output: st.usageOutput }, regenerated: true, billingMode: usePoints ? 'points' : 'api', pointsUsed: st.pointsUsed || 0 });
       // 记忆流水线放后台，不阻塞 done
       const bgOpts = { ...llmOpts, signal: undefined };
       setImmediate(async () => {
@@ -1869,6 +1870,7 @@ export function createApp() {
     llmOpts.signal = ac.signal;
     const usePoints = bill.usePoints;
     let pointsBalance = bill.balance;
+    let pointsUsed = 0; // v1.25.0: 本轮积分消耗
     const updBal = (b) => {
       pointsBalance = b;
     };
@@ -1962,6 +1964,7 @@ export function createApp() {
               tokensOutput: u.output,
               model: finalModel, // v1.17.3: 记实际使用的模型（含回退），之前误记 chatModel
             });
+            pointsUsed += pts; // v1.25.0
           } catch (e) {
             console.warn('[points] 扣费失败:', e.message);
           }
@@ -1987,7 +1990,7 @@ export function createApp() {
           }
         } catch (e) { console.warn('[title] AI 标题生成失败:', e.message); }
       }
-      send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens }, truncated: full !== FILTER_NOTICE && (!r.finishReason || r.finishReason === 'length') });
+      send('done', { message_id: Number(asst.lastInsertRowid), content: full, tokens: outTokens, title, usage: { input: usedTokens, output: outTokens }, truncated: full !== FILTER_NOTICE && (!r.finishReason || r.finishReason === 'length'), billingMode: usePoints ? 'points' : 'api', pointsUsed });
       // 摘要 + v1.10 记忆流水线（意图识别/事件驱动）放后台，不阻塞 done；去掉请求级 signal
       const bgOpts = { ...llmOpts, signal: undefined };
       setImmediate(async () => {
