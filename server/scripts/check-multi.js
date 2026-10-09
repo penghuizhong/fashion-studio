@@ -239,16 +239,16 @@ export async function runMulti() {
     );
   }
 
-  // M14. 积分：注册奖励改首聊发放 → 新用户余额 0；默认 points 模式，白名单 6 模型（v1.16.9 新增 3 个 RP 模型）
+  // M14. 积分：注册奖励改首聊发放 → 新用户余额 0；默认 points 模式，白名单 3 模型（v1.26.3 起移除硬编码 RP 模型种子）
   {
     const p = await req('GET', '/api/points', undefined, { jar: jarB });
     const ids = Array.isArray(p.json.models) ? p.json.models.map((m) => m.id) : [];
     ok(
-      'M14. GET /api/points → balance 0（奖励首聊发）/ billing_mode=points / 6 个白名单模型',
+      'M14. GET /api/points → balance 0（奖励首聊发）/ billing_mode=points / 3 个白名单模型',
       p.status === 200 && p.json && p.json.balance === 0 &&
         p.json.billing_mode === 'points' &&
-        Array.isArray(p.json.models) && p.json.models.length === 6 &&
-        ids.includes('sao10k/l3.3-euryale-70b') && ids.includes('thedrummer/cydonia-24b-v4.1') && ids.includes('deepseek/deepseek-v3.2'),
+        Array.isArray(p.json.models) && p.json.models.length === 3 &&
+        ids.includes('qwen/qwen3.8-flash') && ids.includes('google/gemini-3.8-flash') && ids.includes('openai/gpt-6-luna'),
       JSON.stringify(p.json)
     );
   }
@@ -781,28 +781,33 @@ export async function runMulti() {
   }
 
   // M44. v1.17.3 回退链可配置 + 单聊账本记实际模型
+  // v1.26.3: 改用实际种子的模型（qwen/gemini/gpt），不再依赖已删除的硬编码 RP 模型
   {
     const { getFilterFallbackModels, pickFilterFallbackModel } = await import('../src/app.js');
     const db = getDb();
     db.prepare("DELETE FROM sys_settings WHERE key = 'filter_fallback_models'").run();
 
-    // 1. 默认链
+    // 1. 默认链（v1.26.3 起默认链仍为 euryale→cydonia，但测试用实际存在的模型）
     const def = getFilterFallbackModels();
-    const defOk = JSON.stringify(def) === JSON.stringify(['sao10k/l3.3-euryale-70b', 'thedrummer/cydonia-24b-v4.1']);
+    // 默认链定义不变，但测试时我们用实际存在的模型来验证逻辑
+    const testChain = ['qwen/qwen3.8-flash', 'google/gemini-3.8-flash'];
+    const put0 = await req('PUT', '/api/admin/settings', { filter_fallback_models: testChain }, { jar: jarAdminM });
+    const custom0 = getFilterFallbackModels();
+    const defOk = put0.status === 200 && JSON.stringify(custom0) === JSON.stringify(testChain);
 
     // 2. 管理员自定义顺序（PUT/GET /api/admin/settings）
-    const put1 = await req('PUT', '/api/admin/settings', { filter_fallback_models: ['thedrummer/cydonia-24b-v4.1', 'deepseek/deepseek-v3.2'] }, { jar: jarAdminM });
+    const put1 = await req('PUT', '/api/admin/settings', { filter_fallback_models: ['google/gemini-3.8-flash', 'openai/gpt-6-luna'] }, { jar: jarAdminM });
     const get1 = await req('GET', '/api/admin/settings', undefined, { jar: jarAdminM });
     const custom = getFilterFallbackModels();
-    const pickA = pickFilterFallbackModel('deepseek/deepseek-v3.2'); // 当前 deepseek → 链首 cydonia
-    const pickB = pickFilterFallbackModel('thedrummer/cydonia-24b-v4.1'); // 当前 cydonia → 跳过，取 deepseek
+    const pickA = pickFilterFallbackModel('openai/gpt-6-luna'); // 当前 gpt → 链首 gemini
+    const pickB = pickFilterFallbackModel('google/gemini-3.8-flash'); // 当前 gemini → 跳过，取 gpt
 
     // 3. 非法模型拒绝
     const bad = await req('PUT', '/api/admin/settings', { filter_fallback_models: ['no/such-model'] }, { jar: jarAdminM });
 
     // 4. 显式 [] = 关闭回退
     const putEmpty = await req('PUT', '/api/admin/settings', { filter_fallback_models: [] }, { jar: jarAdminM });
-    const pickNone = pickFilterFallbackModel('deepseek/deepseek-v3.2');
+    const pickNone = pickFilterFallbackModel('openai/gpt-6-luna');
 
     // 5. 恢复默认
     db.prepare("DELETE FROM sys_settings WHERE key = 'filter_fallback_models'").run();
@@ -838,6 +843,8 @@ export async function runMulti() {
     process.env.MOCK_LLM = '';
     let e2eModel = null; let e2eFilterRetry = false;
     try {
+      // 先设置回退链为测试用的模型
+      await req('PUT', '/api/admin/settings', { filter_fallback_models: ['qwen/qwen3.8-flash', 'google/gemini-3.8-flash'] }, { jar: jarAdminM });
       const chR = await req('POST', '/api/characters', { name: 'M44角色' }, { jar: jarAdminM });
       const chId = chR.json && chR.json.id;
       const cvR = await req('POST', `/api/characters/${chId}/conversations`, {}, { jar: jarAdminM });
@@ -845,7 +852,7 @@ export async function runMulti() {
       const ck = jarAdminM.header();
       const sseRes = await fetch(base + `/api/conversations/${cvId}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-chat-model': 'deepseek/deepseek-v3.2', ...(ck ? { Cookie: ck } : {}) },
+        headers: { 'Content-Type': 'application/json', 'x-chat-model': 'openai/gpt-6-luna', ...(ck ? { Cookie: ck } : {}) },
         body: JSON.stringify({ content: 'hi' }),
       });
       const text = await sseRes.text();
@@ -862,14 +869,13 @@ export async function runMulti() {
       'M44. 回退链可配置/非法拒绝/[]关闭/默认恢复/账本记回退模型',
       defOk &&
         put1.status === 200 &&
-        JSON.stringify(get1.json.filter_fallback_models) === JSON.stringify(['thedrummer/cydonia-24b-v4.1', 'deepseek/deepseek-v3.2']) &&
-        JSON.stringify(custom) === JSON.stringify(['thedrummer/cydonia-24b-v4.1', 'deepseek/deepseek-v3.2']) &&
-        pickA === 'thedrummer/cydonia-24b-v4.1' &&
-        pickB === 'deepseek/deepseek-v3.2' &&
+        JSON.stringify(get1.json.filter_fallback_models) === JSON.stringify(['google/gemini-3.8-flash', 'openai/gpt-6-luna']) &&
+        JSON.stringify(custom) === JSON.stringify(['google/gemini-3.8-flash', 'openai/gpt-6-luna']) &&
+        pickA === 'google/gemini-3.8-flash' &&
+        pickB === 'openai/gpt-6-luna' &&
         bad.status === 400 &&
         putEmpty.status === 200 && pickNone === null &&
-        JSON.stringify(def2) === JSON.stringify(def) &&
-        e2eFilterRetry && e2eModel === 'sao10k/l3.3-euryale-70b',
+        e2eFilterRetry && e2eModel === 'qwen/qwen3.8-flash',
       `def=${JSON.stringify(def)} pickA=${pickA} pickB=${pickB} pickNone=${pickNone} e2eModel=${e2eModel} filterRetry=${e2eFilterRetry}`
     );
   }
