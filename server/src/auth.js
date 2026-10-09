@@ -6,7 +6,7 @@ import { getDb, getSetting, setSetting } from './db.js';
 import { getRoleplayTemplate } from './memory.js';
 import { jailbreakPresetAdminList, JAILBREAK_PRESETS } from './jailbreakPresets.js';
 import { getConfig } from './config.js';
-import { assertPublicHttpsUrl } from './llm.js';
+import { assertPublicHttpsUrl, llmFetch } from './llm.js';
 import { API_PROVIDERS, getProvider, detectProvider } from './providers.js';
 import { ah } from './asyncHandler.js';
 import {
@@ -659,6 +659,51 @@ export function mountAuthRoutes(app, authLimiter) {
     }
     res.json({ ok: true, ...out });
   });
+
+  // v1.26.2: 模型连通测试 POST /api/admin/models/test { model_id }
+  // 发一个最小请求验证模型可用，返回延迟和成功状态
+  app.post('/api/admin/models/test', needMulti, needLogin, needAdmin, ah(async (req, res) => {
+    const { model_id } = req.body || {};
+    if (!model_id || !String(model_id).trim()) {
+      return res.status(400).json({ error: 'model_id 不能为空' });
+    }
+    const cfg = getConfig();
+    // 管理员测试用服务器默认 Key（简化：不走用户 key）
+    const apiKey = cfg.apiKey;
+    const baseUrl = cfg.baseUrl;
+    if (!apiKey && !cfg.mockLlm) {
+      return res.status(401).json({ error: '服务器未配置 API Key' });
+    }
+    if (cfg.mockLlm) {
+      return res.json({ ok: true, latency: 10, reply: 'mock' });
+    }
+    const t0 = Date.now();
+    try {
+      const r = await llmFetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: String(model_id).trim(),
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 5,
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      const latency = Date.now() - t0;
+      if (!r.ok) {
+        const t = await r.text().catch(() => '');
+        return res.json({ ok: false, latency, error: `HTTP ${r.status}: ${t.slice(0, 200)}` });
+      }
+      const j = await r.json().catch(() => null);
+      const reply = j?.choices?.[0]?.message?.content || '';
+      res.json({ ok: true, latency, reply: reply.slice(0, 100) });
+    } catch (e) {
+      res.json({ ok: false, latency: Date.now() - t0, error: String((e && e.message) || e).slice(0, 200) });
+    }
+  }));
 
   // GET /api/admin/users：管理员查看用户列表（q 可选，按用户名模糊搜）
   app.get('/api/admin/users', needMulti, needLogin, needAdmin, (req, res) => {
