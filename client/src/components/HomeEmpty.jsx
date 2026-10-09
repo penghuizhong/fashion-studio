@@ -1,18 +1,22 @@
 // v1.16.6 首页角色墙：Top 6-8 领养数卡片轻轻浮动 + 拼图卡进发现页 + 底部 AI 生成输入框
 // 新用户 10 秒开聊：挑一张现成的，或一句话生成一个
+// v1.25.4: 加群聊入口（多角色同场，@点名互动）
 import { useEffect, useState } from 'react';
 import { api, isMultiUserMode } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
+import GroupCreateModal from './GroupCreateModal.jsx';
 
 const WALL_COUNT = 8;
 
 export default function HomeEmpty({
   user,
   config,
+  characters,
   onOpenSidebar,
   onOpenDiscover,
   onAdopted,
+  onGroupCreated,
   onRequireLogin,
   showToast,
 }) {
@@ -20,6 +24,7 @@ export default function HomeEmpty({
   const [wallCards, setWallCards] = useState([]);
   const [collageCards, setCollageCards] = useState([]);
   const [adoptingId, setAdoptingId] = useState(null);
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
   // AI 生成
   const [prompt, setPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -57,6 +62,14 @@ export default function HomeEmpty({
     } finally {
       setAdoptingId(null);
     }
+  };
+
+  const openGroupModal = () => {
+    if (!loggedIn) {
+      onRequireLogin();
+      return;
+    }
+    setGroupModalOpen(true);
   };
 
   const generate = async () => {
@@ -145,6 +158,15 @@ export default function HomeEmpty({
           </button>
         )}
 
+        {/* v1.25.4: 群聊入口 */}
+        <button className="wall-collage-strip" onClick={openGroupModal}>
+          <span className="collage-row">
+            <span className="group-entry-icon">👥</span>
+          </span>
+          <span className="collage-label">群聊 · 多角色同场，@点名互动</span>
+          <Icon name="chevronRight" size={16} />
+        </button>
+
         {/* 生成结果卡 */}
         {card && (
           <div className="home-gen-result">
@@ -211,6 +233,15 @@ export default function HomeEmpty({
           {isMultiUserMode() ? 'AI 生成按实际用量扣积分，失败不扣' : '使用你自己的 Key 生成，不扣平台积分'}
         </p>
       </div>
+
+      {groupModalOpen && (
+        <GroupCreateModal
+          characters={characters || []}
+          onClose={() => setGroupModalOpen(false)}
+          onCreated={onGroupCreated}
+          showToast={showToast}
+        />
+      )}
     </div>
   );
 }

@@ -368,9 +368,11 @@ export default function App() {
           <HomeEmpty
             user={user}
             config={config}
+            characters={characters}
             onOpenSidebar={() => setSidebarOpen(true)}
             onOpenDiscover={handleOpenDiscover}
             onAdopted={handleAdopted}
+            onGroupCreated={(g) => handleSelectConversation(null, g.id, true)}
             onRequireLogin={handleRequireLogin}
             showToast={showToast}
           />

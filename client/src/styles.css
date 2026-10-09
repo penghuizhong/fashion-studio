@@ -2073,6 +2073,16 @@ textarea {
 .wall-collage-strip:active {
   transform: scale(0.98);
 }
+/* v1.25.4: 首页群聊入口图标 */
+.group-entry-icon {
+  font-size: 28px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+}
 .collage-row {
   display: flex;
 }
