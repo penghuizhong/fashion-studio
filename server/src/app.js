@@ -2210,6 +2210,60 @@ export function createApp() {
     });
   }));
 
+  // v1.27.0: 音色克隆 POST /api/voice/clone { audio(base64), name, mimeType }
+  // 上传参考音频（15-60秒）→ 克隆音色 → 返回 voice_id
+  app.post('/api/voice/clone', chatLimiter, ah(async (req, res) => {
+    const { audio, name, mimeType } = req.body || {};
+    if (!audio || typeof audio !== 'string') return res.status(400).json({ error: '请上传音频文件' });
+    if (!name || !String(name).trim()) return res.status(400).json({ error: '请给音色起个名字' });
+    const cleanName = String(name).trim().replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '').slice(0, 16);
+    if (!cleanName) return res.status(400).json({ error: '名字只支持中文/字母/数字/下划线' });
+
+    // base64 解码，限制 10MB
+    let audioBuffer;
+    try {
+      audioBuffer = Buffer.from(audio, 'base64');
+    } catch {
+      return res.status(400).json({ error: '音频数据无效' });
+    }
+    if (audioBuffer.length > 10 * 1024 * 1024) {
+      return res.status(400).json({ error: '音频文件过大（限 10MB）' });
+    }
+    if (audioBuffer.length < 1024) {
+      return res.status(400).json({ error: '音频文件过小' });
+    }
+
+    const uid = (req && req.userId) || null;
+    const exists = db.prepare('SELECT id FROM custom_voices WHERE user_id = ? AND name = ?').get(uid, cleanName);
+    if (exists) return res.status(400).json({ error: '已有同名音色' });
+
+    const provider = getVoiceProvider();
+    const r = await provider.cloneVoice(audioBuffer, {
+      name: `soulchat_${uid ? uid.slice(0, 8) : 'anon'}_${Date.now()}`,
+      mimeType: mimeType || 'audio/wav',
+    });
+    if (!r.voiceId) return res.status(500).json({ error: '音色克隆失败' });
+
+    const id = randomUUID();
+    db.prepare(
+      'INSERT INTO custom_voices(id, user_id, voice_id, name, prompt, created_at) VALUES(?,?,?,?,?,?)'
+    ).run(id, uid, r.voiceId, cleanName, '[克隆] 音频文件克隆', new Date().toISOString());
+
+    // 积分模式扣 20 积分（同文本设计）
+    if (uid) {
+      try {
+        const u = db.prepare('SELECT billing_mode FROM users WHERE id = ?').get(uid);
+        if (u && (u.billing_mode || 'points') === 'points') {
+          deductPoints(uid, 20, 'voice_design', 'custom_voice', id, { name: cleanName, type: 'clone' });
+        }
+      } catch (e) {
+        console.warn('[voice] 克隆音色扣费失败:', e.message);
+      }
+    }
+
+    res.json({ id, voice_id: r.voiceId, name: cleanName });
+  }));
+
   // 我的定制音色列表
   app.get('/api/voice/custom', ah(async (req, res) => {
     const uid = (req && req.userId) || null;
