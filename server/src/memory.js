@@ -91,10 +91,24 @@ export const DEFAULT_MEMORY_MD = `<!-- 记忆：v1.10 起已升级为 AI 自动�
 -->`;
 
 // v1.20.5: 群聊@接龙——从文本里找出@到的成员 id（排除 excludeIds，如自己和已发言者）
+// v1.24.0: 扩展裸名模式——名字后跟标点/称谓（小明，/小明你/小明！）也算提及；单字名只认@，防误触
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 export function findMentionedIds(text, members, excludeIds = []) {
   const ex = new Set(excludeIds || []);
+  const t = String(text || '');
   return (members || [])
-    .filter((m) => m && m.id && !ex.has(m.id) && String(text || '').includes('@' + m.name))
+    .filter((m) => {
+      if (!m || !m.id || ex.has(m.id) || !m.name) return false;
+      if (t.includes('@' + m.name)) return true;
+      if (m.name.length >= 2) {
+        const n = escapeRegExp(m.name);
+        if (new RegExp(n + '[，,！!？?。：:、\\s]').test(t)) return true;
+        if (new RegExp(n + '[你您]').test(t)) return true;
+      }
+      return false;
+    })
     .map((m) => m.id);
 }
 
@@ -226,7 +240,7 @@ const HIST_SQL = (lim) =>
  FROM messages m LEFT JOIN characters ch ON ch.id = m.character_id
  WHERE m.conversation_id = ? AND m.id > ? ORDER BY m.id DESC LIMIT ${lim}`;
 
-const buildFor = (character) => {
+const buildFor = (character, extraSys) => {
 // 有水位：只取该角色没见过的新消息；无水位（新群/老数据）：回退摘要+最近 15 条
 const mark = markByChar.get(character.id);
 let rows;
@@ -265,6 +279,8 @@ const otherLines = members
 .filter((m) => m.id !== character.id)
 .map((m) => `- ${m.name}：${oneLineDesc(m.soul_md) || '（暂无介绍）'}`);
 if (otherLines.length) sysParts.push(`# 群成员\n${otherLines.join('\n')}`);
+// v1.24.0: @接龙唤醒提示——被点名叫到的角色，system 里明确提醒
+if (extraSys) sysParts.push(extraSys);
 const rpGroup = roleplayPromptOf(character);
 if (rpGroup) sysParts.push(`# 回复格式要求\n${rpGroup}`);
 // v1.17.0: 破限预设插件化（放末尾，离生成位置最近）

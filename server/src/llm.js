@@ -590,3 +590,42 @@ export async function generateCardJson({ desc, model, apiKey, baseUrl, provider,
   }
   throw new Error(`角色卡生成失败：${(lastErr && lastErr.message) || '未知错误'}`);
 }
+
+// v1.24.0: 轻量提及检测——整轮结束后查最后一个发言者的输出是否裸名提及他人（没用@的情况）
+// 返回被提及的成员 id 数组；mock/失败返回 []
+export async function detectMentions({ text, members, excludeIds, model, apiKey, baseUrl, provider, onUsage, signal }) {
+  const cfg = getConfig();
+  if (cfg.mockLlm) return [];
+  const t = String(text || '').trim();
+  if (!t) return [];
+  const ex = new Set(excludeIds || []);
+  const candidates = (members || []).filter((m) => m && m.id && m.name && !ex.has(m.id));
+  if (!candidates.length) return [];
+  const names = candidates.map((m) => m.name).join('、');
+  try {
+    const { json } = await postJson({
+      model: model || cfg.extractModel,
+      temperature: 0.2,
+      apiKey,
+      baseUrl,
+      provider,
+      signal,
+      onUsage,
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你是提及检测助手。判断下面这段群聊发言是否在点名、喊话或回应某位成员（即使没用@符号，直接叫名字也算）。只返回被提及成员的名字，多个用逗号分隔；如果没有提及任何人，返回空。不要输出其他文字。',
+        },
+        { role: 'user', content: `成员：${names}\n\n发言：${t.slice(0, 1000)}` },
+      ],
+    });
+    const out = String(
+      (json && json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || ''
+    ).trim();
+    if (!out) return [];
+    return candidates.filter((m) => out.includes(m.name)).map((m) => m.id);
+  } catch {
+    return [];
+  }
+}
