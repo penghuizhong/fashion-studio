@@ -544,7 +544,7 @@ export async function runMulti() {
     if (ch) await req('DELETE', `/api/characters/${ch.id}`, undefined, { jar: jarB2b });
   }
 
-  // M33. 敏感词投稿 → 400；举报 5 次自动下架回 pending
+  // M33. 敏感词投稿 → 400；同一用户重复举报只记1次；5个不同用户举报 → 下架回 pending（v1.28.1 去重）
   {
     const ch = await req('POST', '/api/characters', { name: '敏感词角' }, { jar: jarC });
     const bad = await req('POST', '/api/character-cards/publish', {
@@ -561,16 +561,28 @@ export async function runMulti() {
     }, { jar: jarC });
     const sid = pub.json.id;
     await req('POST', `/api/admin/shared-cards/${sid}/review`, { approve: true }, { jar: jarAdminM });
-    for (let i = 0; i < 5; i++) await req('POST', `/api/character-cards/shared/${sid}/report`, { reason: '测试' }, { jar: jarB2b });
+    // 用户 B 连点 2 次 → 只记 1 次
+    const rp1 = await req('POST', `/api/character-cards/shared/${sid}/report`, { reason: '测试' }, { jar: jarB2b });
+    const rp2 = await req('POST', `/api/character-cards/shared/${sid}/report`, { reason: '测试' }, { jar: jarB2b });
+    const db = getDb();
+    const rc1 = db.prepare('SELECT report_count FROM shared_cards WHERE id = ?').get(sid).report_count;
+    // 再注册 4 个用户各举报 1 次 → 满 5 人触发下架
+    for (const u of ['rpt1', 'rpt2', 'rpt3', 'rpt4']) {
+      const jar = makeJar();
+      await req('POST', '/api/auth/register', { username: u, password: 'password123' }, { jar });
+      await req('POST', `/api/character-cards/shared/${sid}/report`, { reason: '测试' }, { jar });
+    }
     const list = await req('GET', '/api/character-cards/shared');
     const pend = await req('GET', '/api/admin/shared-cards?status=pending', undefined, { jar: jarAdminM });
     ok(
-      'M33. 敏感词投稿 → 400；举报 5 次 → 广场列表消失且回待审队列',
+      'M33. 敏感词投稿 → 400；同人连点只记1次；5个不同用户举报 → 广场列表消失且回待审队列',
       bad.status === 400 && /敏感词/.test(bad.json.error || '') &&
         pub.status === 201 &&
+        rp1.status === 200 && /已收到/.test(rp1.json.message || '') &&
+        /已经举报过/.test(rp2.json.message || '') && rc1 === 1 &&
         Array.isArray(list.json) && !list.json.some((x) => x.id === sid) &&
         pend.json.some((x) => x.id === sid),
-      `bad=${bad.status} list=${list.json && list.json.length} backToPending=${pend.json.some((x) => x.id === sid)}`
+      `bad=${bad.status} rp2msg=${rp2.json.message} rc1=${rc1} list=${list.json && list.json.length} backToPending=${pend.json.some((x) => x.id === sid)}`
     );
     await req('DELETE', `/api/characters/${ch.json.id}`, undefined, { jar: jarC });
   }
