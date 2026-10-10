@@ -245,13 +245,14 @@ function voiceCacheDir() {
   return dir;
 }
 
-function cacheKey(text, voice, speed, model) {
-  return crypto.createHash('sha256').update(`${text}|${voice}|${speed}|${model}`).digest('hex');
+function cacheKey(text, voice, speed, model, userId) {
+  // v1.28.1: 缓存键带用户隔离，防跨用户免扣费蹭缓存
+  return crypto.createHash('sha256').update(`${userId || 'local'}|${text}|${voice}|${speed}|${model}`).digest('hex');
 }
 
-export function getCachedAudio(text, voice, speed, model) {
+export function getCachedAudio(text, voice, speed, model, userId) {
   try {
-    const key = cacheKey(text, voice, speed, model);
+    const key = cacheKey(text, voice, speed, model, userId);
     const fp = path.join(voiceCacheDir(), `${key}.mp3`);
     if (!fs.existsSync(fp)) return null;
     const stat = fs.statSync(fp);
@@ -266,9 +267,9 @@ export function getCachedAudio(text, voice, speed, model) {
   }
 }
 
-export function setCachedAudio(text, voice, speed, model, audioBuffer) {
+export function setCachedAudio(text, voice, speed, model, audioBuffer, userId) {
   try {
-    const key = cacheKey(text, voice, speed, model);
+    const key = cacheKey(text, voice, speed, model, userId);
     const fp = path.join(voiceCacheDir(), `${key}.mp3`);
     fs.writeFileSync(fp, audioBuffer);
   } catch (e) {

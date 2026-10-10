@@ -160,6 +160,14 @@ CREATE TABLE IF NOT EXISTS card_likes(
   created_at TEXT,
   PRIMARY KEY(user_id, shared_card_id)
 );
+-- v1.28.1: 举报去重（同一用户对同一卡片只能举报一次，防单人连点下架）
+CREATE TABLE IF NOT EXISTS card_reports(
+  user_id TEXT NOT NULL,
+  shared_card_id TEXT NOT NULL,
+  reason TEXT DEFAULT '',
+  created_at TEXT,
+  PRIMARY KEY(user_id, shared_card_id)
+);
 -- ---- 集卡图鉴 ----
 CREATE TABLE IF NOT EXISTS user_collection(
   user_id TEXT NOT NULL,
