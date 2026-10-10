@@ -588,6 +588,42 @@ textarea {
   overscroll-behavior-y: contain;
 }
 
+/* v1.28.0: 粘性底部——"回到底部"悬浮按钮（sticky 吸附在可视区底部，不占消息流空间） */
+.scroll-bottom-btn {
+  position: sticky;
+  bottom: 12px;
+  align-self: flex-end;
+  flex-shrink: 0;
+  margin-top: -48px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  z-index: 5;
+  transition: transform 0.18s var(--ease), background 0.18s var(--ease);
+}
+.scroll-bottom-btn:active {
+  transform: scale(0.92);
+  background: var(--hover);
+}
+/* 流式输出中新内容到达时的小圆点提示 */
+.scroll-bottom-dot {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .loading-hint,
 .chat-empty {
   margin: auto;
