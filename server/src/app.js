@@ -1575,9 +1575,20 @@ export function createApp() {
     const t = now();
     // v1.21.0: 整轮 batch_id——用户消息 + 本轮所有角色回复 + @接龙共享，支持整轮删/重生成
     const batchId = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    db.prepare(
-      'INSERT INTO messages(conversation_id, role, content, tokens, character_id, batch_id, created_at) VALUES(?,?,?,?,?,?,?)'
-    ).run(conv.id, 'user', content, estimateTokens(content), null, batchId, t);
+    // v1.27.1: 重试去重——regenerate 且库里最后一条用户消息内容一致时复用，不重复插入；
+    // 对不上（401/402 当时没落库、消息被删）则正常插入；重试轮的角色回复仍用新 batchId
+    let skipUserInsert = false;
+    if (req.body && req.body.regenerate) {
+      const lastUser = db
+        .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1")
+        .get(conv.id);
+      if (lastUser && String(lastUser.content || '').trim() === content) skipUserInsert = true;
+    }
+    if (!skipUserInsert) {
+      db.prepare(
+        'INSERT INTO messages(conversation_id, role, content, tokens, character_id, batch_id, created_at) VALUES(?,?,?,?,?,?,?)'
+      ).run(conv.id, 'user', content, estimateTokens(content), null, batchId, t);
+    }
     db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(t, conv.id);
 
     const send = sseInit(res);
@@ -1877,20 +1888,27 @@ export function createApp() {
     if (!conv) return conv404(res);
     if (conv.type === 'group') return handleGroupMessage(req, res, conv, cfg);
     // v1.22.0: 重新生成不重复落库用户消息——多次重新生成只保留一条用户输入
-    const isRegen = !!(req.body && req.body.regenerate);
-    let content;
-    if (isRegen) {
+    // v1.27.1: 重试去重改按内容比对——库里最后一条用户消息与本次内容一致才复用；
+    // 对不上（401/402 当时没落库、消息被手动删除）则当新消息正常插入；兼容只带标记不带 content 的旧客户端
+    const wantRegen = !!(req.body && req.body.regenerate);
+    let content = String((req.body && req.body.content) ?? '').trim();
+    let isRegen = false;
+    if (wantRegen) {
       const lastUser = db
         .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1")
         .get(conv.id);
-      if (!lastUser || !String(lastUser.content || '').trim()) {
+      const lastContent = lastUser ? String(lastUser.content || '').trim() : '';
+      if (content && lastContent === content) {
+        isRegen = true; // 精确重试：复用已落库的用户消息
+      } else if (!content && lastContent) {
+        content = lastContent;
+        isRegen = true; // 旧客户端：只带 regenerate 标记不带 content
+      } else if (!content) {
         return res.status(400).json({ error: '找不到可重发的问题' });
       }
-      content = lastUser.content;
-    } else {
-      content = String((req.body && req.body.content) ?? '').trim();
-      if (!content) return res.status(400).json({ error: 'content 不能为空' });
+      // 内容对不上→当作新消息走正常插入（不 return）
     }
+    if (!content) return res.status(400).json({ error: 'content 不能为空' });
     const char = getChar(conv.character_id, req);
     // v1.18.1: 破限白名单——权限被收回后，已开破限的角色也不再注入
     if (char.jailbreak_preset && !canUseJailbreak(uidOf(req))) char.jailbreak_preset = null;
@@ -1917,6 +1935,7 @@ export function createApp() {
 
     const t = now();
     // v1.22.0: 重新生成时跳过用户消息落库（复用已有的最后一条用户消息）
+    // v1.27.1: isRegen 须经内容比对确认，避免重试叠加重复用户消息
     if (!isRegen) {
       db.prepare('INSERT INTO messages(conversation_id, role, content, tokens, created_at) VALUES(?,?,?,?,?)').run(
         conv.id,
