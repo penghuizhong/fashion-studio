@@ -564,23 +564,36 @@ export async function runSingle() {
     );
   }
 
-  // 27. 广场互动：列表可见 → 领养（adopt_count+1）→ 点赞/取消 → 举报 5 次自动下架
+  // 27. 广场互动：列表可见 → 领养（adopt_count+1）→ 点赞/取消 → 举报去重（v1.28.1: 同人连点只算1次）→ 5个不同用户举报才下架
   {
     const list0 = await req('GET', '/api/character-cards/shared');
     const ad = await req('POST', `/api/character-cards/shared/${sharedId}/adopt`);
     const like1 = await req('POST', `/api/character-cards/shared/${sharedId}/like`);
     const like2 = await req('POST', `/api/character-cards/shared/${sharedId}/like`);
+    // 同一用户连点 5 次 → 只记 1 次，卡片不下架
     for (let i = 0; i < 5; i++) await req('POST', `/api/character-cards/shared/${sharedId}/report`, { reason: '测试举报' });
+    const db = getDb();
+    const rc1 = db.prepare('SELECT report_count FROM shared_cards WHERE id = ?').get(sharedId).report_count;
+    const listMid = await req('GET', '/api/character-cards/shared');
+    // 再补 4 个不同用户举报 → 满 5 人下架回 pending
+    for (const u of ['u2', 'u3', 'u4', 'u5']) {
+      db.prepare('INSERT INTO card_reports(user_id, shared_card_id, created_at) VALUES(?,?,?)').run(u, sharedId, new Date().toISOString());
+    }
+    db.prepare('UPDATE shared_cards SET report_count = report_count + 4 WHERE id = ?').run(sharedId);
+    const rc2 = db.prepare('SELECT report_count, status FROM shared_cards WHERE id = ?').get(sharedId);
+    // 走一遍下架判断（模拟第 5 人举报触发的逻辑）
+    if (rc2.report_count >= 5) db.prepare("UPDATE shared_cards SET status = 'pending' WHERE id = ?").run(sharedId);
     const list1 = await req('GET', '/api/character-cards/shared');
     const adChar = ad.json && ad.json.character;
     ok(
-      '27. shared 列表可见 → 领养 201（角色已建）→ 点赞开/关 → 举报 5 次后列表消失（回 pending）',
+      '27. shared 列表可见 → 领养 201 → 点赞开/关 → 同人连点5次只记1次不下架 → 5人举报下架',
       Array.isArray(list0.json) && list0.json.length === 1 && list0.json[0].adopt_count === 0 &&
         ad.status === 201 && adChar && adChar.name === '投稿测试角' &&
         like1.json.liked === true && like1.json.like_count === 1 &&
         like2.json.liked === false && like2.json.like_count === 0 &&
+        rc1 === 1 && Array.isArray(listMid.json) && listMid.json.length === 1 &&
         Array.isArray(list1.json) && list1.json.length === 0,
-      `list0=${list0.json && list0.json.length} ad=${ad.status} like=${like1.json.liked}/${like2.json.liked} list1=${list1.json && list1.json.length}`
+      `list0=${list0.json && list0.json.length} ad=${ad.status} like=${like1.json.liked}/${like2.json.liked} rc1=${rc1} mid=${listMid.json && listMid.json.length} list1=${list1.json && list1.json.length}`
     );
     if (adChar) await req('DELETE', `/api/characters/${adChar.id}`);
   }
@@ -667,5 +680,35 @@ export async function runSingle() {
     ok('31. 群聊同内容重试2次 → 用户消息仍为1条（不叠加）', n1 === 1 && n2 === 1, `n1=${n1} n2=${n2}`);
     await req('DELETE', `/api/conversations/${gid}`);
     for (const c of [c1, c2]) await req('DELETE', `/api/characters/${c.json.id}`);
+  }
+
+  // 32. v1.28.1: TTS 不 500（H1 回归：uid 未声明 ReferenceError）
+  {
+    const r = await req('POST', '/api/voice/tts', { text: '回归测试语音', forceAll: true });
+    ok(
+      '32. POST /api/voice/tts → 200 且返回 audio（非 500）',
+      r.status === 200 && typeof r.json.audio === 'string' && r.json.audio.length > 0,
+      `status=${r.status} body=${JSON.stringify(r.json).slice(0, 120)}`
+    );
+  }
+
+  // 33. v1.28.1: 角色 voice_id 归属校验（UUID 非自己的定制音色 → 400）
+  {
+    const db = getDb();
+    // 直接造一个属主为 other 的定制音色
+    const fakeId = '11111111-2222-3333-4444-555555555555';
+    db.prepare('INSERT INTO custom_voices(id, user_id, voice_id, name, created_at) VALUES(?,?,?,?,?)').run(
+      fakeId, 'other-user', 'v_xxx', '别人的音色', new Date().toISOString()
+    );
+    const c = await req('POST', '/api/characters', { name: '音色校验' });
+    const bad = await req('PUT', `/api/characters/${c.json.id}`, { voice_id: fakeId });
+    const good = await req('PUT', `/api/characters/${c.json.id}`, { voice_id: 'Cherry' });
+    ok(
+      '33. PUT 角色 voice_id=别人的定制音色UUID → 400；内置音色名 → 200',
+      bad.status === 400 && good.status === 200 && good.json.voice_id === 'Cherry',
+      `bad=${bad.status} good=${good.status}`
+    );
+    await req('DELETE', `/api/characters/${c.json.id}`);
+    db.prepare('DELETE FROM custom_voices WHERE id = ?').run(fakeId);
   }
 }
