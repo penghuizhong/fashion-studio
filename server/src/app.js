@@ -200,6 +200,34 @@ export function createApp() {
     const uid = uidOf(req);
     return uid ? { sql: ` AND ${alias}user_id = ?`, args: [uid] } : { sql: '', args: [] };
   };
+  // 管理员鉴权：单用户模式直接放行（本机即管理员）；多用户模式需登录且 is_admin
+  // 返回 true=通过；未通过时已写响应，调用方直接 return
+  const requireAdmin = (req, res) => {
+    if (!getConfig().multiUser) return true;
+    const uid = uidOf(req);
+    if (!uid) {
+      res.status(401).json({ error: '未登录' });
+      return false;
+    }
+    const row = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(uid);
+    if (!row || !row.is_admin) {
+      res.status(403).json({ error: '需要管理员权限' });
+      return false;
+    }
+    return true;
+  };
+  // v1.28.1: 音色归属校验——UUID 格式视为定制音色 id，必须是自己的；内置音色名直接放行
+  // 返回 { voiceId } 或 { error }
+  const resolveVoiceId = (voice_id, req) => {
+    const v = String(voice_id || '').trim();
+    if (!v) return { voiceId: null };
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+    if (!isUuid) return { voiceId: v }; // 内置音色名
+    const uid = uidOf(req) || 'local';
+    const ok = db.prepare('SELECT 1 FROM custom_voices WHERE id = ? AND user_id = ?').get(v, uid);
+    if (!ok) return { error: '该定制音色不存在' };
+    return { voiceId: v };
+  };
   const char404 = (res) => res.status(404).json({ error: '角色不存在' });
   const conv404 = (res) => res.status(404).json({ error: '对话不存在' });
 
@@ -702,16 +730,30 @@ export function createApp() {
     })
   );
 
-  // 举报：累计 5 次自动下架回 pending 待审
+  // 举报：累计 5 个不同用户举报自动下架回 pending 待审（v1.28.1: 需登录+按人去重，防单人连点）
   app.post(
     '/api/character-cards/shared/:id/report',
     ah(async (req, res) => {
+      const uid = uidOf(req);
+      // 多用户模式需登录；单用户模式用固定 reporter（本机只有一人）
+      const reporter = uid || (getConfig().multiUser ? null : 'local');
+      if (!reporter) return res.status(401).json({ error: '请先登录再举报' });
       const r = db.prepare("SELECT id, report_count FROM shared_cards WHERE id = ? AND status = 'approved'").get(
         req.params.id
       );
       if (!r) return res.status(404).json({ error: '该角色卡不存在或未上架' });
       const reason = String((req.body && req.body.reason) || '').trim().slice(0, 200);
+      const dup = db
+        .prepare('SELECT 1 FROM card_reports WHERE user_id = ? AND shared_card_id = ?')
+        .get(reporter, r.id);
+      if (dup) return res.json({ ok: true, message: '你已经举报过这张卡片' });
       db.transaction(() => {
+        db.prepare('INSERT INTO card_reports(user_id, shared_card_id, reason, created_at) VALUES(?,?,?,?)').run(
+          reporter,
+          r.id,
+          reason,
+          now()
+        );
         db.prepare('UPDATE shared_cards SET report_count = report_count + 1 WHERE id = ?').run(r.id);
         if (r.report_count + 1 >= 5) {
           db.prepare("UPDATE shared_cards SET status = 'pending', reviewed_at = ? WHERE id = ?").run(now(), r.id);
@@ -982,6 +1024,9 @@ export function createApp() {
     if (jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] && !canUseJailbreak(uidOf(req))) {
       return res.status(403).json({ error: '破限模式需管理员授权' });
     }
+    // v1.28.1: 音色归属校验（UUID 视为定制音色，必须是自己的）
+    const vv = resolveVoiceId(voice_id, req);
+    if (vv.error) return res.status(400).json({ error: vv.error });
     const id = randomUUID();
     const t = now();
     const row = {
@@ -997,7 +1042,7 @@ export function createApp() {
       roleplay_mode: roleplay_mode ? 1 : 0,
       roleplay_prompt: roleplay_prompt && String(roleplay_prompt).trim() ? String(roleplay_prompt).trim() : null,
       jailbreak_preset: jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] ? jailbreak_preset : null,
-      voice_id: voice_id || null, // v1.26.0
+      voice_id: vv.voiceId, // v1.26.0; v1.28.1: 已做归属校验
       created_at: t,
       updated_at: t,
     };
@@ -1037,6 +1082,12 @@ export function createApp() {
     if (jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] && !canUseJailbreak(uidOf(req))) {
       return res.status(403).json({ error: '破限模式需管理员授权' });
     }
+    // v1.28.1: 音色归属校验（仅当传入了 voice_id 才校验；undefined=保持原值）
+    let vv = { voiceId: c.voice_id || null };
+    if (voice_id !== undefined) {
+      vv = resolveVoiceId(voice_id, req);
+      if (vv.error) return res.status(400).json({ error: vv.error });
+    }
     const next = {
       name: name !== undefined ? String(name).trim() : c.name,
       avatar: avatar !== undefined ? avatar : c.avatar,
@@ -1057,8 +1108,8 @@ export function createApp() {
           : jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset]
             ? jailbreak_preset
             : null,
-      // v1.26.0: 音色（null=跟随全局默认）
-      voice_id: voice_id === undefined ? (c.voice_id || null) : (voice_id || null),
+      // v1.26.0: 音色（null=跟随全局默认）；v1.28.1: 已做归属校验
+      voice_id: vv.voiceId,
       updated_at: now(),
     };
     if (!next.name) return res.status(400).json({ error: 'name 不能为空' });
@@ -1087,13 +1138,20 @@ export function createApp() {
       .prepare(`SELECT c.id FROM conversations c WHERE c.character_id = ?${f.sql}`)
       .all(c.id, ...f.args)
       .map((r) => r.id);
+    // v1.28.1: 级联删除补用户隔离（纵深防御；创建路径已验证归属，此处双保险）
+    const fPlain = andUid(req);
+    const gmScope = uidOf(req)
+      ? 'AND conversation_id IN (SELECT id FROM conversations WHERE user_id = ?)'
+      : '';
+    const gmArgs = uidOf(req) ? [uidOf(req)] : [];
     db.transaction(() => {
       for (const cid of convIds) {
         db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(cid);
         db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ?').run(cid);
       }
-      db.prepare('DELETE FROM conversations WHERE character_id = ?').run(c.id);
-      db.prepare('DELETE FROM group_members WHERE character_id = ?').run(c.id);
+      db.prepare(`DELETE FROM conversations WHERE character_id = ?${fPlain.sql}`).run(c.id, ...fPlain.args);
+      db.prepare(`DELETE FROM group_members WHERE character_id = ?${gmScope}`).run(c.id, ...gmArgs);
+      // file_versions 写入路径（PUT files）已做 getChar 验证，character_id 不可能跨用户
       db.prepare('DELETE FROM file_versions WHERE character_id = ?').run(c.id);
       db.prepare('DELETE FROM characters WHERE id = ?').run(c.id);
     })();
@@ -2141,9 +2199,9 @@ export function createApp() {
     // v1.26.0: 解析定制音色（voice 参数可能是 custom_voices.id）
     let actualVoice = voice || 'Cherry';
     let ttsModel = model;
-    if (uid) {
+    if (ttsUid) {
       try {
-        const cv = getDb().prepare('SELECT voice_id FROM custom_voices WHERE id = ? AND user_id = ?').get(voice, uid);
+        const cv = getDb().prepare('SELECT voice_id FROM custom_voices WHERE id = ? AND user_id = ?').get(voice, ttsUid);
         if (cv) {
           actualVoice = cv.voice_id;
           ttsModel = getVoiceModel('design'); // v1.26.1: 定制音色用配置的 VD 模型
@@ -2151,8 +2209,9 @@ export function createApp() {
       } catch {}
     }
     const provider = getVoiceProvider();
-    // v1.26.0: 查音频缓存（命中则不扣费）
-    const cached = getCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel);
+    // v1.26.0: 查音频缓存（命中则不扣费）；v1.28.1: 按用户隔离缓存键
+    const cacheUid = ttsUid || uidOf(req) || 'local';
+    const cached = getCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel, cacheUid);
     let audioBuf, billChars;
     if (cached) {
       audioBuf = cached;
@@ -2161,7 +2220,7 @@ export function createApp() {
       const r = await provider.tts(speakText, { model: ttsModel, voice: actualVoice, speed });
       audioBuf = r.audio;
       billChars = r.chars;
-      setCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel, audioBuf);
+      setCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel, audioBuf, cacheUid);
     }
     // v1.26.0: 积分模式按字符扣费（缓存命中不扣）
     if (ttsUid && !cached) {
@@ -2189,7 +2248,7 @@ export function createApp() {
     const cleanName = String(name).trim().replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '').slice(0, 16);
     if (!cleanName) return res.status(400).json({ error: '名字只支持中文/字母/数字/下划线' });
 
-    const uid = (req && req.userId) || null;
+    const uid = (req && req.userId) || "local"; // v1.28.1: 单用户模式用固定哨兵，避免 NULL 违反 NOT NULL/查不到
     // 检查重名
     const exists = db.prepare('SELECT id FROM custom_voices WHERE user_id = ? AND name = ?').get(uid, cleanName);
     if (exists) return res.status(400).json({ error: '已有同名音色' });
@@ -2252,7 +2311,7 @@ export function createApp() {
       return res.status(400).json({ error: '音频文件过小' });
     }
 
-    const uid = (req && req.userId) || null;
+    const uid = (req && req.userId) || "local"; // v1.28.1: 单用户模式用固定哨兵，避免 NULL 违反 NOT NULL/查不到
     const exists = db.prepare('SELECT id FROM custom_voices WHERE user_id = ? AND name = ?').get(uid, cleanName);
     if (exists) return res.status(400).json({ error: '已有同名音色' });
 
@@ -2285,8 +2344,7 @@ export function createApp() {
 
   // 我的定制音色列表
   app.get('/api/voice/custom', ah(async (req, res) => {
-    const uid = (req && req.userId) || null;
-    if (!uid) return res.json([]);
+    const uid = (req && req.userId) || "local"; // v1.28.1: 单用户模式用固定哨兵，避免 NULL 违反 NOT NULL/查不到
     const rows = getDb()
       .prepare('SELECT id, voice_id, name, prompt, created_at FROM custom_voices WHERE user_id = ? ORDER BY created_at DESC')
       .all(uid);
@@ -2295,12 +2353,14 @@ export function createApp() {
 
   // 删除定制音色
   app.delete('/api/voice/custom/:id', ah(async (req, res) => {
-    const uid = (req && req.userId) || null;
+    const uid = (req && req.userId) || "local"; // v1.28.1: 单用户模式用固定哨兵，避免 NULL 违反 NOT NULL/查不到
     const r = getDb().prepare('DELETE FROM custom_voices WHERE id = ? AND user_id = ?').run(req.params.id, uid);
     if (!r.changes) return res.status(404).json({ error: '未找到' });
-    // 把用了该音色的角色重置为 null（跟随全局）
+    // 把用了该音色的角色重置为 null（跟随全局）；v1.28.1: 补 user_id 隔离
     try {
-      getDb().prepare('UPDATE characters SET voice_id = NULL WHERE voice_id = ?').run(req.params.id);
+      const uCond = uid ? 'AND user_id = ?' : '';
+      const uArgs = uid ? [uid] : [];
+      getDb().prepare(`UPDATE characters SET voice_id = NULL WHERE voice_id = ? ${uCond}`.trim()).run(req.params.id, ...uArgs);
     } catch {}
     res.json({ ok: true });
   }));
@@ -2328,6 +2388,8 @@ export function createApp() {
 
   // v1.26.2: 语音连通测试 POST /api/voice/test { type: 'tts'|'asr', model }
   app.post('/api/voice/test', chatLimiter, ah(async (req, res) => {
+    // v1.28.1: 烧服务端 Key 的真实调用，仅管理员可用（防匿名刷配额）
+    if (!requireAdmin(req, res)) return;
     const { type, model } = req.body || {};
     if (!['tts', 'asr'].includes(type)) {
       return res.status(400).json({ error: 'type 须为 tts 或 asr' });
