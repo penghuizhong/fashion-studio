@@ -401,6 +401,39 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
             // v1.12：后台记忆流水线跑完有写入时 toast 提示
             pollMemoryEvents(new Date().toISOString());
           } else if (ev === 'error') {
+            const errCid = data && data.character_id;
+            // v1.28.2: 群聊单角色流中途抛异常——把半截文本转成 truncated 消息并给重试按钮；
+            // 之前只弹 toast，半截气泡会一直卡在流式状态且无恢复入口
+            if (isGroup && errCid) {
+              if (data && data.batch_id) batchIdRef.current = data.batch_id;
+              doneCidsRef.current.add(errCid); // 整流 catch 不再重复补
+              setGroupStreams((s) => {
+                const next = { ...s };
+                delete next[errCid];
+                return next;
+              });
+              setTyping((t) => (t && String(t.character_id) === String(errCid) ? null : t));
+              const partial = accByChar[errCid] || '';
+              if (partial.trim()) {
+                const mem = memberOf(errCid);
+                const batchId = batchIdRef.current;
+                setMessages((m) => [
+                  ...m,
+                  {
+                    id: `tmp-err-${errCid}-${Date.now()}`,
+                    role: 'assistant',
+                    character_id: errCid,
+                    character_name: (mem && mem.name) || '某人',
+                    character_avatar: (mem && mem.avatar) || null,
+                    content: partial,
+                    created_at: new Date().toISOString(),
+                    truncated: true,
+                    // 后端未落库半截：按角色+batch 定位重跑（regenerate-turn 无半截时直接重跑）
+                    batchRegen: batchId ? { character_id: errCid, batch_id: batchId } : null,
+                  },
+                ]);
+              }
+            }
             setErrorMsg((data && data.message) || '生成失败，换句话试试');
           }
         },
