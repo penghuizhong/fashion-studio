@@ -607,4 +607,65 @@ export async function runSingle() {
       await req('DELETE', `/api/characters/${c.id}`);
     }
   }
+
+  // 29. v1.27.1: 单聊失败重试不叠加用户消息——同内容 + regenerate 多次只保留一条
+  {
+    const ch = await req('POST', '/api/characters', { name: '重试测试角' });
+    const c = await req('POST', `/api/characters/${ch.json.id}/conversations`, {});
+    const cid = c.json.id;
+    const db = getDb();
+    const userCount = () =>
+      db.prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'user'").get(cid).n;
+    await postSSE(`/api/conversations/${cid}/messages`, { content: '重试去重测试' });
+    const n1 = userCount();
+    // 模拟"模型失败→点重试"3 次：同内容 + regenerate
+    await postSSE(`/api/conversations/${cid}/messages`, { content: '重试去重测试', regenerate: true });
+    await postSSE(`/api/conversations/${cid}/messages`, { content: '重试去重测试', regenerate: true });
+    await postSSE(`/api/conversations/${cid}/messages`, { content: '重试去重测试', regenerate: true });
+    const n2 = userCount();
+    ok('29. 单聊同内容重试3次 → 用户消息仍为1条（不叠加）', n1 === 1 && n2 === 1, `n1=${n1} n2=${n2}`);
+    await req('DELETE', `/api/characters/${ch.json.id}`);
+  }
+
+  // 30. v1.27.1: regenerate 但内容对不上（模拟 401/402 当时没落库）→ 当新消息正常插入
+  {
+    const ch = await req('POST', '/api/characters', { name: '重试测试角2' });
+    const c = await req('POST', `/api/characters/${ch.json.id}/conversations`, {});
+    const cid = c.json.id;
+    const db = getDb();
+    const userCount = () =>
+      db.prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'user'").get(cid).n;
+    await postSSE(`/api/conversations/${cid}/messages`, { content: '第一条问题' });
+    // 库里最后一条是"第一条问题"，带 regenerate 发"第二条问题"→对不上→应插入
+    const r = await postSSE(`/api/conversations/${cid}/messages`, { content: '第二条问题', regenerate: true });
+    const n = userCount();
+    const lastContent = db
+      .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1")
+      .get(cid).content;
+    ok(
+      '30. regenerate 内容对不上 → 正常插入新用户消息（不丢问题）',
+      r.status === 200 && n === 2 && lastContent === '第二条问题',
+      `status=${r.status} n=${n} last=${JSON.stringify(lastContent)}`
+    );
+    await req('DELETE', `/api/characters/${ch.json.id}`);
+  }
+
+  // 31. v1.27.1: 群聊失败重试不叠加用户消息
+  {
+    const c1 = await req('POST', '/api/characters', { name: '群重试A' });
+    const c2 = await req('POST', '/api/characters', { name: '群重试B' });
+    const g = await req('POST', '/api/groups', { member_ids: [c1.json.id, c2.json.id] });
+    const gid = g.json.id;
+    const db = getDb();
+    const userCount = () =>
+      db.prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ? AND role = 'user'").get(gid).n;
+    await postSSE(`/api/conversations/${gid}/messages`, { content: '群重试去重测试' });
+    const n1 = userCount();
+    await postSSE(`/api/conversations/${gid}/messages`, { content: '群重试去重测试', regenerate: true });
+    await postSSE(`/api/conversations/${gid}/messages`, { content: '群重试去重测试', regenerate: true });
+    const n2 = userCount();
+    ok('31. 群聊同内容重试2次 → 用户消息仍为1条（不叠加）', n1 === 1 && n2 === 1, `n1=${n1} n2=${n2}`);
+    await req('DELETE', `/api/conversations/${gid}`);
+    for (const c of [c1, c2]) await req('DELETE', `/api/characters/${c.json.id}`);
+  }
 }
