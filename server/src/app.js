@@ -1537,7 +1537,8 @@ export function createApp() {
       turnFinishReason = gr.finishReason;
       turnStalled = !!gr.stalled; // v1.25.6: 上游流停滞也算截断
     } catch (e) {
-      send('error', { character_id: ch.id, message: `${ch.name} 回复失败：${String((e && e.message) || e)}` });
+      // v1.28.2: 单角色流异常时带上 batch_id，前端可按角色+batch 定位半截并给出重试按钮
+      send('error', { character_id: ch.id, batch_id: batchId, message: `${ch.name} 回复失败：${String((e && e.message) || e)}` });
       return null;
     }
     const outTokens = estimateTokens(full);
@@ -1635,12 +1636,17 @@ export function createApp() {
     const batchId = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     // v1.27.1: 重试去重——regenerate 且库里最后一条用户消息内容一致时复用，不重复插入；
     // 对不上（401/402 当时没落库、消息被删）则正常插入；重试轮的角色回复仍用新 batchId
+    // v1.28.2: 同时记下复用的用户消息 id，供重试时跳过已成功回复的角色（防重复叠加）
     let skipUserInsert = false;
+    let reusedUserId = null;
     if (req.body && req.body.regenerate) {
       const lastUser = db
-        .prepare("SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1")
+        .prepare("SELECT id, content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1")
         .get(conv.id);
-      if (lastUser && String(lastUser.content || '').trim() === content) skipUserInsert = true;
+      if (lastUser && String(lastUser.content || '').trim() === content) {
+        skipUserInsert = true;
+        reusedUserId = lastUser.id;
+      }
     }
     if (!skipUserInsert) {
       db.prepare(
@@ -1696,6 +1702,21 @@ export function createApp() {
         }
       }
       if (!speakerIds.length) speakerIds = [members[0].id];
+      // v1.28.2: 重试不叠加——复用用户消息的重试只跑本轮尚未成功回复的角色；
+      // 已在本轮回过的角色不再重跑，避免失败重试时重复回复越堆越多
+      if (skipUserInsert && reusedUserId) {
+        const replied = new Set(
+          db
+            .prepare(
+              "SELECT character_id FROM messages WHERE conversation_id = ? AND role = 'assistant' AND character_id IS NOT NULL AND id > ?"
+            )
+            .all(conv.id, reusedUserId)
+            .map((r) => r.character_id)
+        );
+        const filtered = speakerIds.filter((id) => !replied.has(id));
+        // 全已回复则本轮无事可做（直接走 done，不再叠加）；保持空数组不回退，避免无意义重跑
+        speakerIds = filtered;
+      }
 
       // 2. 按角色串行流式：每轮重建上下文，后发言者能看到先发言者的回复
       const speakerChars = [];
