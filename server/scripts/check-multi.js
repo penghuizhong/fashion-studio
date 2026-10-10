@@ -1610,6 +1610,39 @@ export async function runMulti() {
     );
   }
 
+  // M64. v1.28.2: 群聊重试不叠加——regenerate 重试只跑未成功回复的角色，已回过的不再重跑
+  {
+    const db = getDb();
+    const jarA64 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarA64 });
+    const gc1 = await req('POST', '/api/characters', { name: 'M64A' }, { jar: jarA64 });
+    const gc2 = await req('POST', '/api/characters', { name: 'M64B' }, { jar: jarA64 });
+    const gg = await req('POST', '/api/groups', { member_ids: [gc1.json.id, gc2.json.id] }, { jar: jarA64 });
+    const gid = gg.json && gg.json.id;
+    let pass = false, detail = '';
+    if (gid) {
+      const userCount = () =>
+        db.prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND role = 'user'").get(gid).c;
+      const asstCount = () =>
+        db.prepare("SELECT COUNT(*) AS c FROM messages WHERE conversation_id = ? AND role = 'assistant'").get(gid).c;
+      const r1 = await postSSE(`/api/conversations/${gid}/messages`, { content: 'M64叠加测试' }, { jar: jarA64 });
+      const u1 = userCount(), n1 = asstCount();
+      // 模拟失败后点重试：同内容 + regenerate
+      const r2 = await postSSE(
+        `/api/conversations/${gid}/messages`,
+        { content: 'M64叠加测试', regenerate: true },
+        { jar: jarA64 }
+      );
+      const u2 = userCount(), n2 = asstCount();
+      pass = r1.status === 200 && r2.status === 200 && u1 === 1 && u2 === 1 && n1 > 0 && n2 === n1;
+      detail = `u1=${u1} u2=${u2} n1=${n1} n2=${n2}`;
+      await req('DELETE', `/api/conversations/${gid}`, undefined, { jar: jarA64 });
+    }
+    if (gc1.json) await req('DELETE', `/api/characters/${gc1.json.id}`, undefined, { jar: jarA64 });
+    if (gc2.json) await req('DELETE', `/api/characters/${gc2.json.id}`, undefined, { jar: jarA64 });
+    ok('M64. 群聊regenerate重试不叠加已回复角色', pass, detail);
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
