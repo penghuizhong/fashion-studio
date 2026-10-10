@@ -162,7 +162,8 @@ export async function sendMessage(conversationId, content, onEvent, signal, opts
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     credentials: 'same-origin',
     // v1.22.0: regenerate=true 时后端复用最后一条用户消息，不重复落库
-    body: JSON.stringify(opts.regenerate ? { regenerate: true } : { content }),
+    // v1.27.1: 总是带上 content，后端按内容比对决定复用还是插入（防失败重试叠加用户消息）
+    body: JSON.stringify({ content, regenerate: !!opts.regenerate }),
     signal,
   });
   if (!res.ok) throw await httpError(res, '发送失败');

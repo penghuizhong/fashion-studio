@@ -518,9 +518,10 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   };
 
   // v1.17.4: 网络中断后的重试入口
+  // v1.27.1: 重试带 regenerate，后端按内容比对复用已落库的用户消息，不再重复插入
   const retrySend = () => {
     if (sending || !lastContentRef.current) return;
-    sendContent(lastContentRef.current, { skipUserBubble: true });
+    sendContent(lastContentRef.current, { skipUserBubble: true, regenerate: true });
   };
 
   // v1.20.5: 消息长按/右键菜单（删除单条，防上下文污染）
