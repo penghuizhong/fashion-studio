@@ -67,12 +67,37 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   const memPollRef = useRef(null); // v1.12 记忆事件轮询定时器
   const batchIdRef = useRef(null); // v1.22.2 群聊整轮 batch_id（断流补 truncated 用）
   const doneCidsRef = useRef(new Set()); // v1.22.2 收到 turn_done 的角色（断流时区分半截）
+  const stickToBottomRef = useRef(true); // v1.28.0: 粘性底部——用户上滑后不再强制滚到底
+  const [showScrollBtn, setShowScrollBtn] = useState(false); // v1.28.0: 上滑后显示"回到底部"悬浮按钮
+  const SCROLL_NEAR_BOTTOM_PX = 100; // 距底部多少 px 内算"在底部"
+
+  // v1.28.0: 滚动监听——用户主动上滑就松开粘性，滑回底部则恢复跟随
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_NEAR_BOTTOM_PX;
+    stickToBottomRef.current = nearBottom;
+    setShowScrollBtn(!nearBottom);
+  };
+
+  // v1.28.0: 点悬浮按钮回到底部（平滑），恢复粘性跟随
+  const scrollToBottom = (smooth) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current = true;
+    setShowScrollBtn(false);
+    if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    else el.scrollTop = el.scrollHeight;
+  };
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setGroup(null);
     setCharacter(null);
+    // v1.28.0: 切对话时恢复粘性底部
+    stickToBottomRef.current = true;
+    setShowScrollBtn(false);
     (async () => {
       try {
         const msgs = await api.listMessages(conversationId);
@@ -109,9 +134,10 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     };
   }, [characterId, conversationId, isGroup]);
 
+  // v1.28.0: 粘性底部——只在用户处于底部附近时自动跟随，上滑后不再强制拽回到底部
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, streamText, groupStreams, typing, errorMsg]);
 
   // v1.25.3: 挂载时拉取真实计费模式，避免刷新后默认 api 闪一下
@@ -232,6 +258,9 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     const content = String(rawContent || '').trim();
     if (!content || sending) return;
     lastContentRef.current = content;
+    // v1.28.0: 发送新消息时恢复粘性底部（用户想看回复）
+    stickToBottomRef.current = true;
+    setShowScrollBtn(false);
     setInput('');
     requestAnimationFrame(() => {
       if (taRef.current) taRef.current.style.height = 'auto';
@@ -752,7 +781,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         </div>
       </header>
 
-      <div className="messages" ref={scrollRef}>
+      <div className="messages" ref={scrollRef} onScroll={handleScroll}>
         {loading && <div className="loading-hint">加载中…</div>}
         {!loading && messages.length === 0 && !sending && (
           <div className="chat-empty">
@@ -885,6 +914,13 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
               </button>
             </div>
           </div>
+        )}
+        {/* v1.28.0: 粘性底部——上滑后显示"回到底部"悬浮按钮，流式中带新内容小圆点 */}
+        {showScrollBtn && (
+          <button className="scroll-bottom-btn" onClick={() => scrollToBottom(true)} aria-label="回到底部">
+            <Icon name="chevronDown" size={20} />
+            {sending && <span className="scroll-bottom-dot" />}
+          </button>
         )}
       </div>
 
