@@ -1732,8 +1732,9 @@ export async function runMulti() {
       if (url === 'https://example.com/a.mp3') {
         return {
           ok: true,
-          headers: { get: () => 'audio/mpeg' },
-          arrayBuffer: async () => new ArrayBuffer(8),
+          headers: { get: (k) => k === 'content-type' ? 'audio/wav' : '' },
+          // v1.29.11: 返回有效 WAV 头（RIFF），过 isValidAudio 校验
+          arrayBuffer: async () => new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45]).buffer,
         };
       }
       return { ok: false, status: 404, text: async () => 'not found' };
@@ -1747,7 +1748,7 @@ export async function runMulti() {
         && submit.body.model === 'cosyvoice-v3.5-plus'
         && submit.body.input.text === '你好'
         && submit.body.input.voice === 'voice_abc'
-        && r.audio && r.audio.length === 8;
+        && r.audio && r.audio.length === 12;
       detail = `submit=${submit ? submit.url : 'none'} audioLen=${r.audio && r.audio.length}`;
     } catch (e) {
       detail = '异常: ' + (e && e.message);
@@ -1783,7 +1784,7 @@ export async function runMulti() {
 
   // M71. v1.29.10: detectAudioMime 按魔数识别格式
   {
-    const { detectAudioMime } = await import('../src/voice.js');
+    const { detectAudioMime, isValidAudio } = await import('../src/voice.js');
     const wav = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00]); // RIFF
     const mp3id3 = Buffer.from([0x49, 0x44, 0x33, 0x00]); // ID3
     const mp3frame = Buffer.from([0xFF, 0xFB, 0x00, 0x00]); // MP3 frame sync
@@ -1793,7 +1794,8 @@ export async function runMulti() {
       && detectAudioMime(mp3frame) === 'audio/mpeg'
       && detectAudioMime(ogg) === 'audio/ogg'
       && detectAudioMime(Buffer.alloc(0)) === 'audio/mpeg';
-    ok('M71. detectAudioMime 格式识别', pass, '');
+    const pass2 = isValidAudio(wav) && isValidAudio(mp3frame) && !isValidAudio(Buffer.from('html<html>')) && !isValidAudio(Buffer.alloc(0));
+    ok('M71. detectAudioMime 格式识别', pass && pass2, '');
   }
 
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
