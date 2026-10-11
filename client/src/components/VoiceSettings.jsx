@@ -57,8 +57,9 @@ export default function VoiceSettings({ onClose }) {
         speed: settings.speed,
         forceAll: true,
       });
-      if (!r.skipped && r.audio) {
-        const audio = new Audio(`data:audio/mp3;base64,${r.audio}`);
+      if (!r.skipped && r.audioUrl) {
+        // v1.29.12: 用 HTTP 接口播（替代 data URL）
+        const audio = new Audio(r.audioUrl);
         audio.onended = () => setTesting(false);
         audio.onerror = () => setTesting(false);
         await audio.play();
