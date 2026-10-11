@@ -96,11 +96,27 @@ export default function VoicePicker({ value, onChange }) {
   const [customVoices, setCustomVoices] = useState([]);
   const [designOpen, setDesignOpen] = useState(false);
   const audioRef = useRef(null);
+  // v1.29.0: 系统内置克隆音色（管理员批量上传后，优先展示；为空则用硬编码旧列表）
+  const [builtinVoices, setBuiltinVoices] = useState(null);
 
   // 拉取用户定制音色
   useEffect(() => {
     api.listCustomVoices().then(setCustomVoices).catch(() => {});
+    api.getBuiltinVoices().then((r) => {
+      const list = r && r.voices;
+      if (list && list.length) {
+        setBuiltinVoices(list.map((v) => ({
+          id: v.voice_id,
+          name: v.name,
+          desc: v.description || '',
+          gender: v.gender || '',
+          preview: v.preview || `你好，我是${v.name}。`,
+        })));
+      }
+    }).catch(() => {});
   }, []);
+
+  const voiceList = builtinVoices || VOICE_LIST;
 
   const testVoice = async (v, isCustom) => {
     // 正在试听同一个 → 停止
@@ -136,7 +152,7 @@ export default function VoicePicker({ value, onChange }) {
   return (
     <div>
       <div className="voice-grid">
-        {VOICE_LIST.map((v) => (
+        {voiceList.map((v) => (
           <div
             key={v.id}
             className={`voice-option${value === v.id ? ' selected' : ''}`}

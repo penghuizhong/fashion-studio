@@ -378,4 +378,9 @@ export const api = {
   testVoiceModel: (data) => post('/api/voice/test', data),
   // v1.27.0: 音色克隆
   voiceClone: (data) => post('/api/voice/clone', data),
+  // v1.29.0: 系统内置克隆音色（批量克隆 + 列表）
+  getBuiltinVoices: () => get('/api/voice/builtin'),
+  batchCloneVoices: (data) => post('/api/admin/voice/batch-clone', data),
+  batchCloneStatus: (jobId) => get(`/api/admin/voice/batch-clone/${jobId}`),
+  clearBuiltinVoices: () => del('/api/admin/voice/builtin'),
 };
