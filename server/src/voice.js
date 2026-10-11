@@ -16,11 +16,13 @@ export const VOICE_MODELS = {
     plus: 'qwen-audio-3.0-tts-plus',
   },
   design: 'qwen3-tts-vd-2026-01-26',
+  // v1.29.0: 克隆音色合成模型（须与克隆时 target_model 一致）
+  vc: 'qwen3-tts-vc-2026-01-22',
 };
 
 // 获取实际使用的模型（配置优先，其次默认）
 export function getVoiceModel(type) {
-  // type: 'tts' | 'asr' | 'design'
+  // type: 'tts' | 'asr' | 'design' | 'vc'
   const key = `voice_${type}_model`;
   try {
     const v = getSetting(key, '');
@@ -29,6 +31,7 @@ export function getVoiceModel(type) {
   if (type === 'tts') return VOICE_MODELS.tts.plus;
   if (type === 'asr') return VOICE_MODELS.asr.flash;
   if (type === 'design') return VOICE_MODELS.design;
+  if (type === 'vc') return VOICE_MODELS.vc;
   return '';
 }
 

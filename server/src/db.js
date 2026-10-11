@@ -36,6 +36,17 @@ CREATE TABLE IF NOT EXISTS custom_voices(
   prompt TEXT,
   created_at TEXT
 );
+-- v1.29.0: 系统内置克隆音色（管理员批量克隆上传，前端音色选择器优先展示）
+CREATE TABLE IF NOT EXISTS builtin_voices(
+  name TEXT PRIMARY KEY,
+  voice_id TEXT NOT NULL,
+  target_model TEXT NOT NULL DEFAULT 'qwen3-tts-vc-2026-01-22',
+  gender TEXT DEFAULT '',
+  description TEXT DEFAULT '',
+  preview TEXT DEFAULT '',
+  sort INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS conversations(
   id TEXT PRIMARY KEY,
   character_id TEXT NOT NULL,

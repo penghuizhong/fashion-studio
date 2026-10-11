@@ -582,6 +582,8 @@ export function mountAuthRoutes(app, authLimiter) {
       voice_tts_model: getSetting('voice_tts_model', ''),
       voice_asr_model: getSetting('voice_asr_model', ''),
       voice_design_model: getSetting('voice_design_model', ''),
+      // v1.29.0: 克隆音色合成模型
+      voice_vc_model: getSetting('voice_vc_model', ''),
       // v1.18.1: 注册送积分（管理员可配置，默认 100）
       signup_bonus: getSignupBonus(),
       // v1.17.5: 系统提示词模板（管理员可覆盖）
@@ -620,7 +622,8 @@ export function mountAuthRoutes(app, authLimiter) {
       out.filter_fallback_models = clean;
     }
     // v1.26.1: 语音模型（DashScope 模型名，不校验白名单，空 = 用默认）
-    for (const key of ['voice_tts_model', 'voice_asr_model', 'voice_design_model']) {
+    // v1.29.0: 增加 voice_vc_model（克隆音色合成模型）
+    for (const key of ['voice_tts_model', 'voice_asr_model', 'voice_design_model', 'voice_vc_model']) {
       if (b[key] === undefined) continue;
       const v = String(b[key] || '').trim();
       setSetting(key, v);
