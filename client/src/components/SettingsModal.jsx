@@ -874,8 +874,8 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     return new Audio(`data:audio/mp3;base64,${r.audio}`);
   });
   const previewOriginal = (v) => playBuiltinAudio(v.name + ':orig', v.name + '原音', async () => {
-    // 参考音频走同源接口（带登录 cookie），直接播
-    return new Audio(api.builtinAudioUrl(v.name));
+    // v1.29.9: 管理页用 admin 接口（v1.29.6 验证可用）；选择器用公开接口
+    return new Audio(`/api/admin/voice/builtin/${encodeURIComponent(v.name)}/audio`);
   });
   const clearBuiltinList = async () => {
     if (!window.confirm('确定清空全部系统内置音色吗？音色选择器将恢复默认 12 个。')) return;
