@@ -15,5 +15,5 @@
     "start": "node src/index.js"
   },
   "type": "module",
-  "version": "1.29.4"
+  "version": "1.29.5"
 }
