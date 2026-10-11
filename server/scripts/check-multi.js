@@ -1765,6 +1765,15 @@ export async function runMulti() {
     ok('M69. 参考音频接口鉴权与404', pass, `nonAdmin=${r1.status} admin=${r2.status}`);
   }
 
+  // M70. v1.29.7: 参考音频公开接口（登录用户可听，404 非 403）
+  {
+    const jarB70 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB70 });
+    const r = await req('GET', '/api/voice/builtin/不存在的音色/audio', undefined, { jar: jarB70 });
+    const pass = r.status === 404;
+    ok('M70. 参考音频公开接口', pass, `status=${r.status}`);
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
