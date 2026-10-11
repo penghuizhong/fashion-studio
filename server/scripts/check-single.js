@@ -683,11 +683,12 @@ export async function runSingle() {
   }
 
   // 32. v1.28.1: TTS 不 500（H1 回归：uid 未声明 ReferenceError）
+  // v1.29.12: 返回 audioUrl（临时文件）替代 base64 audio
   {
     const r = await req('POST', '/api/voice/tts', { text: '回归测试语音', forceAll: true });
     ok(
-      '32. POST /api/voice/tts → 200 且返回 audio（非 500）',
-      r.status === 200 && typeof r.json.audio === 'string' && r.json.audio.length > 0,
+      '32. POST /api/voice/tts → 200 且返回 audioUrl（非 500）',
+      r.status === 200 && typeof r.json.audioUrl === 'string' && r.json.audioUrl.startsWith('/api/voice/tts-audio/'),
       `status=${r.status} body=${JSON.stringify(r.json).slice(0, 120)}`
     );
   }
