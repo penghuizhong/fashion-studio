@@ -1,3 +1,6 @@
+## v1.29.8
+- 修 bug：CosyVoice 合成 URL 用错。正确地址是 `/api/v1/services/audio/tts/SpeechSynthesizer`（同步接口），之前误用 `multimodal-generation/generation` 报 InvalidParameter/please check url。选择器试听报错带路径标识（原音/TTS）。
+
 ## v1.29.7
 - 音色选择器（新建角色/角色设置）试听内置音色改播参考原音，不再调 TTS 接口（省积分）；参考音频接口向所有登录用户开放。TTS 接口管理员可见上游真实报错，便于定位克隆试听问题。回归测试 M70 覆盖。
 
