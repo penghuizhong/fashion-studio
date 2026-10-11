@@ -1720,14 +1720,13 @@ export async function runMulti() {
     const origFetch = global.fetch;
     global.fetch = async (url, opts) => {
       calls.push({ url: String(url), body: opts && opts.body ? JSON.parse(opts.body) : null });
-      if (String(url).includes('/multimodal-generation/generation')) {
-        return { ok: true, json: async () => ({ output: { task_id: 'task_123' } }) };
-      }
-      if (String(url).includes('/api/v1/tasks/task_123')) {
-        return { ok: true, json: async () => ({ output: { task_status: 'SUCCEEDED', results: [{ audio: { url: 'https://example.com/a.mp3' } }] } }) };
-      }
-      if (url === 'https://example.com/a.mp3') {
-        return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) };
+      // v1.29.8: 同步接口，直接返回音频二进制
+      if (String(url).includes('/services/audio/tts/SpeechSynthesizer')) {
+        return {
+          ok: true,
+          headers: { get: (k) => k === 'content-type' ? 'audio/mpeg' : '' },
+          arrayBuffer: async () => new ArrayBuffer(8),
+        };
       }
       return { ok: false, status: 404, text: async () => 'not found' };
     };
@@ -1735,7 +1734,7 @@ export async function runMulti() {
     try {
       // 注意：mockLlm=true 时 tts() 直接返回 mock，这里直接调 ttsCosyvoice 验证协议
       const r = await provider.ttsCosyvoice('你好', { model: 'cosyvoice-v3.5-plus', voice: 'voice_abc' });
-      const submit = calls.find((c) => c.url.includes('/multimodal-generation/generation'));
+      const submit = calls.find((c) => c.url.includes('/services/audio/tts/SpeechSynthesizer'));
       pass = !!submit
         && submit.body.model === 'cosyvoice-v3.5-plus'
         && submit.body.input.text === '你好'
