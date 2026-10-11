@@ -1710,6 +1710,47 @@ export async function runMulti() {
     db.prepare('DELETE FROM builtin_voices').run();
   }
 
+  // M68. v1.29.5: CosyVoice 模型走百炼原生 HTTP 接口（非 compatible-mode）
+  {
+    const { getVoiceProvider, resetVoiceProvider } = await import('../src/voice.js');
+    resetVoiceProvider();
+    const provider = getVoiceProvider();
+    // 绕过 mock：直接测 ttsCosyvoice 的 URL 与参数
+    const calls = [];
+    const origFetch = global.fetch;
+    global.fetch = async (url, opts) => {
+      calls.push({ url: String(url), body: opts && opts.body ? JSON.parse(opts.body) : null });
+      if (String(url).includes('/multimodal-generation/generation')) {
+        return { ok: true, json: async () => ({ output: { task_id: 'task_123' } }) };
+      }
+      if (String(url).includes('/api/v1/tasks/task_123')) {
+        return { ok: true, json: async () => ({ output: { task_status: 'SUCCEEDED', results: [{ audio: { url: 'https://example.com/a.mp3' } }] } }) };
+      }
+      if (url === 'https://example.com/a.mp3') {
+        return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) };
+      }
+      return { ok: false, status: 404, text: async () => 'not found' };
+    };
+    let pass = false, detail = '';
+    try {
+      // 注意：mockLlm=true 时 tts() 直接返回 mock，这里直接调 ttsCosyvoice 验证协议
+      const r = await provider.ttsCosyvoice('你好', { model: 'cosyvoice-v3.5-plus', voice: 'voice_abc' });
+      const submit = calls.find((c) => c.url.includes('/multimodal-generation/generation'));
+      pass = !!submit
+        && submit.body.model === 'cosyvoice-v3.5-plus'
+        && submit.body.input.text === '你好'
+        && submit.body.input.voice === 'voice_abc'
+        && r.audio && r.audio.length === 8;
+      detail = `submit=${submit ? submit.url : 'none'} audioLen=${r.audio && r.audio.length}`;
+    } catch (e) {
+      detail = '异常: ' + (e && e.message);
+    } finally {
+      global.fetch = origFetch;
+      resetVoiceProvider();
+    }
+    ok('M68. CosyVoice 走原生 HTTP 接口', pass, detail);
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
