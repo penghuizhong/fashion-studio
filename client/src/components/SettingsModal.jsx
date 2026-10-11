@@ -241,6 +241,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [batchUploading, setBatchUploading] = useState(false);
   const [batchError, setBatchError] = useState('');
   const [builtinList, setBuiltinList] = useState(null);
+  const builtinAudioRef = useRef(null);
   const [pmAdding, setPmAdding] = useState(false);
   const [pmEditing, setPmEditing] = useState(null); // 正在编辑的行 id
   const [pmEditForm, setPmEditForm] = useState({});
@@ -835,6 +836,35 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       setBuiltinList(r.voices || []);
     } catch (e) {
       setBatchError((e && e.message) || '加载失败');
+    }
+  };
+  // v1.29.4: 内置音色试听
+  const [builtinPreviewing, setBuiltinPreviewing] = useState(null);
+  const [builtinPreviewError, setBuiltinPreviewError] = useState('');
+  const previewBuiltin = async (v) => {
+    if (builtinPreviewing === v.name) {
+      if (builtinAudioRef.current) { try { builtinAudioRef.current.pause(); } catch {} }
+      setBuiltinPreviewing(null);
+      return;
+    }
+    setBuiltinPreviewing(v.name);
+    setBuiltinPreviewError('');
+    try {
+      const r = await api.voiceTts({
+        text: v.preview || `你好，我是${v.name}。`,
+        voice: v.voice_id,
+        speed: 1.0,
+        forceAll: true,
+      });
+      if (r.skipped || !r.audio) throw new Error('未返回音频');
+      const audio = new Audio(`data:audio/mp3;base64,${r.audio}`);
+      builtinAudioRef.current = audio;
+      audio.onended = () => setBuiltinPreviewing(null);
+      audio.onerror = () => { setBuiltinPreviewing(null); setBuiltinPreviewError('音频播放失败'); };
+      await audio.play();
+    } catch (e) {
+      setBuiltinPreviewing(null);
+      setBuiltinPreviewError(`「${v.name}」试听失败：${(e && e.message) || '未知错误'}`);
     }
   };
   const clearBuiltinList = async () => {
@@ -1503,9 +1533,28 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                     )}
                   </div>
                   {builtinList && builtinList.length > 0 && (
-                    <div className="key-desc small" style={{ marginTop: 4 }}>
-                      {builtinList.map((v) => v.name).join('、')}
+                    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {builtinList.map((v) => (
+                        <div key={v.name} className="key-input-row" style={{ alignItems: 'center' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600 }}>{v.name}</div>
+                            <div className="key-desc small" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {[v.description, v.gender].filter(Boolean).join(' · ') || v.voice_id}
+                            </div>
+                          </div>
+                          <button
+                            className="btn secondary small"
+                            onClick={() => previewBuiltin(v)}
+                            disabled={!!builtinPreviewing && builtinPreviewing !== v.name}
+                          >
+                            {builtinPreviewing === v.name ? '停止' : '试听'}
+                          </button>
+                        </div>
+                      ))}
                     </div>
+                  )}
+                  {builtinPreviewError && (
+                    <div className="test-result fail" style={{ marginTop: 8 }}>{builtinPreviewError}</div>
                   )}
                   <div className="key-input-row" style={{ marginTop: 8 }}>
                     <button className="btn primary" onClick={saveModelCfg} disabled={modelCfgSaving}>
