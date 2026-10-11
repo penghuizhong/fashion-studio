@@ -1798,6 +1798,18 @@ export async function runMulti() {
     ok('M71. detectAudioMime 格式识别', pass && pass2, '');
   }
 
+  // M72. v1.29.12: TTS 临时音频接口（404 非 403，需登录但不要求管理员）
+  {
+    const jarB72 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB72 });
+    // 不存在的 ID 返回 404
+    const r = await req('GET', '/api/voice/tts-audio/nonexistent123', undefined, { jar: jarB72 });
+    // 未登录返回 401/403（看鉴权实现）
+    const r2 = await req('GET', '/api/voice/tts-audio/nonexistent123');
+    const pass = r.status === 404 && (r2.status === 401 || r2.status === 403);
+    ok('M72. TTS 临时音频接口鉴权', pass, `auth=${r.status} noauth=${r2.status}`);
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
