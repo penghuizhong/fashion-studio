@@ -2506,7 +2506,8 @@ export function createApp() {
     ],
     // v1.29.0: 克隆音色合成模型（须与克隆时 target_model 一致）
     vc: [
-      { id: 'qwen3-tts-vc-2026-01-22', name: 'Qwen3 TTS VC', desc: '音色克隆合成', price: '0.8元/万字符' },
+      { id: 'cosyvoice-v3.5-plus', name: 'CosyVoice 3.5 Plus', desc: '音色克隆合成（官方文档确认）', price: '1.5元/万字符' },
+      { id: 'cosyvoice-v3.5-flash', name: 'CosyVoice 3.5 Flash', desc: '低延迟版', price: '0.8元/万字符' },
     ],
   };
 
