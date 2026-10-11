@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS custom_voices(
 CREATE TABLE IF NOT EXISTS builtin_voices(
   name TEXT PRIMARY KEY,
   voice_id TEXT NOT NULL,
-  target_model TEXT NOT NULL DEFAULT 'qwen3-tts-vc-2026-01-22',
+  target_model TEXT NOT NULL DEFAULT 'cosyvoice-v3.5-plus',
   gender TEXT DEFAULT '',
   description TEXT DEFAULT '',
   preview TEXT DEFAULT '',
