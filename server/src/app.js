@@ -116,7 +116,7 @@ export function createApp() {
   } else {
     app.use(cors());
   }
-  app.use(express.json());
+  app.use(express.json({ limit: '60mb' })); // v1.29.0: 音频 base64 上传（单文件克隆/批量克隆）需大 body
   // 会话解析：req.userId（单用户模式恒为 null）
   app.use(sessionMiddleware);
 
@@ -2229,6 +2229,11 @@ export function createApp() {
         }
       } catch {}
     }
+    // v1.29.0: 系统内置克隆音色走 VC 模型（须与克隆时 target_model 一致，否则合成失败）
+    try {
+      const bv = getDb().prepare('SELECT target_model FROM builtin_voices WHERE voice_id = ?').get(actualVoice);
+      if (bv) ttsModel = bv.target_model || getVoiceModel('vc');
+    } catch {}
     const provider = getVoiceProvider();
     // v1.26.0: 查音频缓存（命中则不扣费）；v1.28.1: 按用户隔离缓存键
     const cacheUid = ttsUid || uidOf(req) || 'local';
@@ -2386,6 +2391,104 @@ export function createApp() {
     res.json({ ok: true });
   }));
 
+  // ---------- v1.29.0: 系统内置克隆音色（管理员批量克隆上传） ----------
+  // 内置音色元数据：按名字自动匹配人设/描述/试听文案
+  const BUILTIN_VOICE_META = {
+    '芊悦': { gender: '女', description: '阳光女声', preview: '你好呀！我是芊悦，今天也是元气满满的一天呢，一起加油吧！' },
+    '苏瑶': { gender: '女', description: '温柔女声', preview: '你好，我是苏瑶，很高兴能在这里与你相遇。' },
+    '千雪': { gender: '女', description: '二次元女友', preview: '呐呐，你终于来啦！人家等你好久了呢！' },
+    '萌宝': { gender: '女', description: '可爱小女孩', preview: '大哥哥大姐姐好！我是萌宝，今年五岁啦！' },
+    '茉兔': { gender: '女', description: '俏皮可爱', preview: '嘿嘿，抓到你啦！我是茉兔，古灵精怪第一名！' },
+    '十三': { gender: '女', description: '酷飒微辣', preview: '哟，来了？我是十三，有事说事，别磨磨唧唧的。' },
+    '卡捷琳娜': { gender: '女', description: '成熟有气场', preview: '晚上好，我是卡捷琳娜，很高兴认识你。' },
+    '晨煦': { gender: '男', description: '阳光男声', preview: '嘿！我是晨煦，要不要一起去冒险？' },
+    '月白': { gender: '男', description: '潇洒帅气', preview: '月色真美，我是月白。今晚的风很温柔，你也是。' },
+    '凯': { gender: '男', description: '治愈系男声', preview: '你好呀，我是凯，累了就歇一会儿，我在这里陪着你。' },
+    '不吃鱼': { gender: '男', description: '设计师男声', preview: '你好，我是不吃鱼。设计和生活一样，都需要一点不将就的态度。' },
+    '甜茶': { gender: '男', description: '戏剧张力男声', preview: '命运的齿轮开始转动，我是甜茶，准备好迎接这场大戏了吗？' },
+  };
+
+  // 批量克隆任务（内存 job；管理员一次性操作，重启丢失可重跑）
+  const batchCloneJobs = new Map();
+
+  // 公开：系统内置音色列表（前端音色选择器优先展示；为空则用前端硬编码旧列表）
+  app.get('/api/voice/builtin', ah(async (req, res) => {
+    const rows = getDb()
+      .prepare('SELECT name, voice_id, target_model, gender, description, preview, sort FROM builtin_voices ORDER BY sort ASC')
+      .all();
+    res.json({ voices: rows });
+  }));
+
+  // 管理员：批量克隆（异步 job） POST /api/admin/voice/batch-clone { voices: [{name, audio(base64), mimeType}] }
+  // 不扣积分（系统级操作）；克隆走 qwen-voice-enrollment，target_model 取 voice_vc_model 配置
+  app.post('/api/admin/voice/batch-clone', ah(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const list = (req.body && req.body.voices) || [];
+    if (!Array.isArray(list) || !list.length) return res.status(400).json({ error: '请上传音频文件' });
+    if (list.length > 12) return res.status(400).json({ error: '一次最多 12 个' });
+    const items = [];
+    for (const v of list) {
+      const name = String(v.name || '').trim().replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '').slice(0, 16);
+      if (!name) return res.status(400).json({ error: '每个音色都要起名字' });
+      if (!v.audio || typeof v.audio !== 'string') return res.status(400).json({ error: `「${name}」缺少音频数据` });
+      let buf;
+      try { buf = Buffer.from(v.audio, 'base64'); }
+      catch { return res.status(400).json({ error: `「${name}」音频数据无效` }); }
+      if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ error: `「${name}」文件过大（限 10MB）` });
+      if (buf.length < 1024) return res.status(400).json({ error: `「${name}」文件过小` });
+      items.push({ name, buf, mimeType: v.mimeType || 'audio/wav' });
+    }
+    let provider;
+    try { provider = getVoiceProvider(); }
+    catch (e) { return res.status(500).json({ error: e.message || '语音服务未配置' }); }
+
+    const jobId = randomUUID();
+    const job = { id: jobId, status: 'running', total: items.length, done: 0, results: [], created_at: new Date().toISOString() };
+    batchCloneJobs.set(jobId, job);
+    // 后台逐个克隆，不阻塞响应；前端轮询状态接口
+    setImmediate(async () => {
+      const vcModel = getVoiceModel('vc');
+      const upsert = getDb().prepare(
+        `INSERT INTO builtin_voices(name, voice_id, target_model, gender, description, preview, sort, created_at)
+         VALUES(?,?,?,?,?,?,?,?)
+         ON CONFLICT(name) DO UPDATE SET voice_id=excluded.voice_id, target_model=excluded.target_model,
+           gender=excluded.gender, description=excluded.description, preview=excluded.preview,
+           sort=excluded.sort, created_at=excluded.created_at`
+      );
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        try {
+          const r = await provider.cloneVoice(it.buf, { name: `soulchat_builtin_${Date.now()}_${i}`, mimeType: it.mimeType });
+          if (!r.voiceId) throw new Error('克隆失败');
+          const meta = BUILTIN_VOICE_META[it.name] || {};
+          upsert.run(it.name, r.voiceId, vcModel, meta.gender || '', meta.description || '',
+            meta.preview || `你好，我是${it.name}。`, i, new Date().toISOString());
+          job.results.push({ name: it.name, ok: true, voice_id: r.voiceId });
+        } catch (e) {
+          job.results.push({ name: it.name, ok: false, error: e.message || '克隆失败' });
+        }
+        job.done = i + 1;
+      }
+      job.status = 'done';
+    });
+    res.json({ job_id: jobId, total: items.length });
+  }));
+
+  // 管理员：批量克隆任务状态（轮询）
+  app.get('/api/admin/voice/batch-clone/:jobId', ah(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const job = batchCloneJobs.get(req.params.jobId);
+    if (!job) return res.status(404).json({ error: '任务不存在' });
+    res.json(job);
+  }));
+
+  // 管理员：清空系统内置音色（重跑批量克隆前用）
+  app.delete('/api/admin/voice/builtin', ah(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    getDb().prepare('DELETE FROM builtin_voices').run();
+    res.json({ ok: true });
+  }));
+
   // ---------- v1.26.2: 语音模型清单（DashScope，带刊例价） ----------
   // DashScope 无公开模型列表 API，此处为 curated 清单
   const VOICE_MODEL_CATALOG = {
@@ -2400,6 +2503,10 @@ export function createApp() {
     ],
     design: [
       { id: 'qwen3-tts-vd-2026-01-26', name: 'Qwen3 TTS VD', desc: '文本描述生成音色', price: '0.2元/次+0.8元/万字符' },
+    ],
+    // v1.29.0: 克隆音色合成模型（须与克隆时 target_model 一致）
+    vc: [
+      { id: 'qwen3-tts-vc-2026-01-22', name: 'Qwen3 TTS VC', desc: '音色克隆合成', price: '0.8元/万字符' },
     ],
   };
 
