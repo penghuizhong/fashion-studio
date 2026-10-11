@@ -1751,6 +1751,20 @@ export async function runMulti() {
     ok('M68. CosyVoice 走原生 HTTP 接口', pass, detail);
   }
 
+  // M69. v1.29.6: 内置音色参考音频接口（无音频时 404）
+  {
+    const jarA69 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserA', password: 'password123' }, { jar: jarA69 });
+    // 非管理员 403（testuserB 非首个注册用户）
+    const jarB69 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB69 });
+    const r1 = await req('GET', '/api/admin/voice/builtin/不存在的音色/audio', undefined, { jar: jarB69 });
+    const r2 = await req('GET', '/api/admin/voice/builtin/不存在的音色/audio', undefined, { jar: jarA69 });
+    // testuserA 是管理员（首个注册用户），应 404（无参考音频）；testuserB 非管理员应 403
+    const pass = r1.status === 403 && r2.status === 404;
+    ok('M69. 参考音频接口鉴权与404', pass, `nonAdmin=${r1.status} admin=${r2.status}`);
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
