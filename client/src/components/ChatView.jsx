@@ -441,6 +441,38 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         // v1.22.0: 重新生成时告诉后端复用用户消息，不重复落库
         { regenerate: !!opts.regenerate }
       );
+      // v1.29.13: 流正常结束但有群聊角色没收到 turn_done——补 truncated 消息给重试按钮
+      // （之前只在 catch 里处理，静默断流时半截卡住无恢复入口）
+      if (isGroup) {
+        const batchId = batchIdRef.current;
+        const incomplete = Object.entries(accByChar).filter(
+          ([cid, text]) => text && text.trim() && !doneCidsRef.current.has(String(cid))
+        );
+        if (incomplete.length) {
+          setMessages((m) => [
+            ...m,
+            ...incomplete.map(([cid, text]) => {
+              const mem = memberOf(cid);
+              return {
+                id: `tmp-trunc-${cid}-${Date.now()}`,
+                role: 'assistant',
+                character_id: cid,
+                character_name: (mem && mem.name) || '某人',
+                character_avatar: (mem && mem.avatar) || null,
+                content: text,
+                created_at: new Date().toISOString(),
+                truncated: true,
+                batchRegen: batchId ? { character_id: cid, batch_id: batchId } : null,
+              };
+            }),
+          ]);
+          setGroupStreams((st) => {
+            const next = { ...st };
+            for (const [cid] of incomplete) delete next[cid];
+            return next;
+          });
+        }
+      }
     } catch (err) {
       if (err.name !== 'AbortError') {
         if (err.status === 429) setErrorMsg('请求太频繁了，休息几秒再试');
@@ -565,13 +597,19 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           if (r.skipped) continue;
           if (audioQueueRef.current._token !== myId) break;
           // v1.29.12: 用 HTTP 接口播（替代 data URL）
-          if (!r.audioUrl) continue;
+          if (!r.audioUrl) {
+            setErrorMsg('语音合成失败：未返回音频');
+            break;
+          }
           audioQueueRef.current.push({ url: r.audioUrl });
           // 第一句到了就开始播
           const el = audioElRef.current;
           if (!el || el.paused || !el.src) playNext();
         } catch (e) {
           console.warn('[voice] TTS 失败:', e.message);
+          // v1.29.13: TTS 失败时给用户可见提示（之前静默）
+          setErrorMsg('语音合成失败：' + (e.message || '未知错误'));
+          break;
         }
       }
     } catch (e) {
