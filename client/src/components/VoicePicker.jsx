@@ -25,6 +25,7 @@ export function useBuiltinVoices() {
 
 export default function VoicePicker({ value, onChange }) {
   const [testingId, setTestingId] = useState(null);
+  const [testError, setTestError] = useState('');
   const [customVoices, setCustomVoices] = useState([]);
   const [designOpen, setDesignOpen] = useState(false);
   const audioRef = useRef(null);
@@ -60,10 +61,12 @@ export default function VoicePicker({ value, onChange }) {
       const audio = new Audio(`data:audio/mp3;base64,${r.audio}`);
       audioRef.current = audio;
       audio.onended = () => setTestingId(null);
-      audio.onerror = () => setTestingId(null);
+      audio.onerror = () => { setTestingId(null); setTestError('音频播放失败'); };
       await audio.play();
-    } catch {
+    } catch (e) {
       setTestingId(null);
+      // v1.29.4: 试听失败显示具体错误，不再静默
+      setTestError(`「${v.name}」试听失败：${(e && e.message) || '未知错误'}`);
     }
   };
 
@@ -126,6 +129,9 @@ export default function VoicePicker({ value, onChange }) {
           </div>
         ))}
       </div>
+      {testError && (
+        <div className="test-result fail" style={{ marginTop: 8 }}>{testError}</div>
+      )}
       {/* 定制音色入口 */}
       <button
         type="button"
