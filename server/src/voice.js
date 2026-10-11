@@ -145,9 +145,15 @@ class DashScopeVoiceProvider {
       const url = j?.output?.audio?.url;
       if (url) {
         // 从 OSS 下载音频（http/https 都支持）
-        const ar = await fetch(url);
+        const ar = await fetch(url, { redirect: 'follow' });
         if (!ar.ok) throw new Error(`音频下载失败 (${ar.status})`);
         audio = Buffer.from(await ar.arrayBuffer());
+        // v1.29.11: 校验下载到的是否为有效音频，否则报出前几个字节方便定位
+        const head = audio.slice(0, 12).toString('hex');
+        if (!audio.length || !isValidAudio(audio)) {
+          const ctype = ar.headers.get('content-type') || '';
+          throw new Error(`下载到的不是有效音频 (大小 ${audio.length} 字节，content-type ${ctype}，头 ${head})`);
+        }
       } else {
         throw new Error(`TTS 失败：${j.message || j.code || JSON.stringify(j).slice(0, 300)}`);
       }
@@ -404,6 +410,17 @@ export function splitSentences(text, maxLen = 50) {
     }
   }
   return out;
+}
+
+// v1.29.11: 严格判断是否为已知音频格式（魔数）
+export function isValidAudio(buf) {
+  if (!buf || buf.length < 4) return false;
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return true; // RIFF/WAV
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) return true; // ID3/MP3
+  if (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0) return true; // MP3 frame
+  if (buf[0] === 0x4F && buf[1] === 0x67 && buf[2] === 0x67 && buf[3] === 0x53) return true; // OggS
+  if (buf[0] === 0x66 && buf[1] === 0x4C && buf[2] === 0x61 && buf[3] === 0x43) return true; // fLaC
+  return false;
 }
 
 // v1.29.10: 按文件头魔数判断音频 MIME，避免前端硬编码格式播不出
