@@ -17,6 +17,7 @@ export function useBuiltinVoices() {
         desc: v.description || '',
         gender: v.gender || '',
         preview: v.preview || `你好，我是${v.name}。`,
+        has_audio: !!v.has_audio,
       })));
     }).catch(() => setVoices([]));
   }, []);
@@ -37,6 +38,7 @@ export default function VoicePicker({ value, onChange }) {
     api.listCustomVoices().then(setCustomVoices).catch(() => {});
   }, []);
 
+  // v1.29.7: 内置音色试听直接播参考原音（不调 TTS 接口，省积分）；定制音色走 TTS
   const testVoice = async (v, isCustom) => {
     // 正在试听同一个 → 停止
     if (testingId === v.id) {
@@ -47,18 +49,24 @@ export default function VoicePicker({ value, onChange }) {
       return;
     }
     setTestingId(v.id);
+    setTestError('');
     try {
-      const r = await api.voiceTts({
-        text: isCustom ? '你好，我是你的专属定制音色，很高兴为你服务。' : v.preview,
-        voice: v.id, // 定制音色传 custom_voices.id，后端解析
-        speed: 1.0,
-        forceAll: true,
-      });
-      if (r.skipped || !r.audio) {
-        setTestingId(null);
-        return;
+      let audio;
+      if (!isCustom && v.has_audio) {
+        audio = new Audio(api.builtinAudioUrl(v.name));
+      } else {
+        const r = await api.voiceTts({
+          text: isCustom ? '你好，我是你的专属定制音色，很高兴为你服务。' : v.preview,
+          voice: v.id, // 定制音色传 custom_voices.id，后端解析
+          speed: 1.0,
+          forceAll: true,
+        });
+        if (r.skipped || !r.audio) {
+          setTestingId(null);
+          return;
+        }
+        audio = new Audio(`data:audio/mp3;base64,${r.audio}`);
       }
-      const audio = new Audio(`data:audio/mp3;base64,${r.audio}`);
       audioRef.current = audio;
       audio.onended = () => setTestingId(null);
       audio.onerror = () => { setTestingId(null); setTestError('音频播放失败'); };
