@@ -2270,9 +2270,19 @@ export function createApp() {
         catch (e) { console.warn('[voice] TTS 扣费失败:', e.message); }
       }
     }
+    // v1.29.12: 存临时文件，返回 URL（替代 base64 data URL）
+    cleanupTtsTmp();
+    const ttsMime = detectAudioMime(audioBuf);
+    const ttsExt = ttsMime === 'audio/wav' ? 'wav' : ttsMime === 'audio/ogg' ? 'ogg' : 'mp3';
+    const ttsId = ttsTmpId();
+    try {
+      fs.writeFileSync(path.join(ttsTmpDir(), `${ttsId}.${ttsExt}`), audioBuf);
+    } catch (e) {
+      console.warn('[voice] TTS 临时文件写入失败:', e.message);
+    }
     res.json({
-      audio: audioBuf.toString('base64'),
-      mime: detectAudioMime(audioBuf),
+      audioUrl: `/api/voice/tts-audio/${ttsId}`,
+      mime: ttsMime,
       chars: billChars,
       text: speakText,
       model: ttsModel,
@@ -2457,6 +2467,70 @@ export function createApp() {
       try { r.has_audio = !!refAudioPath(r.name); } catch { r.has_audio = false; }
     }
     res.json({ voices: rows });
+  }));
+
+  // v1.29.12: TTS 音频临时文件（替代 data: URL，解决浏览器播不出 + 省 33% base64 体积）
+  function ttsTmpDir() {
+    const d = path.join(getConfig().dataDir, 'tts_tmp');
+    try { fs.mkdirSync(d, { recursive: true }); } catch {}
+    return d;
+  }
+  function ttsTmpId() {
+    return Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+  }
+  // 定期清理：删除 2 小时前的临时文件（每次 TTS 请求时顺带执行）
+  function cleanupTtsTmp() {
+    try {
+      const dir = ttsTmpDir();
+      const now = Date.now();
+      for (const f of fs.readdirSync(dir)) {
+        const fp = path.join(dir, f);
+        try {
+          const st = fs.statSync(fp);
+          if (now - st.mtimeMs > 2 * 3600 * 1000) fs.unlinkSync(fp);
+        } catch {}
+      }
+    } catch {}
+  }
+  // 通用音频文件服务（含 Range 支持，iOS 必需）
+  function serveAudioFile(req, res, filePath, contentType) {
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: '音频已过期，请重新合成' });
+    const stat = fs.statSync(filePath);
+    const total = stat.size;
+    const range = req.headers.range;
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, max-age=7200');
+    if (range) {
+      const m = /bytes=(\d*)-(\d*)/.exec(range);
+      const start = m && m[1] ? parseInt(m[1], 10) : 0;
+      const end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+      if (start >= total || end >= total) {
+        res.status(416).setHeader('Content-Range', `bytes */${total}`).end();
+        return;
+      }
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+      res.setHeader('Content-Length', String(end - start + 1));
+      fs.createReadStream(filePath, { start, end }).pipe(res);
+    } else {
+      res.setHeader('Content-Length', String(total));
+      fs.createReadStream(filePath).pipe(res);
+    }
+  }
+  // TTS 临时音频接口（需登录）
+  app.get('/api/voice/tts-audio/:id', ah(async (req, res) => {
+    if (!uidOf(req)) return res.status(401).json({ error: '请先登录' });
+    const id = String(req.params.id || '').replace(/[^a-zA-Z0-9_]/g, '');
+    if (!id) return res.status(404).json({ error: '无效的音频 ID' });
+    const dir = ttsTmpDir();
+    // 按 id 前缀找文件（文件名格式：id.mime_ext）
+    const files = fs.readdirSync(dir).filter((f) => f.startsWith(id + '.'));
+    if (!files.length) return res.status(404).json({ error: '音频已过期，请重新合成' });
+    const fname = files[0];
+    const ext = path.extname(fname).slice(1); // wav/mp3/ogg
+    const ct = ext === 'wav' ? 'audio/wav' : ext === 'ogg' ? 'audio/ogg' : 'audio/mpeg';
+    serveAudioFile(req, res, path.join(dir, fname), ct);
   }));
 
   // v1.29.6: 管理员获取内置音色参考音频（试听原音）
