@@ -871,7 +871,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       forceAll: true,
     });
     if (r.skipped || !r.audio) throw new Error('未返回音频');
-    return new Audio(`data:audio/mp3;base64,${r.audio}`);
+    return new Audio(`data:${r.mime || 'audio/mpeg'};base64,${r.audio}`);
   });
   const previewOriginal = (v) => playBuiltinAudio(v.name + ':orig', v.name + '原音', async () => {
     // v1.29.9: 管理页用 admin 接口（v1.29.6 验证可用）；选择器用公开接口
