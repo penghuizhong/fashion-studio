@@ -87,6 +87,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
           name: char.name || '',
           avatar: char.avatar || '',
           temperature: typeof char.temperature === 'number' ? char.temperature : 0.7,
+          voice_id: char.voice_id || '', // v1.29.15: 加载已保存的音色（之前漏了，导致选择不持久）
         });
         const f = await api.getFiles(characterId).catch(() => null);
         if (cancelled) return;
