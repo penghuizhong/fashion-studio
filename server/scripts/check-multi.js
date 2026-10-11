@@ -1683,7 +1683,7 @@ export async function runMulti() {
     const pass = job && job.status === 'done' && job.done === 2 &&
       job.results.every((r) => r.ok) && rows.length === 2 &&
       rows.every((r) => r.voice_id && r.voice_id.startsWith('mock_clone_')) &&
-      rows.every((r) => r.target_model === 'qwen3-tts-vc-2026-01-22');
+      rows.every((r) => r.target_model === 'cosyvoice-v3.5-plus');
     ok(
       'M66. 批量克隆 2 个 → job 完成 → builtin_voices 入库（带 target_model）',
       pass,
@@ -1697,11 +1697,11 @@ export async function runMulti() {
     const db = getDb();
     db.prepare('DELETE FROM builtin_voices').run();
     db.prepare(`INSERT INTO builtin_voices(name, voice_id, target_model, gender, description, preview, sort, created_at)
-      VALUES(?,?,?,?,?,?,?,?)`).run('测试音C', 'mock_voice_vc_001', 'qwen3-tts-vc-2026-01-22', '女', '测试', '你好', 0, new Date().toISOString());
+      VALUES(?,?,?,?,?,?,?,?)`).run('测试音C', 'mock_voice_vc_001', 'cosyvoice-v3.5-plus', '女', '测试', '你好', 0, new Date().toISOString());
     const jarB67 = makeJar();
     await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB67 });
     const r = await req('POST', '/api/voice/tts', { text: 'M67测试', voice: 'mock_voice_vc_001', forceAll: true }, { jar: jarB67 });
-    const pass = r.status === 200 && r.json.model === 'qwen3-tts-vc-2026-01-22';
+    const pass = r.status === 200 && r.json.model === 'cosyvoice-v3.5-plus';
     ok(
       'M67. 内置克隆音色 TTS 走 VC 模型',
       pass,
