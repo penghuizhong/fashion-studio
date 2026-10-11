@@ -1643,6 +1643,73 @@ export async function runMulti() {
     ok('M64. 群聊regenerate重试不叠加已回复角色', pass, detail);
   }
 
+  // M65. v1.29.0: 系统内置音色——空表时 GET 返回空数组；非管理员批量克隆 → 403
+  {
+    const db = getDb();
+    db.prepare('DELETE FROM builtin_voices').run();
+    // testuserB 密码已被 M32 改为 newpassword123，用新会话登录
+    const jarB65 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB65 });
+    const empty = await req('GET', '/api/voice/builtin', undefined, { jar: jarB65 });
+    const forbid = await req('POST', '/api/admin/voice/batch-clone', { voices: [] }, { jar: jarB65 });
+    ok(
+      'M65. 内置音色列表为空；非管理员批量克隆 → 403',
+      empty.status === 200 && Array.isArray(empty.json.voices) && empty.json.voices.length === 0 &&
+        forbid.status === 403,
+      `emptyStatus=${empty.status} empty=${empty.json && empty.json.voices && empty.json.voices.length} forbid=${forbid.status}`
+    );
+  }
+
+  // M66. v1.29.0: 批量克隆 job（mock 模式）——上传 2 个音频 → 轮询完成 → builtin_voices 入库
+  {
+    const db = getDb();
+    db.prepare('DELETE FROM builtin_voices').run();
+    const fakeAudio = Buffer.alloc(2048, 7).toString('base64');
+    const start = await req('POST', '/api/admin/voice/batch-clone', {
+      voices: [
+        { name: '测试音A', audio: fakeAudio, mimeType: 'audio/wav' },
+        { name: '测试音B', audio: fakeAudio, mimeType: 'audio/wav' },
+      ],
+    }, { jar: jarAdminM });
+    let job = null;
+    if (start.status === 200 && start.json.job_id) {
+      for (let i = 0; i < 20 && (!job || job.status === 'running'); i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        const st = await req('GET', `/api/admin/voice/batch-clone/${start.json.job_id}`, undefined, { jar: jarAdminM });
+        if (st.status === 200) job = st.json;
+      }
+    }
+    const rows = db.prepare('SELECT name, voice_id, target_model FROM builtin_voices ORDER BY sort').all();
+    const pass = job && job.status === 'done' && job.done === 2 &&
+      job.results.every((r) => r.ok) && rows.length === 2 &&
+      rows.every((r) => r.voice_id && r.voice_id.startsWith('mock_clone_')) &&
+      rows.every((r) => r.target_model === 'qwen3-tts-vc-2026-01-22');
+    ok(
+      'M66. 批量克隆 2 个 → job 完成 → builtin_voices 入库（带 target_model）',
+      pass,
+      `job=${job && job.status} done=${job && job.done} rows=${rows.length}`
+    );
+    db.prepare('DELETE FROM builtin_voices').run();
+  }
+
+  // M67. v1.29.0: 内置克隆音色 TTS 走 VC 模型（而非默认 TTS 模型）
+  {
+    const db = getDb();
+    db.prepare('DELETE FROM builtin_voices').run();
+    db.prepare(`INSERT INTO builtin_voices(name, voice_id, target_model, gender, description, preview, sort, created_at)
+      VALUES(?,?,?,?,?,?,?,?)`).run('测试音C', 'mock_voice_vc_001', 'qwen3-tts-vc-2026-01-22', '女', '测试', '你好', 0, new Date().toISOString());
+    const jarB67 = makeJar();
+    await req('POST', '/api/auth/login', { username: 'testuserB', password: 'newpassword123' }, { jar: jarB67 });
+    const r = await req('POST', '/api/voice/tts', { text: 'M67测试', voice: 'mock_voice_vc_001', forceAll: true }, { jar: jarB67 });
+    const pass = r.status === 200 && r.json.model === 'qwen3-tts-vc-2026-01-22';
+    ok(
+      'M67. 内置克隆音色 TTS 走 VC 模型',
+      pass,
+      `status=${r.status} model=${r.json && r.json.model}`
+    );
+    db.prepare('DELETE FROM builtin_voices').run();
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
