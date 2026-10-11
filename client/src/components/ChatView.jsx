@@ -916,15 +916,21 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                 </button>
               </div>
             )}
-            {/* v1.22.0: 群聊半截回复下放重新生成（只重跑该角色一轮） */}
-            {isGroup && m.role === 'assistant' && m.truncated && !sending && (
-              <div className="regen-row">
-                <span className="truncated-hint">回复好像没说完，</span>
-                <button className="btn secondary small" onClick={() => regenerateGroupTurn(m)} disabled={regenerating}>
-                  {regenerating ? '生成中…' : '↻ 重新生成'}
-                </button>
-              </div>
-            )}
+            {/* v1.29.16: 群聊每个角色最后一条 AI 消息下常驻重新生成（对齐单聊）；截断时加提示前缀 */}
+            {isGroup && m.role === 'assistant' && !sending && (() => {
+              const isLastFromChar = !messages.slice(i + 1).some(
+                (x) => x.role === 'assistant' && String(x.character_id) === String(m.character_id)
+              );
+              if (!isLastFromChar) return null;
+              return (
+                <div className="regen-row">
+                  {m.truncated && <span className="truncated-hint">回复好像没说完，</span>}
+                  <button className="btn secondary small" onClick={() => regenerateGroupTurn(m)} disabled={regenerating}>
+                    {regenerating ? '生成中…' : '↻ 重新生成'}
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         ))}
         {/* 群聊：各角色流式气泡 */}
