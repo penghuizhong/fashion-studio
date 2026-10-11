@@ -870,8 +870,9 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       speed: 1.0,
       forceAll: true,
     });
-    if (r.skipped || !r.audio) throw new Error('未返回音频');
-    return new Audio(`data:${r.mime || 'audio/mpeg'};base64,${r.audio}`);
+    if (r.skipped || !r.audioUrl) throw new Error('未返回音频');
+    // v1.29.12: 用 HTTP 接口播（替代 data URL）
+    return new Audio(r.audioUrl);
   });
   const previewOriginal = (v) => playBuiltinAudio(v.name + ':orig', v.name + '原音', async () => {
     // v1.29.9: 管理页用 admin 接口（v1.29.6 验证可用）；选择器用公开接口
