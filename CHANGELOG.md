@@ -1,3 +1,6 @@
+## v1.29.11
+- 修 bug：TTS 从 OSS 下载音频后校验魔数，非有效音频时报出大小/content-type/文件头，方便定位「no supported source」。
+
 ## v1.29.10
 - 修 bug：参考音频接口加 Content-Length + Range 支持（iOS Safari 播音频必需）。TTS 返回真实音频 MIME（按魔数识别 WAV/MP3/OGG），前端不再硬编码 audio/mp3，解决「no supported source」。
 
