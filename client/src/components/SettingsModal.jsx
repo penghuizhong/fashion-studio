@@ -235,11 +235,17 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [voiceCatalog, setVoiceCatalog] = useState(null);
   const [voiceTesting, setVoiceTesting] = useState('');
   const [voiceTestResult, setVoiceTestResult] = useState(null);
+  // v1.29.0: 内置音色批量克隆
+  const [batchFiles, setBatchFiles] = useState([]);
+  const [batchJob, setBatchJob] = useState(null);
+  const [batchUploading, setBatchUploading] = useState(false);
+  const [batchError, setBatchError] = useState('');
+  const [builtinList, setBuiltinList] = useState(null);
   const [pmAdding, setPmAdding] = useState(false);
   const [pmEditing, setPmEditing] = useState(null); // 正在编辑的行 id
   const [pmEditForm, setPmEditForm] = useState({});
   // v1.12 模型配置（管理员）：后台模型 / 聊天默认模型
-  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null, voice_tts_model: '', voice_asr_model: '', voice_design_model: '' });
+  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null, voice_tts_model: '', voice_asr_model: '', voice_design_model: '', voice_vc_model: '' });
   const [modelCfgSaving, setModelCfgSaving] = useState(false);
   const loadModelCfg = async () => {
     try {
@@ -251,6 +257,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         voice_tts_model: (s && s.voice_tts_model) || '',
         voice_asr_model: (s && s.voice_asr_model) || '',
         voice_design_model: (s && s.voice_design_model) || '',
+        voice_vc_model: (s && s.voice_vc_model) || '',
       });
       // v1.18.1: 注册送积分（管理员可配）
       if (s && typeof s.signup_bonus === 'number') setSignupBonus(String(s.signup_bonus));
@@ -773,6 +780,71 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       setVoiceTestResult({ type, ok: false, error: (e && e.message) || '测试失败' });
     } finally {
       setVoiceTesting('');
+    }
+  };
+
+  // v1.29.0: 内置音色批量克隆
+  const readFileAsBase64 = (f) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(f);
+  });
+  const handleBatchFiles = (e) => {
+    const files = [...(e.target.files || [])].slice(0, 12);
+    setBatchFiles(files.map((f) => ({ file: f, name: f.name.replace(/\.[^.]+$/, '').slice(0, 16) })));
+    setBatchJob(null);
+    setBatchError('');
+  };
+  const startBatchClone = async () => {
+    if (!batchFiles.length || batchUploading) return;
+    setBatchUploading(true);
+    setBatchError('');
+    setBatchJob(null);
+    try {
+      const voices = [];
+      for (const bf of batchFiles) {
+        if (bf.file.size > 10 * 1024 * 1024) throw new Error(`「${bf.name}」文件过大（限 10MB）`);
+        voices.push({ name: bf.name.trim(), audio: await readFileAsBase64(bf.file), mimeType: bf.file.type || 'audio/wav' });
+      }
+      const r = await api.batchCloneVoices({ voices });
+      const poll = async () => {
+        try {
+          const st = await api.batchCloneStatus(r.job_id);
+          setBatchJob(st);
+          if (st.status === 'running') {
+            setTimeout(poll, 3000);
+          } else {
+            setBatchUploading(false);
+            setBuiltinList(null);
+          }
+        } catch (e) {
+          setBatchUploading(false);
+          setBatchError((e && e.message) || '查询任务状态失败');
+        }
+      };
+      poll();
+    } catch (e) {
+      setBatchUploading(false);
+      setBatchError((e && e.message) || '上传失败');
+    }
+  };
+  const loadBuiltinList = async () => {
+    try {
+      const r = await api.getBuiltinVoices();
+      setBuiltinList(r.voices || []);
+    } catch (e) {
+      setBatchError((e && e.message) || '加载失败');
+    }
+  };
+  const clearBuiltinList = async () => {
+    if (!window.confirm('确定清空全部系统内置音色吗？音色选择器将恢复默认 12 个。')) return;
+    try {
+      await api.clearBuiltinVoices();
+      setBuiltinList([]);
+      setBatchError('');
+    } catch (e) {
+      setBatchError((e && e.message) || '清空失败');
     }
   };
 
@@ -1360,6 +1432,81 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                       </button>
                     </div>
                   </label>
+                  {/* v1.29.0: 克隆音色合成模型（须与克隆时 target_model 一致） */}
+                  <label>
+                    克隆音色合成模型
+                    <div className="key-input-row">
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <ModelPicker
+                          value={modelCfg.voice_vc_model || ''}
+                          onChange={(v) => setModelCfg((f) => ({ ...f, voice_vc_model: v }))}
+                          models={(voiceCatalog?.vc || []).map((m) => ({ id: m.id, name: m.name }))}
+                          placeholder="默认：qwen3-tts-vc-2026-01-22"
+                          openSignal={voiceCatalog?.vc?.length}
+                        />
+                      </div>
+                      <button className="btn secondary small" onClick={fetchVoiceCatalog} style={{ whiteSpace: 'nowrap' }}>
+                        查看可用模型
+                      </button>
+                    </div>
+                  </label>
+                  {/* v1.29.0: 内置音色批量克隆 */}
+                  <div className="card-title" style={{ marginTop: 16 }}>内置音色批量克隆</div>
+                  <p className="key-desc small">上传参考音频（WAV/MP3/M4A，15–60秒，单人清晰人声），逐个调用克隆接口，拿到的 voice_id 存为系统内置音色，音色选择器即时生效。系统级操作，不扣积分。</p>
+                  <input
+                    type="file"
+                    multiple
+                    accept="audio/*,.wav,.mp3,.m4a"
+                    onChange={handleBatchFiles}
+                    disabled={batchUploading}
+                    style={{ marginBottom: 8 }}
+                  />
+                  {batchFiles.length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      {batchFiles.map((bf, i) => (
+                        <div key={i} className="key-input-row" style={{ marginBottom: 4 }}>
+                          <span className="key-desc small" style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bf.file.name}</span>
+                          <input
+                            className="key-input"
+                            style={{ width: 110 }}
+                            value={bf.name}
+                            onChange={(e) => setBatchFiles((arr) => arr.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+                            placeholder="音色名"
+                            disabled={batchUploading}
+                          />
+                        </div>
+                      ))}
+                      <button className="btn primary" onClick={startBatchClone} disabled={batchUploading} style={{ marginTop: 4 }}>
+                        {batchUploading ? '克隆中…' : `开始克隆（${batchFiles.length} 个）`}
+                      </button>
+                    </div>
+                  )}
+                  {batchJob && (
+                    <div className="key-desc small" style={{ marginBottom: 8 }}>
+                      <div>进度：{batchJob.done}/{batchJob.total}（{batchJob.status === 'running' ? '进行中…' : '完成'}）</div>
+                      {batchJob.results.map((r, i) => (
+                        <div key={i} style={{ color: r.ok ? 'inherit' : '#c00' }}>
+                          {r.ok ? `✓ ${r.name}` : `✗ ${r.name}：${r.error}`}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {batchError && <div className="test-result fail" style={{ marginBottom: 8 }}>✗ {batchError}</div>}
+                  <div className="key-input-row">
+                    <button className="btn secondary small" onClick={loadBuiltinList} disabled={batchUploading}>
+                      查看当前内置音色{builtinList ? `（${builtinList.length}）` : ''}
+                    </button>
+                    {builtinList && builtinList.length > 0 && (
+                      <button className="btn secondary small" onClick={clearBuiltinList} disabled={batchUploading}>
+                        清空内置音色
+                      </button>
+                    )}
+                  </div>
+                  {builtinList && builtinList.length > 0 && (
+                    <div className="key-desc small" style={{ marginTop: 4 }}>
+                      {builtinList.map((v) => v.name).join('、')}
+                    </div>
+                  )}
                   <div className="key-input-row" style={{ marginTop: 8 }}>
                     <button className="btn primary" onClick={saveModelCfg} disabled={modelCfgSaving}>
                       {modelCfgSaving ? "保存中…" : "保存模型配置"}
