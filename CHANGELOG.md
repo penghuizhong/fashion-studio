@@ -1,3 +1,6 @@
+## v1.29.10
+- 修 bug：参考音频接口加 Content-Length + Range 支持（iOS Safari 播音频必需）。TTS 返回真实音频 MIME（按魔数识别 WAV/MP3/OGG），前端不再硬编码 audio/mp3，解决「no supported source」。
+
 ## v1.29.9
 - 修 bug：CosyVoice 同步接口实际返回 JSON（含 output.audio.url），需从 OSS 下载音频（之前按二进制处理报错）。管理页试听原音改回 admin 接口（v1.29.6 验证可用），选择器用公开接口。
 
