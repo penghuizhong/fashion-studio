@@ -1,3 +1,6 @@
+## v1.29.2
+- 内置音色彻底去硬编码：新建角色、角色设置、语音设置三处的音色选项全部改为动态拉取 `/api/voice/builtin`（管理员在模型管理里维护），删除前端写死的 12 个音色列表。列表为空时显示提示；语音设置里若保存的旧音色不在新列表中，自动纠正为第一个并持久化。
+
 ## v1.29.1
 - 修 bug：音色克隆接口写法错误导致一直 400（`Required parameter 'action' is missing`）。旧代码用 multipart + `model=qwen-voice-enrollment` + `action=create`，已失效；现改用实测可用的 `voice-enrollment` JSON 接口：`{model:"voice-enrollment", input:{action:"create_voice", target_model, prefix, url:"data:audio/wav;base64,..."}}`，prefix 取名字里的字母数字（≤10 位，中文名用时间戳保证唯一）。
 
