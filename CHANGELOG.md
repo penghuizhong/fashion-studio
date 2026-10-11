@@ -1,3 +1,6 @@
+## v1.29.1
+- 修 bug：音色克隆接口写法错误导致一直 400（`Required parameter 'action' is missing`）。旧代码用 multipart + `model=qwen-voice-enrollment` + `action=create`，已失效；现改用实测可用的 `voice-enrollment` JSON 接口：`{model:"voice-enrollment", input:{action:"create_voice", target_model, prefix, url:"data:audio/wav;base64,..."}}`，prefix 取名字里的字母数字（≤10 位，中文名用时间戳保证唯一）。
+
 ## v1.29.0
 - 系统内置克隆音色：模型管理 tab 新增「内置音色批量克隆」，管理员上传参考音频（WAV/MP3/M4A，15–60秒，最多 12 个）→ 后台逐个调 `qwen-voice-enrollment` 克隆 → voice_id 存入新增 `builtin_voices` 表（含克隆时的 `target_model`），音色选择器优先展示这批内置音色（为空则回退默认 12 个）。系统级操作不扣积分；支持清空重跑。
 - 修 bug：全局 `express.json` 上限 100kb，稍大的参考音频 base64 上传直接 413，现提到 60mb（单文件克隆/批量克隆可用）。

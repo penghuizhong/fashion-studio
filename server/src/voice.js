@@ -119,49 +119,35 @@ class DashScopeVoiceProvider {
     if (cfg.mockLlm) {
       return { voiceId: `mock_clone_${Date.now()}`, name: name || 'mock' };
     }
-    // 构建 multipart/form-data
-    const boundary = `----soulchat${Date.now()}`;
-    const parts = [];
-    const enc = new TextEncoder();
-    // 文件部分
-    parts.push(enc.encode(`--${boundary}\r\n`));
-    parts.push(enc.encode(`Content-Disposition: form-data; name="file"; filename="voice_sample.wav"\r\n`));
-    parts.push(enc.encode(`Content-Type: ${mimeType}\r\n\r\n`));
-    parts.push(audioBuffer);
-    parts.push(enc.encode(`\r\n`));
-    // 参数部分
-    const fields = {
-      model: 'qwen-voice-enrollment',
-      target_model: 'qwen3-tts-vc-2026-01-22',
-      action: 'create',
-      preferred_name: name,
-    };
-    for (const [k, v] of Object.entries(fields)) {
-      parts.push(enc.encode(`--${boundary}\r\n`));
-      parts.push(enc.encode(`Content-Disposition: form-data; name="${k}"\r\n\r\n`));
-      parts.push(enc.encode(`${v}\r\n`));
-    }
-    parts.push(enc.encode(`--${boundary}--\r\n`));
-    // 合并
-    const totalLen = parts.reduce((s, p) => s + p.length, 0);
-    const body = new Uint8Array(totalLen);
-    let off = 0;
-    for (const p of parts) { body.set(p, off); off += p.length; }
-
+    // v1.29.1: 改用 voice-enrollment JSON 接口（第三方 2026-09-26 实测可用）；
+    // 旧 multipart + qwen-voice-enrollment + action=create 已失效（服务端报 action 缺失）。
+    const b64 = audioBuffer.toString('base64');
+    // prefix: ≤10 位字母数字；中文名取不到字母时用时间戳保证唯一
+    const alnum = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10);
+    const prefix = alnum || (`sc${Date.now().toString(36)}`).replace(/[^a-z0-9]/g, '').slice(0, 10) || 'voice';
+    const targetModel = getVoiceModel('vc');
     const res = await fetch(`${DASHSCOPE_BASE}/api/v1/services/audio/tts/customization`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Authorization': `bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
       },
-      body,
+      body: JSON.stringify({
+        model: 'voice-enrollment',
+        input: {
+          action: 'create_voice',
+          target_model: targetModel,
+          prefix,
+          url: `data:${mimeType};base64,${b64}`,
+        },
+      }),
     });
     if (!res.ok) {
       const t = await res.text().catch(() => '');
-      throw new Error(`音色克隆失败 (${res.status}): ${t.slice(0, 200)}`);
+      throw new Error(`音色克隆失败 (${res.status}): ${t.slice(0, 300)}`);
     }
     const json = await res.json();
-    const voiceId = json?.output?.voice || json?.output?.voice_id;
+    const voiceId = json?.output?.voice_id || json?.output?.voice;
     if (!voiceId) throw new Error('音色克隆失败：未返回 voice_id');
     return { voiceId, name };
   }
