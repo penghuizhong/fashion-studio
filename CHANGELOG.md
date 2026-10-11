@@ -1,3 +1,6 @@
+## v1.29.6
+- 内置音色管理：每个音色加两个试听按钮——“试听原音”（播放上传的参考音频，不调接口不花钱）和“试听克隆”（调 TTS 合成）。批量克隆时参考音频存盘；v1.29.6 前克隆的需重新上传才有原音。回归测试 M69 覆盖。
+
 ## v1.29.5
 - 修 bug：克隆音色试听/合成 500。根因：`/compatible-mode/v1/audio/speech` 不支持 `cosyvoice-v3.5-plus`。现 CosyVoice 系列走百炼原生 HTTP 接口（`multimodal-generation/generation` 异步任务 + 轮询 + 下载音频），Qwen 系继续走兼容模式。回归测试 M68 覆盖。
 
