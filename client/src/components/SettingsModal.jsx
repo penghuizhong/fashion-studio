@@ -1441,7 +1441,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                           value={modelCfg.voice_vc_model || ''}
                           onChange={(v) => setModelCfg((f) => ({ ...f, voice_vc_model: v }))}
                           models={(voiceCatalog?.vc || []).map((m) => ({ id: m.id, name: m.name }))}
-                          placeholder="默认：qwen3-tts-vc-2026-01-22"
+                          placeholder="默认：cosyvoice-v3.5-plus"
                           openSignal={voiceCatalog?.vc?.length}
                         />
                       </div>
