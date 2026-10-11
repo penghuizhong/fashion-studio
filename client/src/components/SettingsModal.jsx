@@ -838,35 +838,45 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       setBatchError((e && e.message) || '加载失败');
     }
   };
-  // v1.29.4: 内置音色试听
-  const [builtinPreviewing, setBuiltinPreviewing] = useState(null);
+  // v1.29.4: 内置音色试听（克隆效果，走 TTS 接口）
+  // v1.29.6: 试听原音（参考音频，本地播放不调接口）
+  const [builtinPreviewing, setBuiltinPreviewing] = useState(null); // name 或 name+':orig'
   const [builtinPreviewError, setBuiltinPreviewError] = useState('');
-  const previewBuiltin = async (v) => {
-    if (builtinPreviewing === v.name) {
-      if (builtinAudioRef.current) { try { builtinAudioRef.current.pause(); } catch {} }
-      setBuiltinPreviewing(null);
-      return;
-    }
-    setBuiltinPreviewing(v.name);
+  const stopBuiltinAudio = () => {
+    if (builtinAudioRef.current) { try { builtinAudioRef.current.pause(); } catch {} }
+    builtinAudioRef.current = null;
+    setBuiltinPreviewing(null);
+  };
+  const playBuiltinAudio = async (key, label, makeAudio) => {
+    if (builtinPreviewing === key) { stopBuiltinAudio(); return; }
+    stopBuiltinAudio();
+    setBuiltinPreviewing(key);
     setBuiltinPreviewError('');
     try {
-      const r = await api.voiceTts({
-        text: v.preview || `你好，我是${v.name}。`,
-        voice: v.voice_id,
-        speed: 1.0,
-        forceAll: true,
-      });
-      if (r.skipped || !r.audio) throw new Error('未返回音频');
-      const audio = new Audio(`data:audio/mp3;base64,${r.audio}`);
+      const audio = await makeAudio();
       builtinAudioRef.current = audio;
       audio.onended = () => setBuiltinPreviewing(null);
       audio.onerror = () => { setBuiltinPreviewing(null); setBuiltinPreviewError('音频播放失败'); };
       await audio.play();
     } catch (e) {
       setBuiltinPreviewing(null);
-      setBuiltinPreviewError(`「${v.name}」试听失败：${(e && e.message) || '未知错误'}`);
+      setBuiltinPreviewError(`「${label}」试听失败：${(e && e.message) || '未知错误'}`);
     }
   };
+  const previewBuiltin = (v) => playBuiltinAudio(v.name, v.name, async () => {
+    const r = await api.voiceTts({
+      text: v.preview || `你好，我是${v.name}。`,
+      voice: v.voice_id,
+      speed: 1.0,
+      forceAll: true,
+    });
+    if (r.skipped || !r.audio) throw new Error('未返回音频');
+    return new Audio(`data:audio/mp3;base64,${r.audio}`);
+  });
+  const previewOriginal = (v) => playBuiltinAudio(v.name + ':orig', v.name + '原音', async () => {
+    // 参考音频走同源接口（带登录 cookie），直接播
+    return new Audio(api.builtinAudioUrl(v.name));
+  });
   const clearBuiltinList = async () => {
     if (!window.confirm('确定清空全部系统内置音色吗？音色选择器将恢复默认 12 个。')) return;
     try {
@@ -1542,13 +1552,26 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                               {[v.description, v.gender].filter(Boolean).join(' · ') || v.voice_id}
                             </div>
                           </div>
-                          <button
-                            className="btn secondary small"
-                            onClick={() => previewBuiltin(v)}
-                            disabled={!!builtinPreviewing && builtinPreviewing !== v.name}
-                          >
-                            {builtinPreviewing === v.name ? '停止' : '试听'}
-                          </button>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            {v.has_audio && (
+                              <button
+                                className="btn secondary small"
+                                onClick={() => previewOriginal(v)}
+                                disabled={!!builtinPreviewing && builtinPreviewing !== v.name + ':orig'}
+                                title="播放你上传的参考音频（不调接口）"
+                              >
+                                {builtinPreviewing === v.name + ':orig' ? '停止' : '试听原音'}
+                              </button>
+                            )}
+                            <button
+                              className="btn secondary small"
+                              onClick={() => previewBuiltin(v)}
+                              disabled={!!builtinPreviewing && builtinPreviewing !== v.name}
+                              title="用克隆音色合成试听（调 TTS 接口）"
+                            >
+                              {builtinPreviewing === v.name ? '停止' : '试听克隆'}
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
