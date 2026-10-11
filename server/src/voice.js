@@ -88,6 +88,12 @@ class DashScopeVoiceProvider {
     const cfg = getConfig();
     if (cfg.mockLlm) return { audio: Buffer.from('mock'), chars: text.length };
 
+    // v1.29.5: CosyVoice 系列走百炼原生 HTTP 接口（multimodal-generation，异步任务）；
+    // compatible-mode 的 /audio/speech 不支持 cosyvoice-v3.5-plus（500）
+    if (/^cosyvoice-/i.test(useModel)) {
+      return this.ttsCosyvoice(text, { model: useModel, voice });
+    }
+
     const res = await fetch(`${DASHSCOPE_BASE}/compatible-mode/v1/audio/speech`, {
       method: 'POST',
       headers: {
@@ -110,6 +116,59 @@ class DashScopeVoiceProvider {
     // 计费字符数：汉字按 2 字符计（百炼口径）
     const chars = [...text].reduce((n, ch) => n + (ch.codePointAt(0) > 0xff ? 2 : 1), 0);
     return { audio, chars };
+  }
+
+  // v1.29.5: CosyVoice 原生 HTTP 合成（异步任务 + 轮询 + 下载音频）
+  async ttsCosyvoice(text, { model, voice } = {}) {
+    // 1. 提交任务
+    const res = await fetch(`${DASHSCOPE_BASE}/api/v1/services/aigc/multimodal-generation/generation`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+        'X-DashScope-Async': 'enable',
+      },
+      body: JSON.stringify({
+        model,
+        input: { text, voice },
+        parameters: { format: 'mp3' },
+      }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      throw new Error(`TTS 提交失败 (${res.status}): ${t.slice(0, 200)}`);
+    }
+    const json = await res.json();
+    const taskId = json?.output?.task_id;
+    if (!taskId) throw new Error('TTS 提交失败：未返回 task_id');
+    // 2. 轮询（最多 60 秒）
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const pr = await fetch(`${DASHSCOPE_BASE}/api/v1/tasks/${taskId}`, {
+        headers: { 'Authorization': `Bearer ${this.apiKey}` },
+      });
+      if (!pr.ok) {
+        const t = await pr.text().catch(() => '');
+        throw new Error(`TTS 查询失败 (${pr.status}): ${t.slice(0, 200)}`);
+      }
+      const pj = await pr.json();
+      const status = pj?.output?.task_status;
+      if (status === 'SUCCEEDED') {
+        const url = pj?.output?.results?.[0]?.audio?.url || pj?.output?.audio?.url;
+        if (!url) throw new Error('TTS 成功但未返回音频地址');
+        const ar = await fetch(url);
+        if (!ar.ok) throw new Error(`音频下载失败 (${ar.status})`);
+        const audio = Buffer.from(await ar.arrayBuffer());
+        const chars = [...text].reduce((n, ch) => n + (ch.codePointAt(0) > 0xff ? 2 : 1), 0);
+        return { audio, chars };
+      }
+      if (status === 'FAILED' || status === 'CANCELED' || status === 'UNKNOWN') {
+        throw new Error(`TTS 任务失败：${pj?.output?.message || pj?.message || status}`);
+      }
+      // PENDING / RUNNING / SUSPENDED：继续轮询
+    }
+    throw new Error('TTS 任务超时（60秒）');
   }
 
   // ============ v1.27.0: 音色克隆（音频文件 → 定制音色） ============
