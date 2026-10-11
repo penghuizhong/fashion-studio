@@ -1721,10 +1721,18 @@ export async function runMulti() {
     global.fetch = async (url, opts) => {
       calls.push({ url: String(url), body: opts && opts.body ? JSON.parse(opts.body) : null });
       // v1.29.8: 同步接口，直接返回音频二进制
+      // v1.29.9: 实际返回 JSON（含 output.audio.url），需下载
       if (String(url).includes('/services/audio/tts/SpeechSynthesizer')) {
         return {
           ok: true,
-          headers: { get: (k) => k === 'content-type' ? 'audio/mpeg' : '' },
+          headers: { get: (k) => k === 'content-type' ? 'application/json' : '' },
+          json: async () => ({ output: { audio: { url: 'https://example.com/a.mp3' } } }),
+        };
+      }
+      if (url === 'https://example.com/a.mp3') {
+        return {
+          ok: true,
+          headers: { get: () => 'audio/mpeg' },
           arrayBuffer: async () => new ArrayBuffer(8),
         };
       }
