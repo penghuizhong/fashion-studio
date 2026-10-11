@@ -2410,13 +2410,51 @@ export function createApp() {
 
   // 批量克隆任务（内存 job；管理员一次性操作，重启丢失可重跑）
   const batchCloneJobs = new Map();
+  // v1.29.6: 内置音色参考音频存盘目录（供“试听原音”）
+  function builtinRefDir() {
+    const d = path.join(getConfig().dataDir, 'builtin_voice_refs');
+    try { fs.mkdirSync(d, { recursive: true }); } catch {}
+    return d;
+  }
+  function refAudioExt(mimeType) {
+    const m = String(mimeType || '').toLowerCase();
+    if (m.includes('mp3') || m.includes('mpeg')) return '.mp3';
+    if (m.includes('m4a') || m.includes('mp4')) return '.m4a';
+    return '.wav';
+  }
+  function refAudioPath(name) {
+    // 按音色名找参考音频（兼容 wav/mp3/m4a）
+    const dir = builtinRefDir();
+    for (const ext of ['.wav', '.mp3', '.m4a']) {
+      const p = path.join(dir, name + ext);
+      try { if (fs.existsSync(p)) return p; } catch {}
+    }
+    return null;
+  }
 
   // 公开：系统内置音色列表（前端音色选择器优先展示；为空则用前端硬编码旧列表）
   app.get('/api/voice/builtin', ah(async (req, res) => {
     const rows = getDb()
       .prepare('SELECT name, voice_id, target_model, gender, description, preview, sort FROM builtin_voices ORDER BY sort ASC')
       .all();
+    // v1.29.6: 标记是否有参考音频（试听原音用）
+    for (const r of rows) {
+      try { r.has_audio = !!refAudioPath(r.name); } catch { r.has_audio = false; }
+    }
     res.json({ voices: rows });
+  }));
+
+  // v1.29.6: 管理员获取内置音色参考音频（试听原音）
+  app.get('/api/admin/voice/builtin/:name/audio', ah(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const name = String(req.params.name || '');
+    const p = refAudioPath(name);
+    if (!p) return res.status(404).json({ error: '没有参考音频（v1.29.6 前克隆的需重新上传）' });
+    const ext = path.extname(p).toLowerCase();
+    const ct = ext === '.mp3' ? 'audio/mpeg' : ext === '.m4a' ? 'audio/mp4' : 'audio/wav';
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    fs.createReadStream(p).pipe(res);
   }));
 
   // 管理员：批量克隆（异步 job） POST /api/admin/voice/batch-clone { voices: [{name, audio(base64), mimeType}] }
@@ -2463,6 +2501,10 @@ export function createApp() {
           const meta = BUILTIN_VOICE_META[it.name] || {};
           upsert.run(it.name, r.voiceId, vcModel, meta.gender || '', meta.description || '',
             meta.preview || `你好，我是${it.name}。`, i, new Date().toISOString());
+          // v1.29.6: 参考音频存盘，供“试听原音”（失败不影响克隆结果）
+          try {
+            fs.writeFileSync(path.join(builtinRefDir(), it.name + refAudioExt(it.mimeType)), it.buf);
+          } catch (e) { console.warn('[voice] 参考音频存盘失败:', e.message); }
           job.results.push({ name: it.name, ok: true, voice_id: r.voiceId });
         } catch (e) {
           job.results.push({ name: it.name, ok: false, error: e.message || '克隆失败' });
