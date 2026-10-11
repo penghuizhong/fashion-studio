@@ -156,7 +156,7 @@ class DashScopeVoiceProvider {
     }
     if (!audio || !audio.length) throw new Error('TTS 失败：返回空音频');
     const chars = [...text].reduce((n, ch) => n + (ch.codePointAt(0) > 0xff ? 2 : 1), 0);
-    return { audio, chars };
+    return { audio, chars, mime: detectAudioMime(audio) };
   }
 
   // ============ v1.27.0: 音色克隆（音频文件 → 定制音色） ============
@@ -404,4 +404,14 @@ export function splitSentences(text, maxLen = 50) {
     }
   }
   return out;
+}
+
+// v1.29.10: 按文件头魔数判断音频 MIME，避免前端硬编码格式播不出
+export function detectAudioMime(buf) {
+  if (!buf || buf.length < 4) return 'audio/mpeg';
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return 'audio/wav'; // RIFF
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) return 'audio/mpeg'; // ID3
+  if (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0) return 'audio/mpeg'; // MP3 frame
+  if (buf[0] === 0x4F && buf[1] === 0x67 && buf[2] === 0x67 && buf[3] === 0x53) return 'audio/ogg'; // OggS
+  return 'audio/mpeg';
 }
