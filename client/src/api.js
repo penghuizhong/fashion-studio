@@ -380,8 +380,9 @@ export const api = {
   voiceClone: (data) => post('/api/voice/clone', data),
   // v1.29.0: 系统内置克隆音色（批量克隆 + 列表）
   getBuiltinVoices: () => get('/api/voice/builtin'),
-  // v1.29.6: 内置音色参考音频（试听原音，需管理员登录，fetch 时带 cookie）
-  builtinAudioUrl: (name) => `/api/admin/voice/builtin/${encodeURIComponent(name)}/audio`,
+  // v1.29.6: 内置音色参考音频（试听原音）
+  // v1.29.7: 公开接口，所有登录用户可用（选择器试听原音不调 TTS）
+  builtinAudioUrl: (name) => `/api/voice/builtin/${encodeURIComponent(name)}/audio`,
   batchCloneVoices: (data) => post('/api/admin/voice/batch-clone', data),
   batchCloneStatus: (jobId) => get(`/api/admin/voice/batch-clone/${jobId}`),
   clearBuiltinVoices: () => del('/api/admin/voice/builtin'),
