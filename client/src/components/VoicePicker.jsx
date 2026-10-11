@@ -61,11 +61,12 @@ export default function VoicePicker({ value, onChange }) {
           speed: 1.0,
           forceAll: true,
         });
-        if (r.skipped || !r.audio) {
+        if (r.skipped || !r.audioUrl) {
           setTestingId(null);
           return;
         }
-        audio = new Audio(`data:${r.mime || 'audio/mpeg'};base64,${r.audio}`);
+        // v1.29.12: 用 HTTP 接口播（替代 data URL）
+        audio = new Audio(r.audioUrl);
       }
       audioRef.current = audio;
       audio.onended = () => setTestingId(null);
