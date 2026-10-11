@@ -56,7 +56,7 @@ import {
   getBalance,
 } from './points.js';
 // v1.26.0: 语音功能
-import { getVoiceProvider, extractDialogue, splitSentences, cleanForTts, VOICE_MODELS, VOICE_PRICING, calcAsrPoints, calcTtsPoints, getCachedAudio, setCachedAudio, getVoiceModel } from './voice.js';
+import { getVoiceProvider, extractDialogue, splitSentences, cleanForTts, VOICE_MODELS, VOICE_PRICING, calcAsrPoints, calcTtsPoints, getCachedAudio, setCachedAudio, getVoiceModel, detectAudioMime } from './voice.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
 const FILE_FIELDS = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
@@ -2272,6 +2272,7 @@ export function createApp() {
     }
     res.json({
       audio: audioBuf.toString('base64'),
+      mime: detectAudioMime(audioBuf),
       chars: billChars,
       text: speakText,
       model: ttsModel,
@@ -2466,9 +2467,29 @@ export function createApp() {
     if (!p) return res.status(404).json({ error: '没有参考音频（v1.29.6 前克隆的需重新上传）' });
     const ext = path.extname(p).toLowerCase();
     const ct = ext === '.mp3' ? 'audio/mpeg' : ext === '.m4a' ? 'audio/mp4' : 'audio/wav';
+    // v1.29.10: iOS Safari 播音频需要 Content-Length + Range 支持
+    const stat = fs.statSync(p);
+    const total = stat.size;
+    const range = req.headers.range;
     res.setHeader('Content-Type', ct);
+    res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'private, max-age=86400');
-    fs.createReadStream(p).pipe(res);
+    if (range) {
+      const m = /bytes=(\d*)-(\d*)/.exec(range);
+      const start = m && m[1] ? parseInt(m[1], 10) : 0;
+      const end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+      if (start >= total || end >= total) {
+        res.status(416).setHeader('Content-Range', `bytes */${total}`).end();
+        return;
+      }
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+      res.setHeader('Content-Length', String(end - start + 1));
+      fs.createReadStream(p, { start, end }).pipe(res);
+    } else {
+      res.setHeader('Content-Length', String(total));
+      fs.createReadStream(p).pipe(res);
+    }
   }
   app.get('/api/admin/voice/builtin/:name/audio', ah(async (req, res) => {
     if (!requireAdmin(req, res)) return;
