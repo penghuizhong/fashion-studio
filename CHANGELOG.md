@@ -1,3 +1,6 @@
+## v1.29.9
+- 修 bug：CosyVoice 同步接口实际返回 JSON（含 output.audio.url），需从 OSS 下载音频（之前按二进制处理报错）。管理页试听原音改回 admin 接口（v1.29.6 验证可用），选择器用公开接口。
+
 ## v1.29.8
 - 修 bug：CosyVoice 合成 URL 用错。正确地址是 `/api/v1/services/audio/tts/SpeechSynthesizer`（同步接口），之前误用 `multimodal-generation/generation` 报 InvalidParameter/please check url。选择器试听报错带路径标识（原音/TTS）。
 
