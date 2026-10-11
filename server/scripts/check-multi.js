@@ -1781,6 +1781,21 @@ export async function runMulti() {
     ok('M70. 参考音频公开接口', pass, `status=${r.status}`);
   }
 
+  // M71. v1.29.10: detectAudioMime 按魔数识别格式
+  {
+    const { detectAudioMime } = await import('../src/voice.js');
+    const wav = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00]); // RIFF
+    const mp3id3 = Buffer.from([0x49, 0x44, 0x33, 0x00]); // ID3
+    const mp3frame = Buffer.from([0xFF, 0xFB, 0x00, 0x00]); // MP3 frame sync
+    const ogg = Buffer.from([0x4F, 0x67, 0x67, 0x53]); // OggS
+    const pass = detectAudioMime(wav) === 'audio/wav'
+      && detectAudioMime(mp3id3) === 'audio/mpeg'
+      && detectAudioMime(mp3frame) === 'audio/mpeg'
+      && detectAudioMime(ogg) === 'audio/ogg'
+      && detectAudioMime(Buffer.alloc(0)) === 'audio/mpeg';
+    ok('M71. detectAudioMime 格式识别', pass, '');
+  }
+
   // M38. v1.12 记忆事件隔离：B 读不到 A 的对话事件
   {
     const db = getDb();
