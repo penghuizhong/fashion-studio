@@ -564,8 +564,9 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           const r = await api.voiceTts({ text: s, voice, speed });
           if (r.skipped) continue;
           if (audioQueueRef.current._token !== myId) break;
-          const url = `data:audio/mp3;base64,${r.audio}`;
-          audioQueueRef.current.push({ url });
+          // v1.29.12: 用 HTTP 接口播（替代 data URL）
+          if (!r.audioUrl) continue;
+          audioQueueRef.current.push({ url: r.audioUrl });
           // 第一句到了就开始播
           const el = audioElRef.current;
           if (!el || el.paused || !el.src) playNext();
