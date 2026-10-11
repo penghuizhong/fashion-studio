@@ -2243,10 +2243,24 @@ export function createApp() {
       audioBuf = cached;
       billChars = [...speakText].reduce((n, ch) => n + (ch.codePointAt(0) > 0xff ? 2 : 1), 0);
     } else {
-      const r = await provider.tts(speakText, { model: ttsModel, voice: actualVoice, speed });
-      audioBuf = r.audio;
-      billChars = r.chars;
-      setCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel, audioBuf, cacheUid);
+      try {
+        const r = await provider.tts(speakText, { model: ttsModel, voice: actualVoice, speed });
+        audioBuf = r.audio;
+        billChars = r.chars;
+        setCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel, audioBuf, cacheUid);
+      } catch (e) {
+        // v1.29.7: 管理员试听时透传上游真实报错，便于定位（普通用户仍走脱敏 500）
+        try {
+          const u = uidOf(req);
+          const isAdmin = u && getDb().prepare('SELECT is_admin FROM users WHERE id = ?').get(u)?.is_admin;
+          if (isAdmin) {
+            const err = new Error(String((e && e.message) || 'TTS 失败'));
+            err.statusCode = 400;
+            throw err;
+          }
+        } catch (e2) { if (e2 && e2.statusCode === 400) throw e2; }
+        throw e;
+      }
     }
     // v1.26.0: 积分模式按字符扣费（缓存命中不扣）
     if (ttsUid && !cached) {
@@ -2445,8 +2459,8 @@ export function createApp() {
   }));
 
   // v1.29.6: 管理员获取内置音色参考音频（试听原音）
-  app.get('/api/admin/voice/builtin/:name/audio', ah(async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+  // v1.29.7: 所有登录用户可听（音色选择器试听原音，不调 TTS 省积分）
+  function serveBuiltinAudio(req, res) {
     const name = String(req.params.name || '');
     const p = refAudioPath(name);
     if (!p) return res.status(404).json({ error: '没有参考音频（v1.29.6 前克隆的需重新上传）' });
@@ -2455,6 +2469,13 @@ export function createApp() {
     res.setHeader('Content-Type', ct);
     res.setHeader('Cache-Control', 'private, max-age=86400');
     fs.createReadStream(p).pipe(res);
+  }
+  app.get('/api/admin/voice/builtin/:name/audio', ah(async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    serveBuiltinAudio(req, res);
+  }));
+  app.get('/api/voice/builtin/:name/audio', ah(async (req, res) => {
+    serveBuiltinAudio(req, res);
   }));
 
   // 管理员：批量克隆（异步 job） POST /api/admin/voice/batch-clone { voices: [{name, audio(base64), mimeType}] }
