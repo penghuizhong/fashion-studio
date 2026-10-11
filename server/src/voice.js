@@ -17,7 +17,8 @@ export const VOICE_MODELS = {
   },
   design: 'qwen3-tts-vd-2026-01-26',
   // v1.29.0: 克隆音色合成模型（须与克隆时 target_model 一致）
-  vc: 'qwen3-tts-vc-2026-01-22',
+  // v1.29.3: 改用 cosyvoice-v3.5-plus（官方文档确认；qwen3-tts-vc-2026-01-22 报 preprocess service not found）
+  vc: 'cosyvoice-v3.5-plus',
 };
 
 // 获取实际使用的模型（配置优先，其次默认）
