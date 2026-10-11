@@ -137,14 +137,24 @@ class DashScopeVoiceProvider {
       const t = await res.text().catch(() => '');
       throw new Error(`TTS 提交失败 (${res.status}): ${t.slice(0, 300)}`);
     }
-    // 同步接口直接返回音频二进制
+    // v1.29.9: 同步接口可能返回 JSON（含 output.audio.url，需下载）或直接返回音频二进制
     const ct = res.headers.get('content-type') || '';
+    let audio;
     if (ct.includes('application/json')) {
       const j = await res.json().catch(() => ({}));
-      throw new Error(`TTS 失败：${j.message || j.code || JSON.stringify(j).slice(0, 200)}`);
+      const url = j?.output?.audio?.url;
+      if (url) {
+        // 从 OSS 下载音频（http/https 都支持）
+        const ar = await fetch(url);
+        if (!ar.ok) throw new Error(`音频下载失败 (${ar.status})`);
+        audio = Buffer.from(await ar.arrayBuffer());
+      } else {
+        throw new Error(`TTS 失败：${j.message || j.code || JSON.stringify(j).slice(0, 300)}`);
+      }
+    } else {
+      audio = Buffer.from(await res.arrayBuffer());
     }
-    const audio = Buffer.from(await res.arrayBuffer());
-    if (!audio.length) throw new Error('TTS 失败：返回空音频');
+    if (!audio || !audio.length) throw new Error('TTS 失败：返回空音频');
     const chars = [...text].reduce((n, ch) => n + (ch.codePointAt(0) > 0xff ? 2 : 1), 0);
     return { audio, chars };
   }
