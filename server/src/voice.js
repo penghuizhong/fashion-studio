@@ -94,7 +94,7 @@ class DashScopeVoiceProvider {
       return this.ttsCosyvoice(text, { model: useModel, voice });
     }
 
-    const res = await fetch(`${DASHSCOPE_BASE}/compatible-mode/v1/audio/speech`, {
+    const res = await this.fetchTimeout(`${DASHSCOPE_BASE}/compatible-mode/v1/audio/speech`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
@@ -118,11 +118,25 @@ class DashScopeVoiceProvider {
     return { audio, chars };
   }
 
+  // v1.29.14: 带超时的 fetch（避免上游 hang 住导致前端一直转圈）
+  async fetchTimeout(url, opts = {}, ms = 30000) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms);
+    try {
+      return await fetch(url, { ...opts, signal: c.signal });
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error(`请求超时（${ms / 1000}秒）: ${String(url).slice(0, 80)}`);
+      throw e;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
   // v1.29.5: CosyVoice 原生 HTTP 合成（同步接口）
   // v1.29.8: 修正 URL——正确地址是 /api/v1/services/audio/tts/SpeechSynthesizer（同步），
   // 之前误用 multimodal-generation/generation 报 "please check url"
   async ttsCosyvoice(text, { model, voice } = {}) {
-    const res = await fetch(`${DASHSCOPE_BASE}/api/v1/services/audio/tts/SpeechSynthesizer`, {
+    const res = await this.fetchTimeout(`${DASHSCOPE_BASE}/api/v1/services/audio/tts/SpeechSynthesizer`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
@@ -144,8 +158,8 @@ class DashScopeVoiceProvider {
       const j = await res.json().catch(() => ({}));
       const url = j?.output?.audio?.url;
       if (url) {
-        // 从 OSS 下载音频（http/https 都支持）
-        const ar = await fetch(url, { redirect: 'follow' });
+        // 从 OSS 下载音频（http/https 都支持，60 秒超时）
+        const ar = await this.fetchTimeout(url, { redirect: 'follow' }, 60000);
         if (!ar.ok) throw new Error(`音频下载失败 (${ar.status})`);
         audio = Buffer.from(await ar.arrayBuffer());
         // v1.29.11: 校验下载到的是否为有效音频，否则报出前几个字节方便定位
