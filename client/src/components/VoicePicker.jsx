@@ -4,119 +4,37 @@ import { useState, useRef, useEffect } from 'react';
 import { api } from '../api.js';
 import Icon from './icons.jsx';
 
-export const VOICE_LIST = [
-  {
-    id: 'Cherry',
-    name: '芊悦',
-    desc: '阳光女声',
-    gender: '女',
-    preview: '你好呀！我是芊悦，今天也是元气满满的一天呢，一起加油吧！',
-  },
-  {
-    id: 'Serena',
-    name: '苏瑶',
-    desc: '温柔女声',
-    gender: '女',
-    preview: '你好，我是苏瑶，很高兴能在这里与你相遇，愿我们相谈甚欢。',
-  },
-  {
-    id: 'Chelsie',
-    name: '千雪',
-    desc: '二次元女友',
-    gender: '女',
-    preview: '呐呐，你终于来啦！人家等你好久了，今天想聊点什么呢？',
-  },
-  {
-    id: 'Bella',
-    name: '萌宝',
-    desc: '可爱小女孩',
-    gender: '女',
-    preview: '大哥哥大姐姐好！我是萌宝，今年五岁，最喜欢吃糖糖啦！',
-  },
-  {
-    id: 'Momo',
-    name: '茉兔',
-    desc: '俏皮可爱',
-    gender: '女',
-    preview: '嘿嘿，抓到你啦！我是茉兔，古灵精怪第一名！',
-  },
-  {
-    id: 'Vivian',
-    name: '十三',
-    desc: '酷飒微辣',
-    gender: '女',
-    preview: '哟，来了？我是十三，有事说事，别磨磨唧唧的。',
-  },
-  {
-    id: 'Katerina',
-    name: '卡捷琳娜',
-    desc: '成熟有气场',
-    gender: '女',
-    preview: '晚上好，我是卡捷琳娜。有什么心事，都可以慢慢跟我说。',
-  },
-  {
-    id: 'Ethan',
-    name: '晨煦',
-    desc: '阳光男声',
-    gender: '男',
-    preview: '嘿！我是晨煦，要不要一起去冒险？青春就是要轰轰烈烈！',
-  },
-  {
-    id: 'Moon',
-    name: '月白',
-    desc: '潇洒帅气',
-    gender: '男',
-    preview: '月色真美，我是月白。今晚的风很温柔，你也是。',
-  },
-  {
-    id: 'Kai',
-    name: '凯',
-    desc: '治愈系男声',
-    gender: '男',
-    preview: '你好呀，我是凯。累了就歇一会儿，我在这里陪着你。',
-  },
-  {
-    id: 'Nofish',
-    name: '不吃鱼',
-    desc: '设计师男声',
-    gender: '男',
-    preview: '你好，我是不吃鱼。设计和生活一样，都需要一点不将就的态度。',
-  },
-  {
-    id: 'Ryan',
-    name: '甜茶',
-    desc: '戏剧张力男声',
-    gender: '男',
-    preview: '命运的齿轮开始转动——我是甜茶，准备好迎接这场大戏了吗？',
-  },
-];
+// v1.29.2: 系统内置音色全部动态拉取（管理员在模型管理里维护），不再硬编码
+// 返回 null=加载中，[]=空（管理员尚未上传）
+export function useBuiltinVoices() {
+  const [voices, setVoices] = useState(null);
+  useEffect(() => {
+    api.getBuiltinVoices().then((r) => {
+      const list = (r && r.voices) || [];
+      setVoices(list.map((v) => ({
+        id: v.voice_id,
+        name: v.name,
+        desc: v.description || '',
+        gender: v.gender || '',
+        preview: v.preview || `你好，我是${v.name}。`,
+      })));
+    }).catch(() => setVoices([]));
+  }, []);
+  return voices;
+}
 
 export default function VoicePicker({ value, onChange }) {
   const [testingId, setTestingId] = useState(null);
   const [customVoices, setCustomVoices] = useState([]);
   const [designOpen, setDesignOpen] = useState(false);
   const audioRef = useRef(null);
-  // v1.29.0: 系统内置克隆音色（管理员批量上传后，优先展示；为空则用硬编码旧列表）
-  const [builtinVoices, setBuiltinVoices] = useState(null);
+  // v1.29.2: 内置音色动态拉取（null=加载中）
+  const builtinVoices = useBuiltinVoices();
 
   // 拉取用户定制音色
   useEffect(() => {
     api.listCustomVoices().then(setCustomVoices).catch(() => {});
-    api.getBuiltinVoices().then((r) => {
-      const list = r && r.voices;
-      if (list && list.length) {
-        setBuiltinVoices(list.map((v) => ({
-          id: v.voice_id,
-          name: v.name,
-          desc: v.description || '',
-          gender: v.gender || '',
-          preview: v.preview || `你好，我是${v.name}。`,
-        })));
-      }
-    }).catch(() => {});
   }, []);
-
-  const voiceList = builtinVoices || VOICE_LIST;
 
   const testVoice = async (v, isCustom) => {
     // 正在试听同一个 → 停止
@@ -152,7 +70,13 @@ export default function VoicePicker({ value, onChange }) {
   return (
     <div>
       <div className="voice-grid">
-        {voiceList.map((v) => (
+        {builtinVoices === null && (
+          <div className="key-desc small" style={{ padding: 12 }}>音色加载中…</div>
+        )}
+        {builtinVoices !== null && builtinVoices.length === 0 && customVoices.length === 0 && (
+          <div className="key-desc small" style={{ padding: 12 }}>暂无内置音色，请联系管理员在模型管理中上传。</div>
+        )}
+        {(builtinVoices || []).map((v) => (
           <div
             key={v.id}
             className={`voice-option${value === v.id ? ' selected' : ''}`}
