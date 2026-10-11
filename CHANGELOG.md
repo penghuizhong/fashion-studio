@@ -1,3 +1,6 @@
+## v1.29.12
+- 改架构：TTS 音频不再走 base64 data URL，改存临时文件经 `/api/voice/tts-audio/:id` 播放（含 Range 支持，解决「no supported source」；省 33% 体积）。临时文件 2 小时自动清理。
+
 ## v1.29.11
 - 修 bug：TTS 从 OSS 下载音频后校验魔数，非有效音频时报出大小/content-type/文件头，方便定位「no supported source」。
 
