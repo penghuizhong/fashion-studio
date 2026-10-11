@@ -1,3 +1,6 @@
+## v1.29.13
+- 修 bug：聊天 TTS 失败时给用户可见报错（之前静默）。群聊流正常结束但有角色没收到 turn_done 时，补 truncated 消息+重试按钮（之前只在异常 catch 里处理，静默断流无恢复入口）。
+
 ## v1.29.12
 - 改架构：TTS 音频不再走 base64 data URL，改存临时文件经 `/api/voice/tts-audio/:id` 播放（含 Range 支持，解决「no supported source」；省 33% 体积）。临时文件 2 小时自动清理。
 
