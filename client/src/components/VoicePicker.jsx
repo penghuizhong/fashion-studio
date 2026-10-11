@@ -69,7 +69,9 @@ export default function VoicePicker({ value, onChange }) {
       }
       audioRef.current = audio;
       audio.onended = () => setTestingId(null);
-      audio.onerror = () => { setTestingId(null); setTestError('音频播放失败'); };
+      // v1.29.8: 报错带路径标识（原音/TTS），方便定位
+      const srcLabel = !isCustom && v.has_audio ? '原音' : 'TTS';
+      audio.onerror = () => { setTestingId(null); setTestError(`音频播放失败（${srcLabel}）`); };
       await audio.play();
     } catch (e) {
       setTestingId(null);
