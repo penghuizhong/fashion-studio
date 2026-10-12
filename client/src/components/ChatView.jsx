@@ -27,7 +27,7 @@ function renderMarkdown(text) {
   return html;
 }
 
-export default function ChatView({ characterId, conversationId, isGroup, onConversationsChanged, onOpenSidebar, showToast }) {
+export default function ChatView({ characterId, conversationId, isGroup, onConversationsChanged, onOpenSidebar, showToast, config }) {
   const [character, setCharacter] = useState(null);
   const [group, setGroup] = useState(null);
   const [title, setTitle] = useState('');
