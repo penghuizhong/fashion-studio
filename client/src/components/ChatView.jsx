@@ -58,6 +58,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   // v1.26.0: 语音
   const [asrLoading, setAsrLoading] = useState(false);
   const [playingMsgId, setPlayingMsgId] = useState(null); // 正在播放的消息 id
+  const [ttsLoadingMsgId, setTtsLoadingMsgId] = useState(null);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const audioQueueRef = useRef([]); // 待播音频队列
   const audioElRef = useRef(null);
@@ -552,6 +553,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
       } catch {}
     }
     setPlayingMsgId(null);
+    setTtsLoadingMsgId(null); // v1.29.17
   };
 
   // 播放队列中的下一个
@@ -559,6 +561,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     const next = audioQueueRef.current.shift();
     if (!next) {
       setPlayingMsgId(null);
+      setTtsLoadingMsgId(null); // v1.29.17
       return;
     }
     const el = audioElRef.current || (audioElRef.current = new Audio());
@@ -577,6 +580,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
     }
     stopVoice();
     setPlayingMsgId(msgId);
+    setTtsLoadingMsgId(msgId); // v1.29.17: 显示生成中
     const myId = msgId;
     audioQueueRef.current._token = myId;
     // v1.26.0: 用用户设置的音色/语速；角色有专属音色则优先
@@ -597,6 +601,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           if (r.skipped) continue;
           if (audioQueueRef.current._token !== myId) break;
           // v1.29.12: 用 HTTP 接口播（替代 data URL）
+          setTtsLoadingMsgId(null); // v1.29.17: 合成完成，开始播放
           if (!r.audioUrl) {
             setErrorMsg('语音合成失败：未返回音频');
             break;
@@ -909,10 +914,10 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                 <button
                   className={`btn secondary small${playingMsgId === m.id ? ' playing' : ''}`}
                   onClick={() => speakText(m.id, m.content)}
-                  title={playingMsgId === m.id ? '停止' : '朗读对白'}
+                  title={ttsLoadingMsgId === m.id ? '生成中…' : playingMsgId === m.id ? '停止' : '朗读对白'}
                 >
                   <Icon name={playingMsgId === m.id ? 'stop' : 'volume'} size={14} />
-                  {playingMsgId === m.id ? '停止' : '朗读'}
+                  {ttsLoadingMsgId === m.id ? '生成中…' : playingMsgId === m.id ? '停止' : '朗读'}
                 </button>
               </div>
             )}
