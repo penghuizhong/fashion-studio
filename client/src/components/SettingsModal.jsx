@@ -246,7 +246,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   const [pmEditing, setPmEditing] = useState(null); // 正在编辑的行 id
   const [pmEditForm, setPmEditForm] = useState({});
   // v1.12 模型配置（管理员）：后台模型 / 聊天默认模型
-  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null, voice_tts_model: '', voice_asr_model: '', voice_design_model: '', voice_vc_model: '' });
+  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null, voice_tts_model: '', voice_asr_model: '', voice_design_model: '', voice_vc_model: '', voice_enabled: '1' });
   const [modelCfgSaving, setModelCfgSaving] = useState(false);
   const loadModelCfg = async () => {
     try {
@@ -259,6 +259,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         voice_asr_model: (s && s.voice_asr_model) || '',
         voice_design_model: (s && s.voice_design_model) || '',
         voice_vc_model: (s && s.voice_vc_model) || '',
+        voice_enabled: (s && s.voice_enabled) || '1',
       });
       // v1.18.1: 注册送积分（管理员可配）
       if (s && typeof s.signup_bonus === 'number') setSignupBonus(String(s.signup_bonus));
@@ -1410,7 +1411,16 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                       )}
                     </div>
                   )}
-                  <div className="card-title" style={{ marginTop: 16 }}>语音模型</div>
+                  <div className="card-title" style={{ marginTop: 16 }}>语音功能</div>
+                  <label className="row" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={modelCfg.voice_enabled !== '0'}
+                      onChange={(e) => setModelCfg((f) => ({ ...f, voice_enabled: e.target.checked ? '1' : '0' }))}
+                    />
+                    <span>启用语音功能（关闭后所有语音合成/识别/克隆接口停用）</span>
+                  </label>
+                  <div className="card-title" style={{ marginTop: 8 }}>语音模型</div>
                   <p className="key-desc small">TTS/ASR/音色设计走 DashScope，不选 = 用默认模型。DashScope 无公开模型列表，「查看可用模型」展示的是内置清单（非实时）。</p>
                   {/* v1.26.3: 输入框右置拉取按钮，可下拉选择 */}
                   <label>
