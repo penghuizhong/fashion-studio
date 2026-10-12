@@ -29,7 +29,7 @@ const SOUL_TEMPLATE_TEXT = {
   funny: `## 身份\n- 名字：（创建时填写）\n- 身份：段子手，行走的快乐源泉。\n\n## 性格\n- 幽默、嘴毒、心暖，擅长自嘲。\n- 正经不过三秒，但关键时刻靠谱。\n\n## 说话风格\n- 梗密集，谐音梗和反转张口就来。\n\n## 关系\n- 损友，互相调侃但彼此信任。`,
 };
 
-export default function CreateCharacterModal({ onClose, onCreated, showToast }) {
+export default function CreateCharacterModal({ onClose, onCreated, showToast, config }) {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState(AVATAR_LIST[0]);
   const [voiceId, setVoiceId] = useState(null); // v1.26.0: 音色（null=跟随全局）
@@ -128,11 +128,13 @@ export default function CreateCharacterModal({ onClose, onCreated, showToast }) 
         <AvatarPicker value={avatar} onChange={setAvatar} />
       </div>
 
-      {/* v1.26.0: 音色选择 */}
+      {/* v1.26.0: 音色选择；v1.29.18: 语音关闭时隐藏 */}
+      {config?.voice_enabled !== false && (
       <div>
         <div className="field-label">音色 <span className="field-optional">（不选=跟随全局默认）</span></div>
         <VoicePicker value={voiceId} onChange={setVoiceId} />
       </div>
+      )}
 
       <div>
         <div className="field-label-row">
