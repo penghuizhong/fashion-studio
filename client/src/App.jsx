@@ -341,6 +341,7 @@ export default function App() {
             onConversationsChanged={bumpConversations}
             onOpenSidebar={() => setSidebarOpen(true)}
             showToast={showToast}
+            config={config}
           />
         )}
       {charSettingsModal.open && (
