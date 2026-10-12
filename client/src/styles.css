@@ -4325,6 +4325,19 @@ textarea {
 .voice-test.testing {
   color: #e74c3c;
 }
+/* v1.29.17: 生成中状态 */
+.voice-test.generating {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.gen-spin {
+  font-size: 12px;
+  animation: gen-pulse 1s ease-in-out infinite;
+}
+@keyframes gen-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
 .voice-test:hover {
   background: var(--hover-bg, #f5f5f5);
 }
