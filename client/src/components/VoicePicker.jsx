@@ -26,6 +26,7 @@ export function useBuiltinVoices() {
 
 export default function VoicePicker({ value, onChange }) {
   const [testingId, setTestingId] = useState(null);
+  const [generatingId, setGeneratingId] = useState(null);
   const [testError, setTestError] = useState('');
   const [customVoices, setCustomVoices] = useState([]);
   const [designOpen, setDesignOpen] = useState(false);
@@ -46,6 +47,7 @@ export default function VoicePicker({ value, onChange }) {
         try { audioRef.current.pause(); } catch {}
       }
       setTestingId(null);
+      setGeneratingId(null);
       return;
     }
     setTestingId(v.id);
@@ -55,12 +57,14 @@ export default function VoicePicker({ value, onChange }) {
       if (!isCustom && v.has_audio) {
         audio = new Audio(api.builtinAudioUrl(v.name));
       } else {
+        setGeneratingId(v.id); // v1.29.17: 显示"生成中"
         const r = await api.voiceTts({
           text: isCustom ? '你好，我是你的专属定制音色，很高兴为你服务。' : v.preview,
           voice: v.id, // 定制音色传 custom_voices.id，后端解析
           speed: 1.0,
           forceAll: true,
         });
+        setGeneratingId(null);
         if (r.skipped || !r.audioUrl) {
           setTestingId(null);
           return;
@@ -76,6 +80,7 @@ export default function VoicePicker({ value, onChange }) {
       await audio.play();
     } catch (e) {
       setTestingId(null);
+      setGeneratingId(null);
       // v1.29.4: 试听失败显示具体错误，不再静默
       setTestError(`「${v.name}」试听失败：${(e && e.message) || '未知错误'}`);
     }
@@ -106,11 +111,16 @@ export default function VoicePicker({ value, onChange }) {
             </button>
             <button
               type="button"
-              className={`voice-test${testingId === v.id ? ' testing' : ''}`}
+              className={`voice-test${testingId === v.id ? ' testing' : ''}${generatingId === v.id ? ' generating' : ''}`}
               onClick={() => testVoice(v, false)}
-              title="试听"
+              title={generatingId === v.id ? '生成中…' : '试听'}
+              disabled={generatingId === v.id}
             >
-              <Icon name={testingId === v.id ? 'stop' : 'volume'} size={14} />
+              {generatingId === v.id ? (
+                <span className="gen-spin">生成中…</span>
+              ) : (
+                <Icon name={testingId === v.id ? 'stop' : 'volume'} size={14} />
+              )}
             </button>
           </div>
         ))}
