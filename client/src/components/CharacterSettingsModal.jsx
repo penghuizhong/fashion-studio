@@ -19,7 +19,7 @@ const TABS = [
 
 const FILE_FIELD = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
 
-export default function CharacterSettingsModal({ characterId, onClose, onCharacterUpdated, onCharacterDeleted, showToast }) {
+export default function CharacterSettingsModal({ characterId, onClose, onCharacterUpdated, onCharacterDeleted, showToast, config }) {
   // v1.18.1: 破限白名单——无权限用户看不到可用开关
   const { user, multiUser } = useAuth();
   // v1.18.2: 每次打开角色设置都刷新权限（管理后台授权后不用刷新页面）
@@ -306,7 +306,8 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                   onChange={(a) => setS('avatar')({ target: { value: a } })}
                 />
               </div>
-              {/* v1.26.0: 音色选择（与头像同一 tab） */}
+              {/* v1.26.0: 音色选择（与头像同一 tab）；v1.29.18: 语音关闭时隐藏 */}
+              {config?.voice_enabled !== false && (
               <div>
                 <div className="field-label">音色</div>
                 <VoicePicker
@@ -314,6 +315,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                   onChange={(v) => setS('voice_id')({ target: { value: v } })}
                 />
               </div>
+              )}
               <label>
                 温度：{Number(settings.temperature).toFixed(2)}
                 <input
