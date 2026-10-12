@@ -1,3 +1,6 @@
+## v1.29.19
+- 紧急修复：v1.29.18 漏给 ChatView 传 config prop，导致 config 未定义报 ReferenceError、页面黑屏。
+
 ## v1.29.18
 - 改交互：语音总开关关闭时，前端隐藏聊天页朗读按钮、角色设置卡/新建角色卡的音色选择（/api/config 新增 voice_enabled）。
 
