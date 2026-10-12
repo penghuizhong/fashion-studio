@@ -56,7 +56,7 @@ import {
   getBalance,
 } from './points.js';
 // v1.26.0: 语音功能
-import { getVoiceProvider, extractDialogue, splitSentences, cleanForTts, VOICE_MODELS, VOICE_PRICING, calcAsrPoints, calcTtsPoints, getCachedAudio, setCachedAudio, getVoiceModel, detectAudioMime } from './voice.js';
+import { getVoiceProvider, extractDialogue, splitSentences, cleanForTts, VOICE_MODELS, VOICE_PRICING, calcAsrPoints, calcTtsPoints, getCachedAudio, setCachedAudio, getVoiceModel, detectAudioMime, isVoiceEnabled } from './voice.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
 const FILE_FIELDS = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
@@ -2168,21 +2168,52 @@ export function createApp() {
     } catch {}
     return null;
   };
+  // v1.29.17: 语音独立计费——多用户模式下语音永远扣积分（不限聊天计费模式），防 API 模式白嫖
+  const getVoiceBillUid = (req) => {
+    const cfg = getConfig();
+    const uid = (req && req.userId) || null;
+    if (!cfg.multiUser || !uid) return null; // 单用户模式：管理员自用，不计费
+    return uid;
+  };
+  // v1.29.17: 语音接口统一前置检查（总开关 + 积分余额）
+  const checkVoiceAccess = (req, res, needPoints = 0) => {
+    if (!isVoiceEnabled()) {
+      res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
+      return false;
+    }
+    const billUid = getVoiceBillUid(req);
+    if (billUid && needPoints > 0) {
+      try {
+        const bal = getBalance(billUid);
+        if (bal < needPoints) {
+          res.status(402).json({ error: `积分不足（需要 ${needPoints} 积分，当前 ${bal}）` });
+          return false;
+        }
+      } catch {}
+    }
+    return true;
+  };
 
   // ASR: 音频(base64) → 文字（积分模式按时长扣费）
   app.post('/api/voice/asr', chatLimiter, ah(async (req, res) => {
+    // v1.29.17: 语音总开关
+    if (!isVoiceEnabled()) return res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
     const { audio, mimeType } = req.body || {};
     if (!audio) return res.status(400).json({ error: 'audio 不能为空' });
     const buf = Buffer.from(audio, 'base64');
     if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ error: '音频过大（>10MB）' });
     const provider = getVoiceProvider();
     const r = await provider.asr(buf, { mimeType });
-    // v1.26.0: 积分模式按时长扣费
-    const asrUid = isVoicePointsMode(req);
-    if (asrUid) {
+    // v1.29.17: 语音独立计费——多用户模式下永远扣积分
+    const asrBillUid = getVoiceBillUid(req);
+    if (asrBillUid) {
       const pts = calcAsrPoints(r.duration);
       if (pts > 0) {
-        try { deductPoints(asrUid, pts, 'voice_asr', null, null, { duration: r.duration }); }
+        try {
+          const bal = getBalance(asrBillUid);
+          if (bal < pts) return res.status(402).json({ error: `积分不足（语音识别需要 ${pts} 积分，当前余额 ${bal}）` });
+        } catch {}
+        try { deductPoints(asrBillUid, pts, 'voice_asr', null, null, { duration: r.duration }); }
         catch (e) { console.warn('[voice] ASR 扣费失败:', e.message); }
       }
     }
@@ -2192,6 +2223,8 @@ export function createApp() {
   // TTS: 文字 → 音频(base64 mp3)（积分模式按字符扣费，余额低自动降级 flash）
   // 只合成对白部分；无对白返回 { skipped: true }
   app.post('/api/voice/tts', chatLimiter, ah(async (req, res) => {
+    // v1.29.17: 语音总开关
+    if (!isVoiceEnabled()) return res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
     const { text, voice, speed, forceAll } = req.body || {};
     if (!text || !String(text).trim()) return res.status(400).json({ error: 'text 不能为空' });
     let speakText = String(text);
@@ -2262,11 +2295,19 @@ export function createApp() {
         throw e;
       }
     }
-    // v1.26.0: 积分模式按字符扣费（缓存命中不扣）
-    if (ttsUid && !cached) {
+    // v1.29.17: 语音独立计费——多用户模式下永远扣积分（不限聊天计费模式）；缓存命中不扣
+    const voiceBillUid = getVoiceBillUid(req);
+    if (voiceBillUid && !cached) {
       const pts = calcTtsPoints(billChars);
       if (pts > 0) {
-        try { deductPoints(ttsUid, pts, 'voice_tts', null, null, { chars: billChars, model: ttsModel }); }
+        // 余额不足时明确提示（不静默失败）
+        try {
+          const bal = getBalance(voiceBillUid);
+          if (bal < pts) {
+            return res.status(402).json({ error: `积分不足（语音合成需要 ${pts} 积分，当前余额 ${bal}）` });
+          }
+        } catch {}
+        try { deductPoints(voiceBillUid, pts, 'voice_tts', null, null, { chars: billChars, model: ttsModel }); }
         catch (e) { console.warn('[voice] TTS 扣费失败:', e.message); }
       }
     }
@@ -2293,6 +2334,8 @@ export function createApp() {
   // ---------- v1.26.0: 定制音色 ----------
   // 声音设计：文本描述 → 定制音色（0.2元/次 = 20积分）
   app.post('/api/voice/design', chatLimiter, ah(async (req, res) => {
+    // v1.29.17: 语音总开关
+    if (!isVoiceEnabled()) return res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
     const { prompt, name, previewText } = req.body || {};
     if (!prompt || !String(prompt).trim()) return res.status(400).json({ error: '请描述想要的音色' });
     if (!name || !String(name).trim()) return res.status(400).json({ error: '请给音色起个名字' });
@@ -2342,6 +2385,8 @@ export function createApp() {
   // v1.27.0: 音色克隆 POST /api/voice/clone { audio(base64), name, mimeType }
   // 上传参考音频（15-60秒）→ 克隆音色 → 返回 voice_id
   app.post('/api/voice/clone', chatLimiter, ah(async (req, res) => {
+    // v1.29.17: 语音总开关
+    if (!isVoiceEnabled()) return res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
     const { audio, name, mimeType } = req.body || {};
     if (!audio || typeof audio !== 'string') return res.status(400).json({ error: '请上传音频文件' });
     if (!name || !String(name).trim()) return res.status(400).json({ error: '请给音色起个名字' });
