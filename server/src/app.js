@@ -342,6 +342,8 @@ export function createApp() {
       points_enabled: !!cfg.multiUser,
       platform_ready: !!cfg.apiKey,
       points_models: cfg.multiUser ? listPointsModels(true) : [],
+      // v1.29.18: 语音总开关（前端据此隐藏语音 UI）
+      voice_enabled: isVoiceEnabled(),
     });
   });
 
