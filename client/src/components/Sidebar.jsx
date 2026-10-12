@@ -404,6 +404,7 @@ export default function Sidebar({
           onClose={() => setModalOpen(false)}
           onCreated={onCharacterCreated}
           showToast={showToast}
+          config={config}
         />
       )}
 
