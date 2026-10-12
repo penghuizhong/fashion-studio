@@ -182,7 +182,7 @@ export default function App() {
         // 建会话失败则回退到空状态
         setView({ type: 'empty' });
       }
-      showToast('角色已创建 🎉');
+      showToast('角色已创建');
     },
     [refreshCharacters, showToast, handleSelectConversation]
   );
@@ -351,6 +351,7 @@ export default function App() {
           onCharacterUpdated={refreshCharacters}
           onCharacterDeleted={handleCharacterDeleted}
           showToast={showToast}
+          config={config}
         />
       )}
         {view.type === 'discover' && (
