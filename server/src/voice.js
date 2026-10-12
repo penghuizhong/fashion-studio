@@ -22,6 +22,15 @@ export const VOICE_MODELS = {
 };
 
 // 获取实际使用的模型（配置优先，其次默认）
+// v1.29.17: 语音总开关（管理员一键关闭；默认开启）
+export function isVoiceEnabled() {
+  try {
+    return getSetting('voice_enabled', '1') !== '0';
+  } catch {
+    return true;
+  }
+}
+
 export function getVoiceModel(type) {
   // type: 'tts' | 'asr' | 'design' | 'vc'
   const key = `voice_${type}_model`;
@@ -119,7 +128,7 @@ class DashScopeVoiceProvider {
   }
 
   // v1.29.14: 带超时的 fetch（避免上游 hang 住导致前端一直转圈）
-  async fetchTimeout(url, opts = {}, ms = 30000) {
+  async fetchTimeout(url, opts = {}, ms = 15000) { // v1.29.17: 15 秒（之前 30 秒太长）
     const c = new AbortController();
     const t = setTimeout(() => c.abort(), ms);
     try {
