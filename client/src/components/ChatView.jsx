@@ -910,7 +910,8 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                 <button className="btn secondary small" onClick={regenerate} disabled={regenerating}>
                   {regenerating ? '生成中…' : '↻ 重新生成'}
                 </button>
-                {/* v1.26.0: 朗读 */}
+                {/* v1.26.0: 朗读；v1.29.18: 语音关闭时隐藏 */}
+                {config?.voice_enabled !== false && (
                 <button
                   className={`btn secondary small${playingMsgId === m.id ? ' playing' : ''}`}
                   onClick={() => speakText(m.id, m.content)}
@@ -919,6 +920,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                   <Icon name={playingMsgId === m.id ? 'stop' : 'volume'} size={14} />
                   {ttsLoadingMsgId === m.id ? '生成中…' : playingMsgId === m.id ? '停止' : '朗读'}
                 </button>
+                )}
               </div>
             )}
             {/* v1.29.16: 群聊每个角色最后一条 AI 消息下常驻重新生成（对齐单聊）；截断时加提示前缀 */}
