@@ -489,7 +489,7 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
 }
 
 // ---------- 主视图：卡片流 ----------
-export default function StudioView({ showToast }) {
+export default function StudioView({ showToast, onOpenSidebar }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [cloneOpen, setCloneOpen] = useState(false);
@@ -539,7 +539,12 @@ export default function StudioView({ showToast }) {
   return (
     <div className="studio-view">
       <div className="studio-head">
-        <h2>设计台</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
+            <Icon name="menu" size={22} />
+          </button>
+          <h2>设计台</h2>
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn secondary" onClick={() => setExploreOpen(true)}>
             <Icon name="sparkles" size={16} /> 发散创建
