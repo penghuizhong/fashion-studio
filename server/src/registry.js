@@ -307,6 +307,7 @@ export function listImageModelsCompat(activeOnly = true) {
       base_url: r.provider_base_url || '',
       price_per_call: Math.floor(Number(pricing.per_call)) || 0,
       sizes: Array.isArray(extra.sizes) ? extra.sizes : [],
+      prompt_extend: extra.prompt_extend !== false,
       is_active: !!r.is_active,
       sort_order: r.sort_order,
     };

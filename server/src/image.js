@@ -59,7 +59,7 @@ export function renderDnaPromptWithOverrides(dna, overrides) {
 }
 
 // ---------- adapter：dashscope（文生图，task 异步轮询） ----------
-async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size, seed }) {
+async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size, seed, promptExtend = true }) {
   const dsSize = String(size || '1024*1024').replace('x', '*');
   const submitRes = await fetch(`${baseUrl}/api/v1/services/aigc/text2image/image-synthesis`, {
     method: 'POST',
@@ -67,7 +67,7 @@ async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size, seed 
     body: JSON.stringify({
       model,
       input: { prompt },
-      parameters: { size: dsSize, n: 1, seed, prompt_extend: false, watermark: false },
+      parameters: { size: dsSize, n: 1, seed, prompt_extend: !!promptExtend, watermark: false },
     }),
     signal: AbortSignal.timeout(30000),
   });
@@ -168,7 +168,7 @@ export async function generateImage({ userId, modelId, prompt, size, seed, sourc
   let result;
   if (m.provider === 'dashscope') {
     if (sourceImageBase64) throw new Error('DashScope 适配器暂不支持图生图，请选用 openai_compatible 供应商');
-    result = await dashscopeText2Image({ baseUrl, apiKey, model: m.model_id, prompt, size, seed: useSeed });
+    result = await dashscopeText2Image({ baseUrl, apiKey, model: m.model_id, prompt, size, seed: useSeed, promptExtend: m.prompt_extend });
     result.imageBase64 = await downloadToBase64(result.imageUrl);
     delete result.imageUrl;
   } else {

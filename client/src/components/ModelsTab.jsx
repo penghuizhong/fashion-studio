@@ -18,7 +18,7 @@ const KIND_LABEL = { llm: '仅聊天', image: '仅图片', both: '聊天+图片'
 const emptyPForm = { name: '', preset: 'custom', kind: 'both', base_url: '', api_key: '', is_active: true };
 const emptyMForm = {
   provider_id: '', kind: 'chat', model_id: '', name: '',
-  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024',
+  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true,
 };
 
 export default function ModelsTab({ showToast }) {
@@ -169,6 +169,7 @@ export default function ModelsTab({ showToast }) {
       input_per_1m: m.pricing.input_per_1m || '', output_per_1m: m.pricing.output_per_1m || '',
       per_call: m.pricing.per_call || '',
       sizes: (m.extra.sizes || []).join(','),
+      prompt_extend: m.extra.prompt_extend !== false,
     });
     setSizeFamily(guessFamily(m.model_id));
     setMEditing(m.id);
@@ -187,6 +188,7 @@ export default function ModelsTab({ showToast }) {
       if (pc == null || pc < 0 || Number.isNaN(pc)) { showToast('按次单价必须是非负整数'); return; }
       pricing.per_call = pc;
       extra.sizes = String(mForm.sizes || '').split(/[,，、\s]+/).map((x) => x.trim()).filter(Boolean);
+      extra.prompt_extend = !!mForm.prompt_extend;
     }
     setMBusy(true);
     try {
@@ -399,6 +401,10 @@ export default function ModelsTab({ showToast }) {
               <div className="key-input-row" style={{ marginTop: 8 }}>
                 <input value={mForm.sizes} onChange={setM('sizes')} placeholder="尺寸档位（API 原生值，逗号分隔），如：1024x1024,1792x1024" spellCheck={false} />
               </div>
+              <label className="key-desc small" style={{ display: 'block', marginTop: 8 }}>
+                <input type="checkbox" checked={!!mForm.prompt_extend} onChange={setM('prompt_extend')} />
+                提示词改写增强（千问系有效；关掉后严格按原提示词生成，不离题）
+              </label>
             </>
           )}
           <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
