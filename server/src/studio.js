@@ -30,6 +30,14 @@ export function runArchive() {
   return { by_age: r1.changes, by_count: n2 };
 }
 
+// P4: 发散批次归档——90 天前的批次自动 archived（与记忆遗忘同规则）
+export function runExploreArchive() {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
+  const r = db.prepare('UPDATE exploration_batches SET archived=1 WHERE archived=0 AND created_at < ?').run(cutoff);
+  return { by_age: r.changes };
+}
+
 export function mountStudioRoutes(app) {  const db = getDb();
   const cfg = getConfig();
   const uidOf = (req) => (req && req.userId) || 'local';

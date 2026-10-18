@@ -393,6 +393,14 @@ export const api = {
     variant: (id, data) => post(`/api/studio/templates/${id}/variant`, data),
     history: (id, includeArchived) => get(`/api/studio/templates/${id}/history${includeArchived ? '?include_archived=1' : ''}`),
     rate: (genId, rating) => post(`/api/studio/generations/${genId}/rate`, { rating }),
+    // P4 发散创建
+    exploreCreate: (data) => post('/api/studio/explore', data),
+    exploreGet: (id) => get(`/api/studio/explore/${id}`),
+    exploreList: (params = {}) => get(`/api/studio/explore${params.include_archived ? '?include_archived=1' : ''}`),
+    exploreSelect: (id, indexes) => post(`/api/studio/explore/${id}/select`, { indexes }),
+    exploreRender: (id, confirm) => post(`/api/studio/explore/${id}/render`, { confirm: !!confirm }),
+    exploreAdopt: (id, indexes) => post(`/api/studio/explore/${id}/adopt`, { indexes }),
+    imageModels: () => get('/api/studio/image-models'),
     assets: (params = {}) => {
       const q = new URLSearchParams();
       for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, v);

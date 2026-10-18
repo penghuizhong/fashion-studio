@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './icons.jsx';
+import ExploreModal from './ExploreModal.jsx';
 
 const DNA_FIELDS = [
   { key: 'category', label: '品类' },
@@ -491,6 +492,7 @@ export default function StudioView({ showToast }) {
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [exploreOpen, setExploreOpen] = useState(false);
   const [drawerId, setDrawerId] = useState(null);
   const [compare, setCompare] = useState(null);
   const [compareBusy, setCompareBusy] = useState(false);
@@ -537,9 +539,14 @@ export default function StudioView({ showToast }) {
     <div className="studio-view">
       <div className="studio-head">
         <h2>设计台</h2>
-        <button className="btn primary" onClick={() => setCloneOpen(true)}>
-          <Icon name="plus" size={16} /> 克隆第一款
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn secondary" onClick={() => setExploreOpen(true)}>
+            <Icon name="sparkles" size={16} /> 发散创建
+          </button>
+          <button className="btn primary" onClick={() => setCloneOpen(true)}>
+            <Icon name="plus" size={16} /> 克隆第一款
+          </button>
+        </div>
       </div>
       {loading ? (
         <div className="studio-loading"><div className="spinner" /><p>加载中…</p></div>
@@ -578,6 +585,9 @@ export default function StudioView({ showToast }) {
 
       {cloneOpen && (
         <CloneModal onClose={() => setCloneOpen(false)} onSaved={() => { setCloneOpen(false); load(); }} showToast={showToast} />
+      )}
+      {exploreOpen && (
+        <ExploreModal onClose={() => setExploreOpen(false)} onAdopt={() => { setExploreOpen(false); load(); }} showToast={showToast} />
       )}
       {drawerId && (
         <TemplateDrawer

@@ -144,9 +144,16 @@ async function downloadToBase64(url) {
 
 // ---------- 统一入口 ----------
 // 先验余额 → 生图 → 成功后按次扣积分；失败不扣
+// P4 回归用 1x1 占位 PNG（base64）
+const MOCK_PLACEHOLDER_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
 export async function generateImage({ userId, modelId, prompt, size, seed, sourceImageBase64 = null }) {
   const m = listImageModelsCompat(true).find((x) => x.id === modelId || x.model_id === modelId);
   if (!m) throw new Error('图片模型不存在或已停用');
+  // P4: mock 模式——保留模型存在性校验，跳过上游网络调用，不扣费（供回归）
+  if (getConfig().mockLlm) {
+    return { imageBase64: MOCK_PLACEHOLDER_PNG, seed: seed != null ? seed : 1, model: m.model_id, size, price: 0 };
+  }
   const creds = getProviderCreds(m.provider_id);
   const apiKey = creds && creds.apiKey;
   if (!apiKey) throw new Error('该图片模型未配置 Key');

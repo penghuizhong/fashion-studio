@@ -26,7 +26,8 @@ import {
   mountAuthRoutes,
   canUseJailbreak,
 } from './auth.js';
-import { mountStudioRoutes, runArchive } from './studio.js';
+import { mountStudioRoutes, runArchive, runExploreArchive } from './studio.js';
+import { mountExploreRoutes } from './explore.js';
 import {
   estimateTokens,
   DEFAULT_SOUL,
@@ -181,9 +182,10 @@ export function createApp() {
 
   mountAuthRoutes(app, authLimiter);
   mountStudioRoutes(app);
+  mountExploreRoutes(app);
   // v0.2.0: 记忆遗忘——启动归档一次，之后每天一次
-  try { runArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); }
-  setInterval(() => { try { runArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); } }, 24 * 3600 * 1000);
+  try { runArchive(); runExploreArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); }
+  setInterval(() => { try { runArchive(); runExploreArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); } }, 24 * 3600 * 1000);
 
   // user_id 隔离 helper：单用户模式（req.userId 为 null）时不加任何条件，原样查询
   const uidOf = (req) => (req && req.userId) || null;

@@ -254,6 +254,26 @@ CREATE TABLE IF NOT EXISTS dna_generations(
 );
 CREATE INDEX IF NOT EXISTS idx_dna_generations_tpl ON dna_generations(template_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dna_generations_user ON dna_generations(user_id, created_at DESC);
+-- ---- v0.2.1/P4: 发散创建——探索批次（灵感 → 候选 DNA → 渲染 → 收卡） ----
+CREATE TABLE IF NOT EXISTS exploration_batches(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  intent_text TEXT NOT NULL DEFAULT '',
+  axes_json TEXT NOT NULL DEFAULT '[]',
+  count INTEGER NOT NULL DEFAULT 6,
+  proposals_json TEXT NOT NULL DEFAULT '[]',
+  selected_json TEXT NOT NULL DEFAULT '[]',
+  render_model_id TEXT DEFAULT '',
+  render_size TEXT DEFAULT '',
+  renders_json TEXT NOT NULL DEFAULT '[]',
+  cost_estimate INTEGER DEFAULT 0,
+  cost_actual INTEGER DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'expanded',
+  archived INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_explore_user ON exploration_batches(user_id, updated_at DESC);
 -- ---- v0.2.0: 统一模型注册表（供应商 → 模型两层；替代 points_models / image_models / env 直读） ----
 CREATE TABLE IF NOT EXISTS providers(
   id TEXT PRIMARY KEY,

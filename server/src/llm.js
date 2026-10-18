@@ -204,7 +204,7 @@ throw last;
 }
 
 // 非流式调用的便捷封装：返回 { json, usage }（usage 可能为 null）
-async function postJson(opts) {
+export async function postJson(opts) {
 const res = await postCompletions({ ...opts, stream: false });
 const json = await res.json().catch(() => null);
 const usage = json && json.usage
@@ -369,7 +369,7 @@ return null;
 }
 }
 
-function stripFences(text) {
+export function stripFences(text) {
 return String(text)
 .replace(/^```(?:json)?\s*/i, '')
 .replace(/\s*```\s*$/, '')

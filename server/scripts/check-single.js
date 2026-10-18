@@ -695,4 +695,76 @@ export async function runSingle() {
     await req('DELETE', `/api/conversations/${gid}`);
     for (const c of [c1, c2]) await req('DELETE', `/api/characters/${c.json.id}`);
   }
+
+  // E1-E6. P4 发散创建（MOCK_LLM=true）
+  // 前置：单用户模式管理接口被 needMulti 拦截，直接写库建测试图片模型
+  {
+    const db = getDb();
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO providers(id,name,preset,kind,base_url,api_key_encrypted,is_default,is_active,sort_order,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run('prov_exptest', '探索测试供应商', 'custom', 'image', 'https://example.com/v1', '', 0, 1, 0, now);
+    db.prepare(`INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,sort_order,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run('model_exptest', 'prov_exptest', 'image', 'test/explore-img', '探索测试图', '{"per_call":5}', '{"sizes":["1:1"]}', 1, 0, now);
+
+    const FIELDS = ['category','silhouette','collar','sleeve','skirt','fabric','primary_color','secondary_color','style','details','scene'];
+
+    // E1. 发散：4 候选、11 字段齐全、轴上有差异、费用预估正确
+    const e1 = await req('POST', '/api/studio/explore', { axes: ['silhouette', 'fabric'], count: 4 });
+    const bid = e1.json && e1.json.id;
+    const props = (e1.json && e1.json.proposals) || [];
+    const fieldsOk = props.length === 4 && props.every((x) => x.dna && FIELDS.every((f) => x.dna[f] && 'value' in x.dna[f]));
+    const silVals = new Set(props.map((x) => x.dna.silhouette.value));
+    ok('E1. 发散创建：4 候选、11 字段齐全、发散轴有差异、预估 4×5=20',
+      e1.status === 200 && bid && fieldsOk && silVals.size > 1 && e1.json.cost_estimate === 20,
+      `status=${e1.status} fieldsOk=${fieldsOk} silVals=${silVals.size} estimate=${e1.json && e1.json.cost_estimate}`);
+
+    // E2. 非法入参
+    const e2a = await req('POST', '/api/studio/explore', { axes: ['not_a_field'], count: 4 });
+    const e2b = await req('POST', '/api/studio/explore', { axes: ['silhouette'], count: 20 });
+    ok('E2. 非法发散轴 → 400；count=20 → 400', e2a.status === 400 && e2b.status === 400, `a=${e2a.status} b=${e2b.status}`);
+
+    // E3. 文字筛选
+    const e3a = await req('POST', `/api/studio/explore/${bid}/select`, { indexes: [99] });
+    const e3b = await req('POST', `/api/studio/explore/${bid}/select`, { indexes: [0, 2] });
+    ok('E3. 选中越界 → 400；选 [0,2] → 200',
+      e3a.status === 400 && e3b.status === 200 && JSON.stringify(e3b.json.selected) === '[0,2]',
+      `a=${e3a.status} b=${e3b.status}`);
+
+    // E4. 渲染确认门 + mock 渲染
+    const e4a = await req('POST', `/api/studio/explore/${bid}/render`, {});
+    const e4b = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true });
+    const renders = (e4b.json && e4b.json.renders) || [];
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const filesOk = renders.length === 2 && renders.every((r) => r.image_path && fs.existsSync(path.join(process.env.DATA_DIR, r.image_path)));
+    ok('E4. 无 confirm → 400 带预估；confirm → 200，2 张渲染图落盘',
+      e4a.status === 400 && e4a.json && e4a.json.cost_estimate === 20 &&
+      e4b.status === 200 && filesOk,
+      `a=${e4a.status} b=${e4b.status} filesOk=${filesOk}`);
+
+    // E5. 收卡：模板 draft + 首图进 history
+    const e5 = await req('POST', `/api/studio/explore/${bid}/adopt`, { indexes: [0] });
+    const tid = e5.json && e5.json.template_ids && e5.json.template_ids[0];
+    const tpl = tid && db.prepare('SELECT * FROM style_dna_templates WHERE id=?').get(tid);
+    const gen = tid && db.prepare("SELECT * FROM dna_generations WHERE template_id=? AND op='explore'").get(tid);
+    ok('E5. 收卡：模板 draft、命名发散灵感、history 有 explore 记录',
+      e5.status === 200 && tpl && tpl.status === 'draft' && String(tpl.name).startsWith('发散灵感') && !!gen,
+      `status=${e5.status} tpl=${tpl && tpl.status} gen=${!!gen}`);
+
+    // E6. 归档：100 天前的批次被 runExploreArchive 归档
+    const { runExploreArchive } = await import('../src/studio.js');
+    db.prepare('UPDATE exploration_batches SET created_at=? WHERE id=?').run(new Date(Date.now() - 100 * 86400000).toISOString(), bid);
+    const arc = runExploreArchive();
+    const l1 = await req('GET', '/api/studio/explore');
+    const l2 = await req('GET', '/api/studio/explore?include_archived=1');
+    const inDefault = (l1.json.batches || []).some((x) => x.id === bid);
+    const inArchived = (l2.json.batches || []).some((x) => x.id === bid);
+    ok('E6. 归档：100 天前批次 archived，默认列表不可见、归档列表可见',
+      arc.by_age >= 1 && !inDefault && inArchived,
+      `by_age=${arc.by_age} inDefault=${inDefault} inArchived=${inArchived}`);
+
+    // 清理测试数据
+    db.prepare('DELETE FROM models WHERE id=?').run('model_exptest');
+    db.prepare('DELETE FROM providers WHERE id=?').run('prov_exptest');
+  }
 }
