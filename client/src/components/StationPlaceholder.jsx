@@ -4,11 +4,16 @@ import Icon from './icons.jsx';
 export default function StationPlaceholder({ icon, title, desc, onOpenSidebar }) {
   return (
     <div className="studio-view">
-      {onOpenSidebar && (
-        <button className="menu-btn icon-btn menu-btn-lg station-topbar-btn" title="打开侧边栏" onClick={onOpenSidebar}>
-          <Icon name="menu" size={22} />
-        </button>
-      )}
+      <div className="studio-head">
+        <div className="studio-head-left">
+          {onOpenSidebar && (
+            <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
+              <Icon name="menu" size={22} />
+            </button>
+          )}
+          <h2>{title}</h2>
+        </div>
+      </div>
       <div className="studio-empty">
         <Icon name={icon} size={40} />
         <p>{title}</p>
