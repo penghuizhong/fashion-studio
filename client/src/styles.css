@@ -2569,6 +2569,58 @@ textarea {
     flex-shrink: 0;
   }
 
+  /* 设计台 / 资产库 / 占位页：移动端全宽，头部变为吸顶导航栏（与发现页一致） */
+  .studio-view {
+    padding: 0 0 32px;
+    max-width: none;
+  }
+
+  .studio-head {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    margin-bottom: 14px;
+  }
+
+  .studio-head h2 {
+    font-size: 17px;
+  }
+
+  .studio-head-left {
+    gap: 10px;
+  }
+
+  .studio-head-actions {
+    gap: 6px;
+  }
+
+  .studio-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    padding: 0 16px;
+  }
+
+  .studio-empty {
+    padding: 64px 24px;
+  }
+
+  .studio-loading {
+    padding: 48px 16px;
+  }
+
+  .asset-filters {
+    padding: 0 16px;
+    margin-bottom: 12px;
+  }
+
+  .asset-pager {
+    margin-top: 16px;
+    padding: 0 16px;
+  }
+
   .main {
     position: relative;
   }
@@ -4321,10 +4373,11 @@ textarea {
 
 /* ============ 设计台 v0.1.0 ============ */
 .studio-view { padding: 24px 28px; max-width: 1200px; margin: 0 auto; position: relative; }
-/* 占位页汉堡按钮：移动端左上浮动（桌面端 .menu-btn 本来就是隐藏的） */
-.station-topbar-btn { position: absolute; top: 12px; left: 12px; }
 .studio-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .studio-head h2 { margin: 0; font-size: 20px; }
+/* 头部左：汉堡 + 标题；右：操作按钮组 */
+.studio-head-left { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.studio-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .studio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
 .studio-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; cursor: pointer; background: var(--bg); transition: transform .15s var(--ease), box-shadow .15s var(--ease); }
 .studio-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
