@@ -539,19 +539,21 @@ export default function StudioView({ showToast, onOpenSidebar }) {
   return (
     <div className="studio-view">
       <div className="studio-head">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <div className="studio-head-left">
           <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
             <Icon name="menu" size={22} />
           </button>
           <h2>设计台</h2>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn secondary" onClick={() => setExploreOpen(true)}>
-            <Icon name="sparkles" size={16} /> 发散创建
+        <div className="studio-head-actions">
+          <button className="btn secondary small" onClick={() => setExploreOpen(true)}>
+            <Icon name="sparkles" size={14} /> 发散创建
           </button>
-          <button className="btn primary" onClick={() => setCloneOpen(true)}>
-            <Icon name="plus" size={16} /> 克隆第一款
-          </button>
+          {templates.length > 0 && (
+            <button className="btn secondary small" onClick={() => setCloneOpen(true)}>
+              <Icon name="plus" size={14} /> 克隆第一款
+            </button>
+          )}
         </div>
       </div>
       {loading ? (
@@ -561,7 +563,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
           <Icon name="sparkles" size={40} />
           <p>还没有款式卡</p>
           <p className="dim">传一张趋势图，AI 提取款式 DNA，一键开始生产</p>
-          <button className="btn primary" onClick={() => setCloneOpen(true)}>
+          <button className="btn secondary" onClick={() => setCloneOpen(true)}>
             <Icon name="plus" size={16} /> 克隆第一款
           </button>
         </div>
