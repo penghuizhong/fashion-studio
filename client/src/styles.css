@@ -4320,7 +4320,9 @@ textarea {
 }
 
 /* ============ 设计台 v0.1.0 ============ */
-.studio-view { padding: 24px 28px; max-width: 1200px; margin: 0 auto; }
+.studio-view { padding: 24px 28px; max-width: 1200px; margin: 0 auto; position: relative; }
+/* 占位页汉堡按钮：移动端左上浮动（桌面端 .menu-btn 本来就是隐藏的） */
+.station-topbar-btn { position: absolute; top: 12px; left: 12px; }
 .studio-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .studio-head h2 { margin: 0; font-size: 20px; }
 .studio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
