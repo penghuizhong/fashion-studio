@@ -24,6 +24,9 @@ export default function Sidebar({
   onOpenSettingsModal,
   onOpenDiscover,
   onOpenStudio,
+  onOpenAssets,
+  onOpenSample,
+  onOpenPattern,
   onLogin,
   onToggleSidebar,
   onGoHome,
@@ -234,6 +237,24 @@ export default function Sidebar({
         onClick={onOpenStudio}
       >
         <Icon name="sparkles" size={18} /> 设计台
+      </button>
+      <button
+        className={`nav-row${view.type === 'assets' ? ' active' : ''}`}
+        onClick={onOpenAssets}
+      >
+        <Icon name="book" size={18} /> 资产库
+      </button>
+      <button
+        className={`nav-row${view.type === 'sample' ? ' active' : ''}`}
+        onClick={onOpenSample}
+      >
+        <Icon name="gift" size={18} /> 样衣台
+      </button>
+      <button
+        className={`nav-row${view.type === 'pattern' ? ' active' : ''}`}
+        onClick={onOpenPattern}
+      >
+        <Icon name="pencil" size={18} /> 制版台
       </button>
 
       {guest ? (

@@ -4,13 +4,15 @@ import ChatView from './components/ChatView.jsx';
 import DiscoverView from './components/DiscoverView.jsx';
 import HomeEmpty from './components/HomeEmpty.jsx';
 import StudioView from './components/StudioView.jsx';
+import AssetView from './components/AssetView.jsx';
+import StationPlaceholder from './components/StationPlaceholder.jsx';
 import CharacterSettingsModal from './components/CharacterSettingsModal.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import AuthPage from './components/AuthPage.jsx';
 import { useAuth } from './auth.jsx';
 import { api } from './api.js';
 
-// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'discover' } | { type: 'studio' }
+// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'discover' } | { type: 'studio' } | { type: 'assets' } | { type: 'sample' } | { type: 'pattern' }
 
 export default function App() {
   const { multiUser, user, authReady, logout } = useAuth();
@@ -159,6 +161,18 @@ export default function App() {
   }, []);
   const handleOpenStudio = useCallback(() => {
     setView({ type: 'studio' });
+    if (window.innerWidth <= 768) setSidebarOpen(false);
+  }, []);
+  const handleOpenAssets = useCallback(() => {
+    setView({ type: 'assets' });
+    if (window.innerWidth <= 768) setSidebarOpen(false);
+  }, []);
+  const handleOpenSample = useCallback(() => {
+    setView({ type: 'sample' });
+    if (window.innerWidth <= 768) setSidebarOpen(false);
+  }, []);
+  const handleOpenPattern = useCallback(() => {
+    setView({ type: 'pattern' });
     if (window.innerWidth <= 768) setSidebarOpen(false);
   }, []);
 
@@ -324,6 +338,9 @@ export default function App() {
         onConversationsChanged={bumpConversations}
         onOpenDiscover={handleOpenDiscover}
         onOpenStudio={handleOpenStudio}
+        onOpenAssets={handleOpenAssets}
+        onOpenSample={handleOpenSample}
+        onOpenPattern={handleOpenPattern}
         onLogin={() => {}}
         onToggleSidebar={toggleSidebar}
         onGoHome={() => setView({ type: 'empty' })}
@@ -377,6 +394,15 @@ export default function App() {
             showToast={showToast}
             onOpenSidebar={() => setSidebarOpen(true)}
           />
+        )}
+        {view.type === 'assets' && (
+          <AssetView showToast={showToast} />
+        )}
+        {view.type === 'sample' && (
+          <StationPlaceholder icon="gift" title="样衣台" desc="样衣管理即将上线，敬请期待" />
+        )}
+        {view.type === 'pattern' && (
+          <StationPlaceholder icon="pencil" title="制版台" desc="制版功能即将上线，敬请期待" />
         )}
         {view.type === 'empty' && (
           <HomeEmpty

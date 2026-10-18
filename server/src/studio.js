@@ -13,8 +13,25 @@ import {
 } from './image.js';
 import { calcPoints, deductPoints } from './points.js';
 
-export function mountStudioRoutes(app) {
+// v0.2.0: 记忆遗忘——归档 90 天前的变体；每模板只保留最新 50 条未归档
+export function runArchive() {
   const db = getDb();
+  const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
+  const r1 = db.prepare('UPDATE dna_generations SET archived=1 WHERE archived=0 AND created_at < ?').run(cutoff);
+  let n2 = 0;
+  const tplIds = db.prepare('SELECT DISTINCT template_id FROM dna_generations WHERE archived=0').all();
+  for (const { template_id } of tplIds) {
+    const ids = db.prepare('SELECT id FROM dna_generations WHERE template_id=? AND archived=0 ORDER BY id DESC LIMIT -1 OFFSET 50')
+      .all(template_id).map((r) => r.id);
+    if (ids.length) {
+      const ph = ids.map(() => '?').join(',');
+      n2 += db.prepare(`UPDATE dna_generations SET archived=1 WHERE id IN (${ph})`).run(...ids).changes;
+    }
+  }
+  return { by_age: r1.changes, by_count: n2 };
+}
+
+export function mountStudioRoutes(app) {  const db = getDb();
   const cfg = getConfig();
   const uidOf = (req) => (req && req.userId) || 'local';
   const requestApiKey = (req) => {
@@ -197,14 +214,17 @@ export function mountStudioRoutes(app) {
   }));
 
   // ---------- 历史与审美评价 ----------
-  // GET /api/studio/templates/:id/history
+  // GET /api/studio/templates/:id/history?include_archived=1
   app.get('/api/studio/templates/:id/history', ah(async (req, res) => {
     const t = getTemplate(req.params.id, req);
     if (!t) return res.status(404).json({ error: '模板不存在' });
     const uid = uidOf(req);
-    const rows = cfg.multiUser
-      ? db.prepare('SELECT * FROM dna_generations WHERE template_id=? AND user_id=? ORDER BY id DESC').all(t.id, uid)
-      : db.prepare('SELECT * FROM dna_generations WHERE template_id=? ORDER BY id DESC').all(t.id);
+    const inc = req.query && req.query.include_archived === '1';
+    const conds = ['template_id=?'];
+    const args = [t.id];
+    if (cfg.multiUser) { conds.push('user_id=?'); args.push(uid); }
+    if (!inc) conds.push('archived=0');
+    const rows = db.prepare(`SELECT * FROM dna_generations WHERE ${conds.join(' AND ')} ORDER BY id DESC`).all(...args);
     res.json({ ok: true, generations: rows });
   }));
 
@@ -227,6 +247,52 @@ export function mountStudioRoutes(app) {
       }
     }
     res.json({ ok: true });
+  }));
+
+  // ---------- 资产库 ----------
+  // GET /api/studio/assets?template_id=&rating=&page=&limit=
+  app.get('/api/studio/assets', ah(async (req, res) => {
+    const uid = uidOf(req);
+    const { template_id, rating, page, limit } = req.query || {};
+    const lim = Math.min(Math.max(parseInt(limit, 10) || 48, 1), 200);
+    const pg = Math.max(parseInt(page, 10) || 1, 1);
+    const conds = [];
+    const args = [];
+    if (cfg.multiUser) { conds.push('g.user_id = ?'); args.push(uid); }
+    if (template_id) { conds.push('g.template_id = ?'); args.push(template_id); }
+    if (rating === 'liked') conds.push("g.user_rating = 'liked'");
+    else if (rating === 'deleted') conds.push("g.user_rating = 'deleted'");
+    else if (rating === 'unrated') conds.push("(g.user_rating IS NULL OR g.user_rating = '')");
+    conds.push('g.archived=0');
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+    const total = db.prepare(`SELECT COUNT(*) AS c FROM dna_generations g ${where}`).get(...args).c;
+    const rows = db.prepare(
+      `SELECT g.*, t.name AS template_name FROM dna_generations g LEFT JOIN style_dna_templates t ON t.id = g.template_id
+       ${where} ORDER BY g.id DESC LIMIT ? OFFSET ?`).all(...args, lim, (pg - 1) * lim);
+    res.json({ ok: true, total, page: pg, limit: lim, assets: rows });
+  }));
+
+  // POST /api/studio/assets/bulk-delete { ids: [] }（≤200）
+  app.post('/api/studio/assets/bulk-delete', ah(async (req, res) => {
+    const uid = uidOf(req);
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200) return res.status(400).json({ error: 'ids 非法（1-200）' });
+    const now = new Date().toISOString();
+    let n = 0;
+    for (const id of ids) {
+      const g = cfg.multiUser
+        ? db.prepare('SELECT * FROM dna_generations WHERE id=? AND user_id=?').get(id, uid)
+        : db.prepare('SELECT * FROM dna_generations WHERE id=?').get(id);
+      if (!g) continue;
+      db.prepare("UPDATE dna_generations SET user_rating='deleted', rated_at=? WHERE id=?").run(now, g.id);
+      for (const p of [g.image_path, g.thumb_path]) {
+        if (!p) continue;
+        const abs = path.join(cfg.dataDir || './data', p);
+        try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch { /* 忽略 */ }
+      }
+      n++;
+    }
+    res.json({ ok: true, deleted: n });
   }));
 
   // ---------- 管理员：图片模型上架 ----------

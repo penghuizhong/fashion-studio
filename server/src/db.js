@@ -275,6 +275,7 @@ CREATE TABLE IF NOT EXISTS dna_generations(
   op TEXT NOT NULL DEFAULT 'create',
   user_rating TEXT DEFAULT '',
   rated_at TEXT DEFAULT '',
+  archived INTEGER DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_dna_generations_tpl ON dna_generations(template_id, created_at DESC);
@@ -327,6 +328,9 @@ export function getDb() {
     if (!userCols.includes('points_balance')) _db.exec('ALTER TABLE users ADD COLUMN points_balance INTEGER DEFAULT 0');
     if (!userCols.includes('billing_mode')) _db.exec("ALTER TABLE users ADD COLUMN billing_mode TEXT DEFAULT 'points'");
     if (!userCols.includes('is_admin')) _db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
+    // v0.2.0: 设计台记忆遗忘——dna_generations 加 archived 列（老库自动补）
+    const genCols = _db.prepare('PRAGMA table_info(dna_generations)').all().map((c) => c.name);
+    if (!genCols.includes('archived')) _db.exec('ALTER TABLE dna_generations ADD COLUMN archived INTEGER DEFAULT 0');
     // v1.18.1: 破限白名单——只有管理员授权的用户可用破限模式（默认关闭）
     if (!userCols.includes('jailbreak_allowed')) _db.exec('ALTER TABLE users ADD COLUMN jailbreak_allowed INTEGER DEFAULT 0');
     // v1.18.1: 老用户 grandfather——已有角色开着破限的，自动授权，不影响现有体验

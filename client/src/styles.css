@@ -4458,3 +4458,14 @@ select.text-input { cursor: pointer; }
 .studio-compare-pane { position: relative; }
 .studio-compare-pane img { width: 100%; border-radius: 8px; }
 .pane-tag { position: absolute; top: 8px; left: 8px; font-size: 11px; padding: 3px 8px; border-radius: 12px; background: var(--toast-bg); color: var(--toast-text); }
+
+/* ============ 资产库 v0.2.0 ============ */
+.asset-filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+.asset-card .studio-card-cover { cursor: pointer; }
+.asset-check { position: absolute; top: 8px; left: 8px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; background: rgba(0,0,0,.4); color: #fff; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.asset-check.on { background: var(--accent); border-color: var(--accent); }
+.asset-pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 20px; }
+.asset-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+.asset-detail img { width: 100%; border-radius: 8px; }
+.asset-meta { font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
+.asset-meta .dim { color: var(--text-secondary); font-size: 12px; word-break: break-all; }

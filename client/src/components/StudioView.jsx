@@ -230,17 +230,18 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
   const [quickVal, setQuickVal] = useState('');
   const [batching, setBatching] = useState(false);
   const [batchStep, setBatchStep] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [td, h] = await Promise.all([api.studio.getTemplate(templateId), api.studio.history(templateId)]);
+      const [td, h] = await Promise.all([api.studio.getTemplate(templateId), api.studio.history(templateId, showArchived)]);
       setT(td.template);
       setDna(JSON.parse(td.template.dna_json || '{}'));
       setHistory(h.generations || []);
     } catch (e) {
       showToast(e.message || '加载失败');
     }
-  }, [templateId, showToast]);
+  }, [templateId, showArchived, showToast]);
   useEffect(() => { load(); }, [load]);
 
   const refresh = useCallback(async () => { await load(); onChanged(); }, [load, onChanged]);
@@ -455,7 +456,12 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
         </div>
 
         <div className="drawer-sec">
-          <div className="drawer-sec-title">历史（{history.length}）</div>
+          <div className="drawer-sec-title">
+            历史（{history.length}）
+            <button className="btn secondary small" style={{ marginLeft: 8 }} onClick={() => setShowArchived((v) => !v)}>
+              {showArchived ? '隐藏归档' : '查看归档'}
+            </button>
+          </div>
           <div className="studio-history">
             {history.length === 0 && <div className="sidebar-hint">还没有生成记录</div>}
             {history.map((g) => (

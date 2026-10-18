@@ -398,8 +398,15 @@ export const api = {
     unfinalize: (id) => post(`/api/studio/templates/${id}/unfinalize`, {}),
     generate: (id, data) => post(`/api/studio/templates/${id}/generate`, data),
     variant: (id, data) => post(`/api/studio/templates/${id}/variant`, data),
-    history: (id) => get(`/api/studio/templates/${id}/history`),
+    history: (id, includeArchived) => get(`/api/studio/templates/${id}/history${includeArchived ? '?include_archived=1' : ''}`),
     rate: (genId, rating) => post(`/api/studio/generations/${genId}/rate`, { rating }),
+    assets: (params = {}) => {
+      const q = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, v);
+      const s = q.toString();
+      return get(`/api/studio/assets${s ? `?${s}` : ''}`);
+    },
+    bulkDelete: (ids) => post('/api/studio/assets/bulk-delete', { ids }),
   },
   adminImageModels: {
     list: () => get('/api/admin/image-models'),
