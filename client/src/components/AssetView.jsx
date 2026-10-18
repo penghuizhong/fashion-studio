@@ -59,7 +59,7 @@ function AssetDetail({ asset, onClose, onChanged, showToast }) {
   );
 }
 
-export default function AssetView({ showToast }) {
+export default function AssetView({ showToast, onOpenSidebar }) {
   const [assets, setAssets] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -113,7 +113,12 @@ export default function AssetView({ showToast }) {
   return (
     <div className="studio-view">
       <div className="studio-head">
-        <h2>资产库 <span className="dim" style={{ fontSize: 13, fontWeight: 400 }}>共 {total} 张</span></h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
+            <Icon name="menu" size={22} />
+          </button>
+          <h2>资产库 <span className="dim" style={{ fontSize: 13, fontWeight: 400 }}>共 {total} 张</span></h2>
+        </div>
         {selected.length > 0 && (
           <button className="btn danger" disabled={busy} onClick={bulkDelete}>
             删除选中（{selected.length}）
