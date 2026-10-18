@@ -396,13 +396,13 @@ export default function App() {
           />
         )}
         {view.type === 'assets' && (
-          <AssetView showToast={showToast} />
+          <AssetView showToast={showToast} onOpenSidebar={() => setSidebarOpen(true)} />
         )}
         {view.type === 'sample' && (
-          <StationPlaceholder icon="gift" title="样衣台" desc="样衣管理即将上线，敬请期待" />
+          <StationPlaceholder icon="gift" title="样衣台" desc="样衣管理即将上线，敬请期待" onOpenSidebar={() => setSidebarOpen(true)} />
         )}
         {view.type === 'pattern' && (
-          <StationPlaceholder icon="pencil" title="制版台" desc="制版功能即将上线，敬请期待" />
+          <StationPlaceholder icon="pencil" title="制版台" desc="制版功能即将上线，敬请期待" onOpenSidebar={() => setSidebarOpen(true)} />
         )}
         {view.type === 'empty' && (
           <HomeEmpty
