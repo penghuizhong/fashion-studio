@@ -113,7 +113,7 @@ export default function AssetView({ showToast, onOpenSidebar }) {
   return (
     <div className="studio-view">
       <div className="studio-head">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <div className="studio-head-left">
           <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
             <Icon name="menu" size={22} />
           </button>
