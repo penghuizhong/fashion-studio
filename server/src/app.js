@@ -56,8 +56,6 @@ import {
   recordByokUsage,
   getBalance,
 } from './points.js';
-// v1.26.0: 语音功能
-import { getVoiceProvider, extractDialogue, splitSentences, cleanForTts, VOICE_MODELS, VOICE_PRICING, calcAsrPoints, calcTtsPoints, getCachedAudio, setCachedAudio, getVoiceModel, detectAudioMime, isVoiceEnabled } from './voice.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
 const FILE_FIELDS = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
@@ -221,18 +219,6 @@ export function createApp() {
     }
     return true;
   };
-  // v1.28.1: 音色归属校验——UUID 格式视为定制音色 id，必须是自己的；内置音色名直接放行
-  // 返回 { voiceId } 或 { error }
-  const resolveVoiceId = (voice_id, req) => {
-    const v = String(voice_id || '').trim();
-    if (!v) return { voiceId: null };
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-    if (!isUuid) return { voiceId: v }; // 内置音色名
-    const uid = uidOf(req) || 'local';
-    const ok = db.prepare('SELECT 1 FROM custom_voices WHERE id = ? AND user_id = ?').get(v, uid);
-    if (!ok) return { error: '该定制音色不存在' };
-    return { voiceId: v };
-  };
   const char404 = (res) => res.status(404).json({ error: '角色不存在' });
   const conv404 = (res) => res.status(404).json({ error: '对话不存在' });
 
@@ -347,8 +333,6 @@ export function createApp() {
       points_enabled: !!cfg.multiUser,
       platform_ready: !!cfg.apiKey,
       points_models: cfg.multiUser ? listPointsModels(true) : [],
-      // v1.29.18: 语音总开关（前端据此隐藏语音 UI）
-      voice_enabled: isVoiceEnabled(),
     });
   });
 
@@ -1024,16 +1008,12 @@ export function createApp() {
   app.post('/api/characters', (req, res) => {
     // v1.16.0: 新建角色弹窗改版，支持 soul_md / user_md / roleplay_mode
     // v1.16.4: 支持 roleplay_prompt（空=用内置模板）
-    // v1.26.0: 支持 voice_id（音色）
-    const { name, avatar, temperature, soul_md, user_md, roleplay_mode, roleplay_prompt, jailbreak_preset, voice_id } = req.body || {};
+    const { name, avatar, temperature, soul_md, user_md, roleplay_mode, roleplay_prompt, jailbreak_preset } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'name 不能为空' });
     // v1.18.1: 破限白名单——无权限用户不能建开着破限的角色
     if (jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] && !canUseJailbreak(uidOf(req))) {
       return res.status(403).json({ error: '破限模式需管理员授权' });
     }
-    // v1.28.1: 音色归属校验（UUID 视为定制音色，必须是自己的）
-    const vv = resolveVoiceId(voice_id, req);
-    if (vv.error) return res.status(400).json({ error: vv.error });
     const id = randomUUID();
     const t = now();
     const row = {
@@ -1049,12 +1029,11 @@ export function createApp() {
       roleplay_mode: roleplay_mode ? 1 : 0,
       roleplay_prompt: roleplay_prompt && String(roleplay_prompt).trim() ? String(roleplay_prompt).trim() : null,
       jailbreak_preset: jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] ? jailbreak_preset : null,
-      voice_id: vv.voiceId, // v1.26.0; v1.28.1: 已做归属校验
       created_at: t,
       updated_at: t,
     };
     db.prepare(
-      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,roleplay_mode,roleplay_prompt,jailbreak_preset,voice_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+      'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,roleplay_mode,roleplay_prompt,jailbreak_preset,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
     ).run(
       row.id,
       row.user_id,
@@ -1068,7 +1047,6 @@ export function createApp() {
       row.roleplay_mode,
       row.roleplay_prompt,
       row.jailbreak_preset,
-      row.voice_id,
       row.created_at,
       row.updated_at
     );
@@ -1084,16 +1062,10 @@ export function createApp() {
   app.put('/api/characters/:id', (req, res) => {
     const c = getChar(req.params.id, req);
     if (!c) return char404(res);
-    const { name, avatar, temperature, roleplay_mode, roleplay_prompt, jailbreak_preset, voice_id } = req.body || {};
+    const { name, avatar, temperature, roleplay_mode, roleplay_prompt, jailbreak_preset } = req.body || {};
     // v1.18.1: 破限白名单——无权限用户不能开启破限（关闭永远允许）
     if (jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset] && !canUseJailbreak(uidOf(req))) {
       return res.status(403).json({ error: '破限模式需管理员授权' });
-    }
-    // v1.28.1: 音色归属校验（仅当传入了 voice_id 才校验；undefined=保持原值）
-    let vv = { voiceId: c.voice_id || null };
-    if (voice_id !== undefined) {
-      vv = resolveVoiceId(voice_id, req);
-      if (vv.error) return res.status(400).json({ error: vv.error });
     }
     const next = {
       name: name !== undefined ? String(name).trim() : c.name,
@@ -1115,13 +1087,11 @@ export function createApp() {
           : jailbreak_preset && JAILBREAK_PRESETS[jailbreak_preset]
             ? jailbreak_preset
             : null,
-      // v1.26.0: 音色（null=跟随全局默认）；v1.28.1: 已做归属校验
-      voice_id: vv.voiceId,
       updated_at: now(),
     };
     if (!next.name) return res.status(400).json({ error: 'name 不能为空' });
     db.prepare(
-      'UPDATE characters SET name=?, avatar=?, model=?, temperature=?, roleplay_mode=?, roleplay_prompt=?, jailbreak_preset=?, voice_id=?, updated_at=? WHERE id=?'
+      'UPDATE characters SET name=?, avatar=?, model=?, temperature=?, roleplay_mode=?, roleplay_prompt=?, jailbreak_preset=?, updated_at=? WHERE id=?'
     ).run(
       next.name,
       next.avatar,
@@ -1130,7 +1100,6 @@ export function createApp() {
       next.roleplay_mode,
       next.roleplay_prompt,
       next.jailbreak_preset,
-      next.voice_id,
       next.updated_at,
       c.id
     );
@@ -2160,591 +2129,6 @@ export function createApp() {
     } finally {
       clearInterval(kaTimer);
       res.end();
-    }
-  }));
-
-  // ---------- v1.26.0: 语音接口 ----------
-  // 语音积分模式判断（多用户 + billing_mode=points）
-  const isVoicePointsMode = (req) => {
-    const cfg = getConfig();
-    const uid = (req && req.userId) || null;
-    if (!cfg.multiUser || !uid) return null;
-    try {
-      const u = db.prepare('SELECT billing_mode FROM users WHERE id = ?').get(uid);
-      if (u && (u.billing_mode || 'points') === 'points') return uid;
-    } catch {}
-    return null;
-  };
-  // v1.29.17: 语音独立计费——多用户模式下语音永远扣积分（不限聊天计费模式），防 API 模式白嫖
-  const getVoiceBillUid = (req) => {
-    const cfg = getConfig();
-    const uid = (req && req.userId) || null;
-    if (!cfg.multiUser || !uid) return null; // 单用户模式：管理员自用，不计费
-    return uid;
-  };
-  // v1.29.17: 语音接口统一前置检查（总开关 + 积分余额）
-  const checkVoiceAccess = (req, res, needPoints = 0) => {
-    if (!isVoiceEnabled()) {
-      res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
-      return false;
-    }
-    const billUid = getVoiceBillUid(req);
-    if (billUid && needPoints > 0) {
-      try {
-        const bal = getBalance(billUid);
-        if (bal < needPoints) {
-          res.status(402).json({ error: `积分不足（需要 ${needPoints} 积分，当前 ${bal}）` });
-          return false;
-        }
-      } catch {}
-    }
-    return true;
-  };
-
-  // ASR: 音频(base64) → 文字（积分模式按时长扣费）
-  app.post('/api/voice/asr', chatLimiter, ah(async (req, res) => {
-    // v1.29.17: 语音总开关
-    if (!isVoiceEnabled()) return res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
-    const { audio, mimeType } = req.body || {};
-    if (!audio) return res.status(400).json({ error: 'audio 不能为空' });
-    const buf = Buffer.from(audio, 'base64');
-    if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ error: '音频过大（>10MB）' });
-    const provider = getVoiceProvider();
-    const r = await provider.asr(buf, { mimeType });
-    // v1.29.17: 语音独立计费——多用户模式下永远扣积分
-    const asrBillUid = getVoiceBillUid(req);
-    if (asrBillUid) {
-      const pts = calcAsrPoints(r.duration);
-      if (pts > 0) {
-        try {
-          const bal = getBalance(asrBillUid);
-          if (bal < pts) return res.status(402).json({ error: `积分不足（语音识别需要 ${pts} 积分，当前余额 ${bal}）` });
-        } catch {}
-        try { deductPoints(asrBillUid, pts, 'voice_asr', null, null, { duration: r.duration }); }
-        catch (e) { console.warn('[voice] ASR 扣费失败:', e.message); }
-      }
-    }
-    res.json({ text: r.text, duration: r.duration });
-  }));
-
-  // TTS: 文字 → 音频(base64 mp3)（积分模式按字符扣费，余额低自动降级 flash）
-  // 只合成对白部分；无对白返回 { skipped: true }
-  app.post('/api/voice/tts', chatLimiter, ah(async (req, res) => {
-    // v1.29.17: 语音总开关
-    if (!isVoiceEnabled()) return res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
-    const { text, voice, speed, forceAll } = req.body || {};
-    if (!text || !String(text).trim()) return res.status(400).json({ error: 'text 不能为空' });
-    let speakText = String(text);
-    if (!forceAll) {
-      const dialogues = extractDialogue(speakText);
-      if (!dialogues || !dialogues.length) {
-        return res.json({ skipped: true, reason: 'no_dialogue' });
-      }
-      speakText = dialogues.join(' ');
-    } else {
-      speakText = cleanForTts(speakText);
-    }
-    // 兜底：超长截断前 500 字
-    const chars = [...speakText];
-    if (chars.length > 500) speakText = chars.slice(0, 500).join('');
-    // v1.26.0: 余额低自动降级 flash
-    const ttsUid = isVoicePointsMode(req);
-    // v1.26.1: TTS 模型从配置读取（管理员可在模型管理 tab 指定）
-    let model = getVoiceModel('tts');
-    if (ttsUid) {
-      try {
-        const bal = getBalance(ttsUid);
-        if (bal < VOICE_PRICING.downgradeThreshold) model = VOICE_MODELS.tts.flash;
-      } catch {}
-    }
-    // v1.26.0: 解析定制音色（voice 参数可能是 custom_voices.id）
-    let actualVoice = voice || 'Cherry';
-    let ttsModel = model;
-    if (ttsUid) {
-      try {
-        const cv = getDb().prepare('SELECT voice_id FROM custom_voices WHERE id = ? AND user_id = ?').get(voice, ttsUid);
-        if (cv) {
-          actualVoice = cv.voice_id;
-          ttsModel = getVoiceModel('design'); // v1.26.1: 定制音色用配置的 VD 模型
-        }
-      } catch {}
-    }
-    // v1.29.0: 系统内置克隆音色走 VC 模型（须与克隆时 target_model 一致，否则合成失败）
-    try {
-      const bv = getDb().prepare('SELECT target_model FROM builtin_voices WHERE voice_id = ?').get(actualVoice);
-      if (bv) ttsModel = bv.target_model || getVoiceModel('vc');
-    } catch {}
-    const provider = getVoiceProvider();
-    // v1.26.0: 查音频缓存（命中则不扣费）；v1.28.1: 按用户隔离缓存键
-    const cacheUid = ttsUid || uidOf(req) || 'local';
-    const cached = getCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel, cacheUid);
-    let audioBuf, billChars;
-    if (cached) {
-      audioBuf = cached;
-      billChars = [...speakText].reduce((n, ch) => n + (ch.codePointAt(0) > 0xff ? 2 : 1), 0);
-    } else {
-      try {
-        const r = await provider.tts(speakText, { model: ttsModel, voice: actualVoice, speed });
-        audioBuf = r.audio;
-        billChars = r.chars;
-        setCachedAudio(speakText, actualVoice, speed || 1.0, ttsModel, audioBuf, cacheUid);
-      } catch (e) {
-        // v1.29.7: 管理员试听时透传上游真实报错，便于定位（普通用户仍走脱敏 500）
-        try {
-          const u = uidOf(req);
-          const isAdmin = u && getDb().prepare('SELECT is_admin FROM users WHERE id = ?').get(u)?.is_admin;
-          if (isAdmin) {
-            const err = new Error(String((e && e.message) || 'TTS 失败'));
-            err.statusCode = 400;
-            throw err;
-          }
-        } catch (e2) { if (e2 && e2.statusCode === 400) throw e2; }
-        throw e;
-      }
-    }
-    // v1.29.17: 语音独立计费——多用户模式下永远扣积分（不限聊天计费模式）；缓存命中不扣
-    const voiceBillUid = getVoiceBillUid(req);
-    if (voiceBillUid && !cached) {
-      const pts = calcTtsPoints(billChars);
-      if (pts > 0) {
-        // 余额不足时明确提示（不静默失败）
-        try {
-          const bal = getBalance(voiceBillUid);
-          if (bal < pts) {
-            return res.status(402).json({ error: `积分不足（语音合成需要 ${pts} 积分，当前余额 ${bal}）` });
-          }
-        } catch {}
-        try { deductPoints(voiceBillUid, pts, 'voice_tts', null, null, { chars: billChars, model: ttsModel }); }
-        catch (e) { console.warn('[voice] TTS 扣费失败:', e.message); }
-      }
-    }
-    // v1.29.12: 存临时文件，返回 URL（替代 base64 data URL）
-    cleanupTtsTmp();
-    const ttsMime = detectAudioMime(audioBuf);
-    const ttsExt = ttsMime === 'audio/wav' ? 'wav' : ttsMime === 'audio/ogg' ? 'ogg' : 'mp3';
-    const ttsId = ttsTmpId();
-    try {
-      fs.writeFileSync(path.join(ttsTmpDir(), `${ttsId}.${ttsExt}`), audioBuf);
-    } catch (e) {
-      console.warn('[voice] TTS 临时文件写入失败:', e.message);
-    }
-    res.json({
-      audioUrl: `/api/voice/tts-audio/${ttsId}`,
-      mime: ttsMime,
-      chars: billChars,
-      text: speakText,
-      model: ttsModel,
-      cached: !!cached,
-    });
-  }));
-
-  // ---------- v1.26.0: 定制音色 ----------
-  // 声音设计：文本描述 → 定制音色（0.2元/次 = 20积分）
-  app.post('/api/voice/design', chatLimiter, ah(async (req, res) => {
-    // v1.29.17: 语音总开关
-    if (!isVoiceEnabled()) return res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
-    const { prompt, name, previewText } = req.body || {};
-    if (!prompt || !String(prompt).trim()) return res.status(400).json({ error: '请描述想要的音色' });
-    if (!name || !String(name).trim()) return res.status(400).json({ error: '请给音色起个名字' });
-    const cleanName = String(name).trim().replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '').slice(0, 16);
-    if (!cleanName) return res.status(400).json({ error: '名字只支持中文/字母/数字/下划线' });
-
-    const uid = (req && req.userId) || "local"; // v1.28.1: 单用户模式用固定哨兵，避免 NULL 违反 NOT NULL/查不到
-    // 检查重名
-    const exists = db.prepare('SELECT id FROM custom_voices WHERE user_id = ? AND name = ?').get(uid, cleanName);
-    if (exists) return res.status(400).json({ error: '已有同名音色' });
-
-    const provider = getVoiceProvider();
-    const r = await provider.designVoice({
-      prompt: String(prompt).trim().slice(0, 500),
-      previewText: String(previewText || '你好，很高兴认识你。').slice(0, 100),
-      name: `soulchat_${uid ? uid.slice(0, 8) : 'anon'}_${Date.now()}`,
-      language: 'zh',
-    });
-    if (!r.voiceId) return res.status(500).json({ error: '音色生成失败' });
-
-    // 落库
-    const id = randomUUID();
-    db.prepare(
-      'INSERT INTO custom_voices(id, user_id, voice_id, name, prompt, created_at) VALUES(?,?,?,?,?,?)'
-    ).run(id, uid, r.voiceId, cleanName, String(prompt).trim().slice(0, 500), new Date().toISOString());
-
-    // 积分模式扣 20 积分（0.2元）
-    if (uid) {
-      try {
-        const u = db.prepare('SELECT billing_mode FROM users WHERE id = ?').get(uid);
-        if (u && (u.billing_mode || 'points') === 'points') {
-          deductPoints(uid, 20, 'voice_design', 'custom_voice', id, { name: cleanName });
-        }
-      } catch (e) {
-        console.warn('[voice] 定制音色扣费失败:', e.message);
-      }
-    }
-
-    res.json({
-      id,
-      voice_id: r.voiceId,
-      name: cleanName,
-      preview_audio: r.previewAudio,
-    });
-  }));
-
-  // v1.27.0: 音色克隆 POST /api/voice/clone { audio(base64), name, mimeType }
-  // 上传参考音频（15-60秒）→ 克隆音色 → 返回 voice_id
-  app.post('/api/voice/clone', chatLimiter, ah(async (req, res) => {
-    // v1.29.17: 语音总开关
-    if (!isVoiceEnabled()) return res.status(403).json({ error: '语音功能已关闭，请联系管理员' });
-    const { audio, name, mimeType } = req.body || {};
-    if (!audio || typeof audio !== 'string') return res.status(400).json({ error: '请上传音频文件' });
-    if (!name || !String(name).trim()) return res.status(400).json({ error: '请给音色起个名字' });
-    const cleanName = String(name).trim().replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '').slice(0, 16);
-    if (!cleanName) return res.status(400).json({ error: '名字只支持中文/字母/数字/下划线' });
-
-    // base64 解码，限制 10MB
-    let audioBuffer;
-    try {
-      audioBuffer = Buffer.from(audio, 'base64');
-    } catch {
-      return res.status(400).json({ error: '音频数据无效' });
-    }
-    if (audioBuffer.length > 10 * 1024 * 1024) {
-      return res.status(400).json({ error: '音频文件过大（限 10MB）' });
-    }
-    if (audioBuffer.length < 1024) {
-      return res.status(400).json({ error: '音频文件过小' });
-    }
-
-    const uid = (req && req.userId) || "local"; // v1.28.1: 单用户模式用固定哨兵，避免 NULL 违反 NOT NULL/查不到
-    const exists = db.prepare('SELECT id FROM custom_voices WHERE user_id = ? AND name = ?').get(uid, cleanName);
-    if (exists) return res.status(400).json({ error: '已有同名音色' });
-
-    const provider = getVoiceProvider();
-    const r = await provider.cloneVoice(audioBuffer, {
-      name: `soulchat_${uid ? uid.slice(0, 8) : 'anon'}_${Date.now()}`,
-      mimeType: mimeType || 'audio/wav',
-    });
-    if (!r.voiceId) return res.status(500).json({ error: '音色克隆失败' });
-
-    const id = randomUUID();
-    db.prepare(
-      'INSERT INTO custom_voices(id, user_id, voice_id, name, prompt, created_at) VALUES(?,?,?,?,?,?)'
-    ).run(id, uid, r.voiceId, cleanName, '[克隆] 音频文件克隆', new Date().toISOString());
-
-    // 积分模式扣 20 积分（同文本设计）
-    if (uid) {
-      try {
-        const u = db.prepare('SELECT billing_mode FROM users WHERE id = ?').get(uid);
-        if (u && (u.billing_mode || 'points') === 'points') {
-          deductPoints(uid, 20, 'voice_design', 'custom_voice', id, { name: cleanName, type: 'clone' });
-        }
-      } catch (e) {
-        console.warn('[voice] 克隆音色扣费失败:', e.message);
-      }
-    }
-
-    res.json({ id, voice_id: r.voiceId, name: cleanName });
-  }));
-
-  // 我的定制音色列表
-  app.get('/api/voice/custom', ah(async (req, res) => {
-    const uid = (req && req.userId) || "local"; // v1.28.1: 单用户模式用固定哨兵，避免 NULL 违反 NOT NULL/查不到
-    const rows = getDb()
-      .prepare('SELECT id, voice_id, name, prompt, created_at FROM custom_voices WHERE user_id = ? ORDER BY created_at DESC')
-      .all(uid);
-    res.json(rows);
-  }));
-
-  // 删除定制音色
-  app.delete('/api/voice/custom/:id', ah(async (req, res) => {
-    const uid = (req && req.userId) || "local"; // v1.28.1: 单用户模式用固定哨兵，避免 NULL 违反 NOT NULL/查不到
-    const r = getDb().prepare('DELETE FROM custom_voices WHERE id = ? AND user_id = ?').run(req.params.id, uid);
-    if (!r.changes) return res.status(404).json({ error: '未找到' });
-    // 把用了该音色的角色重置为 null（跟随全局）；v1.28.1: 补 user_id 隔离
-    try {
-      const uCond = uid ? 'AND user_id = ?' : '';
-      const uArgs = uid ? [uid] : [];
-      getDb().prepare(`UPDATE characters SET voice_id = NULL WHERE voice_id = ? ${uCond}`.trim()).run(req.params.id, ...uArgs);
-    } catch {}
-    res.json({ ok: true });
-  }));
-
-  // ---------- v1.29.0: 系统内置克隆音色（管理员批量克隆上传） ----------
-  // 内置音色元数据：按名字自动匹配人设/描述/试听文案
-  const BUILTIN_VOICE_META = {
-    '芊悦': { gender: '女', description: '阳光女声', preview: '你好呀！我是芊悦，今天也是元气满满的一天呢，一起加油吧！' },
-    '苏瑶': { gender: '女', description: '温柔女声', preview: '你好，我是苏瑶，很高兴能在这里与你相遇。' },
-    '千雪': { gender: '女', description: '二次元女友', preview: '呐呐，你终于来啦！人家等你好久了呢！' },
-    '萌宝': { gender: '女', description: '可爱小女孩', preview: '大哥哥大姐姐好！我是萌宝，今年五岁啦！' },
-    '茉兔': { gender: '女', description: '俏皮可爱', preview: '嘿嘿，抓到你啦！我是茉兔，古灵精怪第一名！' },
-    '十三': { gender: '女', description: '酷飒微辣', preview: '哟，来了？我是十三，有事说事，别磨磨唧唧的。' },
-    '卡捷琳娜': { gender: '女', description: '成熟有气场', preview: '晚上好，我是卡捷琳娜，很高兴认识你。' },
-    '晨煦': { gender: '男', description: '阳光男声', preview: '嘿！我是晨煦，要不要一起去冒险？' },
-    '月白': { gender: '男', description: '潇洒帅气', preview: '月色真美，我是月白。今晚的风很温柔，你也是。' },
-    '凯': { gender: '男', description: '治愈系男声', preview: '你好呀，我是凯，累了就歇一会儿，我在这里陪着你。' },
-    '不吃鱼': { gender: '男', description: '设计师男声', preview: '你好，我是不吃鱼。设计和生活一样，都需要一点不将就的态度。' },
-    '甜茶': { gender: '男', description: '戏剧张力男声', preview: '命运的齿轮开始转动，我是甜茶，准备好迎接这场大戏了吗？' },
-  };
-
-  // 批量克隆任务（内存 job；管理员一次性操作，重启丢失可重跑）
-  const batchCloneJobs = new Map();
-  // v1.29.6: 内置音色参考音频存盘目录（供“试听原音”）
-  function builtinRefDir() {
-    const d = path.join(getConfig().dataDir, 'builtin_voice_refs');
-    try { fs.mkdirSync(d, { recursive: true }); } catch {}
-    return d;
-  }
-  function refAudioExt(mimeType) {
-    const m = String(mimeType || '').toLowerCase();
-    if (m.includes('mp3') || m.includes('mpeg')) return '.mp3';
-    if (m.includes('m4a') || m.includes('mp4')) return '.m4a';
-    return '.wav';
-  }
-  function refAudioPath(name) {
-    // 按音色名找参考音频（兼容 wav/mp3/m4a）
-    const dir = builtinRefDir();
-    for (const ext of ['.wav', '.mp3', '.m4a']) {
-      const p = path.join(dir, name + ext);
-      try { if (fs.existsSync(p)) return p; } catch {}
-    }
-    return null;
-  }
-
-  // 公开：系统内置音色列表（前端音色选择器优先展示；为空则用前端硬编码旧列表）
-  app.get('/api/voice/builtin', ah(async (req, res) => {
-    const rows = getDb()
-      .prepare('SELECT name, voice_id, target_model, gender, description, preview, sort FROM builtin_voices ORDER BY sort ASC')
-      .all();
-    // v1.29.6: 标记是否有参考音频（试听原音用）
-    for (const r of rows) {
-      try { r.has_audio = !!refAudioPath(r.name); } catch { r.has_audio = false; }
-    }
-    res.json({ voices: rows });
-  }));
-
-  // v1.29.12: TTS 音频临时文件（替代 data: URL，解决浏览器播不出 + 省 33% base64 体积）
-  function ttsTmpDir() {
-    const d = path.join(getConfig().dataDir, 'tts_tmp');
-    try { fs.mkdirSync(d, { recursive: true }); } catch {}
-    return d;
-  }
-  function ttsTmpId() {
-    return Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
-  }
-  // 定期清理：删除 2 小时前的临时文件（每次 TTS 请求时顺带执行）
-  function cleanupTtsTmp() {
-    try {
-      const dir = ttsTmpDir();
-      const now = Date.now();
-      for (const f of fs.readdirSync(dir)) {
-        const fp = path.join(dir, f);
-        try {
-          const st = fs.statSync(fp);
-          if (now - st.mtimeMs > 2 * 3600 * 1000) fs.unlinkSync(fp);
-        } catch {}
-      }
-    } catch {}
-  }
-  // 通用音频文件服务（含 Range 支持，iOS 必需）
-  function serveAudioFile(req, res, filePath, contentType) {
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: '音频已过期，请重新合成' });
-    const stat = fs.statSync(filePath);
-    const total = stat.size;
-    const range = req.headers.range;
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'private, max-age=7200');
-    if (range) {
-      const m = /bytes=(\d*)-(\d*)/.exec(range);
-      const start = m && m[1] ? parseInt(m[1], 10) : 0;
-      const end = m && m[2] ? parseInt(m[2], 10) : total - 1;
-      if (start >= total || end >= total) {
-        res.status(416).setHeader('Content-Range', `bytes */${total}`).end();
-        return;
-      }
-      res.status(206);
-      res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
-      res.setHeader('Content-Length', String(end - start + 1));
-      fs.createReadStream(filePath, { start, end }).pipe(res);
-    } else {
-      res.setHeader('Content-Length', String(total));
-      fs.createReadStream(filePath).pipe(res);
-    }
-  }
-  // TTS 临时音频接口（需登录）
-  app.get('/api/voice/tts-audio/:id', ah(async (req, res) => {
-    if (!uidOf(req)) return res.status(401).json({ error: '请先登录' });
-    const id = String(req.params.id || '').replace(/[^a-zA-Z0-9_]/g, '');
-    if (!id) return res.status(404).json({ error: '无效的音频 ID' });
-    const dir = ttsTmpDir();
-    // 按 id 前缀找文件（文件名格式：id.mime_ext）
-    const files = fs.readdirSync(dir).filter((f) => f.startsWith(id + '.'));
-    if (!files.length) return res.status(404).json({ error: '音频已过期，请重新合成' });
-    const fname = files[0];
-    const ext = path.extname(fname).slice(1); // wav/mp3/ogg
-    const ct = ext === 'wav' ? 'audio/wav' : ext === 'ogg' ? 'audio/ogg' : 'audio/mpeg';
-    serveAudioFile(req, res, path.join(dir, fname), ct);
-  }));
-
-  // v1.29.6: 管理员获取内置音色参考音频（试听原音）
-  // v1.29.7: 所有登录用户可听（音色选择器试听原音，不调 TTS 省积分）
-  function serveBuiltinAudio(req, res) {
-    const name = String(req.params.name || '');
-    const p = refAudioPath(name);
-    if (!p) return res.status(404).json({ error: '没有参考音频（v1.29.6 前克隆的需重新上传）' });
-    const ext = path.extname(p).toLowerCase();
-    const ct = ext === '.mp3' ? 'audio/mpeg' : ext === '.m4a' ? 'audio/mp4' : 'audio/wav';
-    // v1.29.10: iOS Safari 播音频需要 Content-Length + Range 支持
-    const stat = fs.statSync(p);
-    const total = stat.size;
-    const range = req.headers.range;
-    res.setHeader('Content-Type', ct);
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'private, max-age=86400');
-    if (range) {
-      const m = /bytes=(\d*)-(\d*)/.exec(range);
-      const start = m && m[1] ? parseInt(m[1], 10) : 0;
-      const end = m && m[2] ? parseInt(m[2], 10) : total - 1;
-      if (start >= total || end >= total) {
-        res.status(416).setHeader('Content-Range', `bytes */${total}`).end();
-        return;
-      }
-      res.status(206);
-      res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
-      res.setHeader('Content-Length', String(end - start + 1));
-      fs.createReadStream(p, { start, end }).pipe(res);
-    } else {
-      res.setHeader('Content-Length', String(total));
-      fs.createReadStream(p).pipe(res);
-    }
-  }
-  app.get('/api/admin/voice/builtin/:name/audio', ah(async (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    serveBuiltinAudio(req, res);
-  }));
-  app.get('/api/voice/builtin/:name/audio', ah(async (req, res) => {
-    serveBuiltinAudio(req, res);
-  }));
-
-  // 管理员：批量克隆（异步 job） POST /api/admin/voice/batch-clone { voices: [{name, audio(base64), mimeType}] }
-  // 不扣积分（系统级操作）；克隆走 qwen-voice-enrollment，target_model 取 voice_vc_model 配置
-  app.post('/api/admin/voice/batch-clone', ah(async (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    const list = (req.body && req.body.voices) || [];
-    if (!Array.isArray(list) || !list.length) return res.status(400).json({ error: '请上传音频文件' });
-    if (list.length > 12) return res.status(400).json({ error: '一次最多 12 个' });
-    const items = [];
-    for (const v of list) {
-      const name = String(v.name || '').trim().replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '').slice(0, 16);
-      if (!name) return res.status(400).json({ error: '每个音色都要起名字' });
-      if (!v.audio || typeof v.audio !== 'string') return res.status(400).json({ error: `「${name}」缺少音频数据` });
-      let buf;
-      try { buf = Buffer.from(v.audio, 'base64'); }
-      catch { return res.status(400).json({ error: `「${name}」音频数据无效` }); }
-      if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ error: `「${name}」文件过大（限 10MB）` });
-      if (buf.length < 1024) return res.status(400).json({ error: `「${name}」文件过小` });
-      items.push({ name, buf, mimeType: v.mimeType || 'audio/wav' });
-    }
-    let provider;
-    try { provider = getVoiceProvider(); }
-    catch (e) { return res.status(500).json({ error: e.message || '语音服务未配置' }); }
-
-    const jobId = randomUUID();
-    const job = { id: jobId, status: 'running', total: items.length, done: 0, results: [], created_at: new Date().toISOString() };
-    batchCloneJobs.set(jobId, job);
-    // 后台逐个克隆，不阻塞响应；前端轮询状态接口
-    setImmediate(async () => {
-      const vcModel = getVoiceModel('vc');
-      const upsert = getDb().prepare(
-        `INSERT INTO builtin_voices(name, voice_id, target_model, gender, description, preview, sort, created_at)
-         VALUES(?,?,?,?,?,?,?,?)
-         ON CONFLICT(name) DO UPDATE SET voice_id=excluded.voice_id, target_model=excluded.target_model,
-           gender=excluded.gender, description=excluded.description, preview=excluded.preview,
-           sort=excluded.sort, created_at=excluded.created_at`
-      );
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i];
-        try {
-          const r = await provider.cloneVoice(it.buf, { name: `soulchat_builtin_${Date.now()}_${i}`, mimeType: it.mimeType });
-          if (!r.voiceId) throw new Error('克隆失败');
-          const meta = BUILTIN_VOICE_META[it.name] || {};
-          upsert.run(it.name, r.voiceId, vcModel, meta.gender || '', meta.description || '',
-            meta.preview || `你好，我是${it.name}。`, i, new Date().toISOString());
-          // v1.29.6: 参考音频存盘，供“试听原音”（失败不影响克隆结果）
-          try {
-            fs.writeFileSync(path.join(builtinRefDir(), it.name + refAudioExt(it.mimeType)), it.buf);
-          } catch (e) { console.warn('[voice] 参考音频存盘失败:', e.message); }
-          job.results.push({ name: it.name, ok: true, voice_id: r.voiceId });
-        } catch (e) {
-          job.results.push({ name: it.name, ok: false, error: e.message || '克隆失败' });
-        }
-        job.done = i + 1;
-      }
-      job.status = 'done';
-    });
-    res.json({ job_id: jobId, total: items.length });
-  }));
-
-  // 管理员：批量克隆任务状态（轮询）
-  app.get('/api/admin/voice/batch-clone/:jobId', ah(async (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    const job = batchCloneJobs.get(req.params.jobId);
-    if (!job) return res.status(404).json({ error: '任务不存在' });
-    res.json(job);
-  }));
-
-  // 管理员：清空系统内置音色（重跑批量克隆前用）
-  app.delete('/api/admin/voice/builtin', ah(async (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    getDb().prepare('DELETE FROM builtin_voices').run();
-    res.json({ ok: true });
-  }));
-
-  // ---------- v1.26.2: 语音模型清单（DashScope，带刊例价） ----------
-  // DashScope 无公开模型列表 API，此处为 curated 清单
-  const VOICE_MODEL_CATALOG = {
-    tts: [
-      { id: 'qwen-audio-3.0-tts-plus', name: 'Qwen Audio 3.0 TTS Plus', desc: '高质量，推荐', price: '约1.5元/万字符' },
-      { id: 'qwen3-tts-flash', name: 'Qwen3 TTS Flash', desc: '便宜，0.8元/万字符', price: '0.8元/万字符' },
-      { id: 'cosyvoice-v3.5-plus', name: 'CosyVoice 3.5 Plus', desc: '超高表现力', price: '1.5元/万字符' },
-      { id: 'cosyvoice-v3.5-flash', name: 'CosyVoice 3.5 Flash', desc: '低延迟版', price: '0.8元/万字符' },
-    ],
-    asr: [
-      { id: 'qwen-audio-3.0-asr-flash', name: 'Qwen Audio 3.0 ASR Flash', desc: '快速识别', price: '约0.8元/小时' },
-    ],
-    design: [
-      { id: 'qwen3-tts-vd-2026-01-26', name: 'Qwen3 TTS VD', desc: '文本描述生成音色', price: '0.2元/次+0.8元/万字符' },
-    ],
-    // v1.29.0: 克隆音色合成模型（须与克隆时 target_model 一致）
-    vc: [
-      { id: 'cosyvoice-v3.5-plus', name: 'CosyVoice 3.5 Plus', desc: '音色克隆合成（官方文档确认）', price: '1.5元/万字符' },
-      { id: 'cosyvoice-v3.5-flash', name: 'CosyVoice 3.5 Flash', desc: '低延迟版', price: '0.8元/万字符' },
-    ],
-  };
-
-  app.get('/api/voice/models', ah(async (req, res) => {
-    res.json(VOICE_MODEL_CATALOG);
-  }));
-
-  // v1.26.2: 语音连通测试 POST /api/voice/test { type: 'tts'|'asr', model }
-  app.post('/api/voice/test', chatLimiter, ah(async (req, res) => {
-    // v1.28.1: 烧服务端 Key 的真实调用，仅管理员可用（防匿名刷配额）
-    if (!requireAdmin(req, res)) return;
-    const { type, model } = req.body || {};
-    if (!['tts', 'asr'].includes(type)) {
-      return res.status(400).json({ error: 'type 须为 tts 或 asr' });
-    }
-    const provider = getVoiceProvider();
-    const t0 = Date.now();
-    try {
-      if (type === 'tts') {
-        const r = await provider.tts('你好', { model: model || undefined, voice: 'Cherry' });
-        res.json({ ok: true, latency: Date.now() - t0, bytes: r.audio.length });
-      } else {
-        // ASR 测试需要音频，这里只验证模型参数有效（调一次空检查）
-        res.json({ ok: true, latency: 0, note: 'ASR 需上传音频测试，此处仅验证配置' });
-      }
-    } catch (e) {
-      res.json({ ok: false, latency: Date.now() - t0, error: String((e && e.message) || e).slice(0, 200) });
     }
   }));
 

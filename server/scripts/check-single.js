@@ -681,35 +681,4 @@ export async function runSingle() {
     await req('DELETE', `/api/conversations/${gid}`);
     for (const c of [c1, c2]) await req('DELETE', `/api/characters/${c.json.id}`);
   }
-
-  // 32. v1.28.1: TTS 不 500（H1 回归：uid 未声明 ReferenceError）
-  // v1.29.12: 返回 audioUrl（临时文件）替代 base64 audio
-  {
-    const r = await req('POST', '/api/voice/tts', { text: '回归测试语音', forceAll: true });
-    ok(
-      '32. POST /api/voice/tts → 200 且返回 audioUrl（非 500）',
-      r.status === 200 && typeof r.json.audioUrl === 'string' && r.json.audioUrl.startsWith('/api/voice/tts-audio/'),
-      `status=${r.status} body=${JSON.stringify(r.json).slice(0, 120)}`
-    );
-  }
-
-  // 33. v1.28.1: 角色 voice_id 归属校验（UUID 非自己的定制音色 → 400）
-  {
-    const db = getDb();
-    // 直接造一个属主为 other 的定制音色
-    const fakeId = '11111111-2222-3333-4444-555555555555';
-    db.prepare('INSERT INTO custom_voices(id, user_id, voice_id, name, created_at) VALUES(?,?,?,?,?)').run(
-      fakeId, 'other-user', 'v_xxx', '别人的音色', new Date().toISOString()
-    );
-    const c = await req('POST', '/api/characters', { name: '音色校验' });
-    const bad = await req('PUT', `/api/characters/${c.json.id}`, { voice_id: fakeId });
-    const good = await req('PUT', `/api/characters/${c.json.id}`, { voice_id: 'Cherry' });
-    ok(
-      '33. PUT 角色 voice_id=别人的定制音色UUID → 400；内置音色名 → 200',
-      bad.status === 400 && good.status === 200 && good.json.voice_id === 'Cherry',
-      `bad=${bad.status} good=${good.status}`
-    );
-    await req('DELETE', `/api/characters/${c.json.id}`);
-    db.prepare('DELETE FROM custom_voices WHERE id = ?').run(fakeId);
-  }
 }

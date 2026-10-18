@@ -4269,67 +4269,8 @@ textarea {
   line-height: 1.5;
 }
 
-/* v1.26.0: 音色选择器 */
-.voice-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-.voice-option {
-  display: flex;
-  align-items: stretch;
-  border: 1.5px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--bg);
-  transition: border-color 0.15s;
-}
-.voice-option.selected {
-  border-color: var(--accent, #007aff);
-  background: var(--accent-bg, #f0f7ff);
-}
-.voice-option-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 8px 10px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  min-width: 0;
-}
-.voice-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.voice-desc {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-.voice-test {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  border: none;
-  border-left: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.voice-test.testing {
-  color: #e74c3c;
-}
 /* v1.29.17: 生成中状态 */
-.voice-test.generating {
-  opacity: 0.6;
-  pointer-events: none;
-}
+
 .gen-spin {
   font-size: 12px;
   animation: gen-pulse 1s ease-in-out infinite;
@@ -4338,9 +4279,7 @@ textarea {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }
-.voice-test:hover {
-  background: var(--hover-bg, #f5f5f5);
-}
+
 .field-optional {
   font-size: 12px;
   color: var(--text-secondary);
@@ -4348,18 +4287,7 @@ textarea {
 }
 
 /* v1.26.0: 定制音色 */
-.voice-option.custom {
-  border-style: dashed;
-}
-.voice-option.custom.selected {
-  border-style: solid;
-}
-.voice-design-btn {
-  margin-top: 10px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
+
 .form-error {
   color: #e74c3c;
   font-size: 13px;

@@ -366,26 +366,8 @@ export const api = {
   // 广场审核（管理员）
   adminSharedCards: (status = 'pending') => get(`/api/admin/shared-cards?status=${encodeURIComponent(status)}`),
   adminReviewSharedCard: (id, approve, reason) => post(`/api/admin/shared-cards/${id}/review`, { approve, reason }),
-  // v1.26.0: 语音
-  voiceAsr: (data) => post('/api/voice/asr', data),
-  voiceTts: (data) => post('/api/voice/tts', data),
-  voiceDesign: (data) => post('/api/voice/design', data),
-  listCustomVoices: () => get('/api/voice/custom'),
-  deleteCustomVoice: (id) => del(`/api/voice/custom/${id}`),
-  // v1.26.2: 模型连通测试 + 语音模型清单
+  // v1.26.2: 模型连通测试
   testChatModel: (model_id) => post('/api/admin/models/test', { model_id }),
-  listVoiceModels: () => get('/api/voice/models'),
-  testVoiceModel: (data) => post('/api/voice/test', data),
-  // v1.27.0: 音色克隆
-  voiceClone: (data) => post('/api/voice/clone', data),
-  // v1.29.0: 系统内置克隆音色（批量克隆 + 列表）
-  getBuiltinVoices: () => get('/api/voice/builtin'),
-  // v1.29.6: 内置音色参考音频（试听原音）
-  // v1.29.7: 公开接口，所有登录用户可用（选择器试听原音不调 TTS）
-  builtinAudioUrl: (name) => `/api/voice/builtin/${encodeURIComponent(name)}/audio`,
-  batchCloneVoices: (data) => post('/api/admin/voice/batch-clone', data),
-  batchCloneStatus: (jobId) => get(`/api/admin/voice/batch-clone/${jobId}`),
-  clearBuiltinVoices: () => del('/api/admin/voice/builtin'),
 
   // v0.1.0: 设计台
   studio: {

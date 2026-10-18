@@ -27,26 +27,9 @@ CREATE TABLE IF NOT EXISTS characters(
   created_at TEXT,
   updated_at TEXT
 );
--- v1.26.0: 用户定制音色（声音设计 API 生成）
-CREATE TABLE IF NOT EXISTS custom_voices(
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  voice_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  prompt TEXT,
-  created_at TEXT
-);
--- v1.29.0: 系统内置克隆音色（管理员批量克隆上传，前端音色选择器优先展示）
-CREATE TABLE IF NOT EXISTS builtin_voices(
-  name TEXT PRIMARY KEY,
-  voice_id TEXT NOT NULL,
-  target_model TEXT NOT NULL DEFAULT 'cosyvoice-v3.5-plus',
-  gender TEXT DEFAULT '',
-  description TEXT DEFAULT '',
-  preview TEXT DEFAULT '',
-  sort INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL
-);
+-- v0.1.0: 语音功能已移除，升级时删表（历史包袱清理）
+DROP TABLE IF EXISTS custom_voices;
+DROP TABLE IF EXISTS builtin_voices;
 CREATE TABLE IF NOT EXISTS conversations(
   id TEXT PRIMARY KEY,
   character_id TEXT NOT NULL,
@@ -470,8 +453,6 @@ export function getDb() {
     if (!charCols.includes('roleplay_prompt')) _db.exec('ALTER TABLE characters ADD COLUMN roleplay_prompt TEXT');
     // v1.17.0: 破限预设插件化，角色级选用（NULL=关闭）
     if (!charCols.includes('jailbreak_preset')) _db.exec('ALTER TABLE characters ADD COLUMN jailbreak_preset TEXT');
-    // v1.26.0: 语音音色（NULL=默认）
-    if (!charCols.includes('voice_id')) _db.exec('ALTER TABLE characters ADD COLUMN voice_id TEXT');
     // v1.15.2 修复：清理之前 bug 误存的字符串 "null"（String(null) 的产物），恢复为 NULL（用内置模板）
     try {
       const fixed = _db.prepare("UPDATE characters SET roleplay_prompt = NULL WHERE roleplay_prompt = 'null'").run();

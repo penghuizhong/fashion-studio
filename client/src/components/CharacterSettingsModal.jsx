@@ -5,7 +5,6 @@ import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
 import AvatarPicker from './AvatarPicker.jsx';
 // v1.26.0: 音色选择
-import VoicePicker from './VoicePicker.jsx';
 import MemoryFacts from './MemoryFacts.jsx';
 import { ROLEPLAY_TEMPLATE } from '../roleplayTemplate.js';
 import { useAuth } from '../auth.jsx';
@@ -87,7 +86,6 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
           name: char.name || '',
           avatar: char.avatar || '',
           temperature: typeof char.temperature === 'number' ? char.temperature : 0.7,
-          voice_id: char.voice_id || '', // v1.29.15: 加载已保存的音色（之前漏了，导致选择不持久）
         });
         const f = await api.getFiles(characterId).catch(() => null);
         if (cancelled) return;
@@ -155,7 +153,6 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
         name: settings.name.trim(),
         avatar: settings.avatar,
         temperature: Number(settings.temperature),
-        voice_id: settings.voice_id || null, // v1.26.0: 音色
       });
       await onCharacterUpdated();
       showToast('已保存');
@@ -306,16 +303,6 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                   onChange={(a) => setS('avatar')({ target: { value: a } })}
                 />
               </div>
-              {/* v1.26.0: 音色选择（与头像同一 tab）；v1.29.18: 语音关闭时隐藏 */}
-              {config?.voice_enabled !== false && (
-              <div>
-                <div className="field-label">音色</div>
-                <VoicePicker
-                  value={settings.voice_id}
-                  onChange={(v) => setS('voice_id')({ target: { value: v } })}
-                />
-              </div>
-              )}
               <label>
                 温度：{Number(settings.temperature).toFixed(2)}
                 <input

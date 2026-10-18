@@ -4,8 +4,6 @@ import GroupSettingsModal from './GroupSettingsModal.jsx';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
 // v1.26.0: 语音
-import VoiceRecorder from './VoiceRecorder.jsx';
-import VoiceSettings, { getVoiceSettings } from './VoiceSettings.jsx';
 
 // v1.13.3 轻量 markdown 渲染（聊天消息用）：只处理加粗/代码块/换行
 // 先转义 HTML 防 XSS；代码块先提取避免内部 ** 被误处理
@@ -56,12 +54,6 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   // v1.10 意图识别：待确认的灵魂修改建议
   const [suggestions, setSuggestions] = useState([]);
   // v1.26.0: 语音
-  const [asrLoading, setAsrLoading] = useState(false);
-  const [playingMsgId, setPlayingMsgId] = useState(null); // 正在播放的消息 id
-  const [ttsLoadingMsgId, setTtsLoadingMsgId] = useState(null);
-  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
-  const audioQueueRef = useRef([]); // 待播音频队列
-  const audioElRef = useRef(null);
   const taRef = useRef(null);
   const scrollRef = useRef(null);
   const abortRef = useRef(null);
@@ -373,13 +365,6 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                   truncated,
                 },
               ]);
-              // v1.26.0: 自动播放（用户开启时）
-              if (finalText.trim() && !truncated) {
-                const vs = getVoiceSettings();
-                if (vs.autoplay) {
-                  setTimeout(() => speakText(msgId, finalText), 300);
-                }
-              }
             }
             if (data && data.usage) {
               const t = (data.usage.input || 0) + (data.usage.output || 0);
@@ -521,107 +506,6 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
   };
 
   const send = () => sendContent(input);
-
-  // ============ v1.26.0: 语音 ============
-  // ASR 结果 → 填入输入框（可编辑再发送）
-  const handleVoiceResult = async ({ audio, mimeType, duration }) => {
-    setAsrLoading(true);
-    try {
-      const r = await api.voiceAsr({ audio, mimeType });
-      if (r.text && r.text.trim()) {
-        setInput(r.text.trim());
-        // 自动聚焦方便编辑
-        setTimeout(() => taRef.current && taRef.current.focus(), 100);
-      } else {
-        showToast && showToast('没听清，请再说一次');
-      }
-    } catch (e) {
-      showToast && showToast('语音识别失败：' + (e.message || '未知错误'));
-    } finally {
-      setAsrLoading(false);
-    }
-  };
-
-  // 停止播放
-  const stopVoice = () => {
-    audioQueueRef.current = [];
-    audioQueueRef.current._token = null;
-    if (audioElRef.current) {
-      try {
-        audioElRef.current.pause();
-        audioElRef.current.src = '';
-      } catch {}
-    }
-    setPlayingMsgId(null);
-    setTtsLoadingMsgId(null); // v1.29.17
-  };
-
-  // 播放队列中的下一个
-  const playNext = () => {
-    const next = audioQueueRef.current.shift();
-    if (!next) {
-      setPlayingMsgId(null);
-      setTtsLoadingMsgId(null); // v1.29.17
-      return;
-    }
-    const el = audioElRef.current || (audioElRef.current = new Audio());
-    el.src = next.url;
-    el.onended = playNext;
-    el.onerror = playNext;
-    el.play().catch(() => playNext());
-  };
-
-  // TTS: 文字 → 排队播放（后端自动抽对白）
-  const speakText = async (msgId, text, opts = {}) => {
-    // 如果正在播这条，点一下就是停止
-    if (playingMsgId === msgId) {
-      stopVoice();
-      return;
-    }
-    stopVoice();
-    setPlayingMsgId(msgId);
-    setTtsLoadingMsgId(msgId); // v1.29.17: 显示生成中
-    const myId = msgId;
-    audioQueueRef.current._token = myId;
-    // v1.26.0: 用用户设置的音色/语速；角色有专属音色则优先
-    const vs = getVoiceSettings();
-    const voice = opts.voice || (character && character.voice_id) || vs.voice;
-    const speed = opts.speed || vs.speed;
-    try {
-      // 按句切分，逐句 TTS（流式体验）
-      const sentences = String(text)
-        .split(/(?<=[。！？\n])/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      for (const s of sentences) {
-        // 被打断（换了一条或手动停止）就停
-        if (audioQueueRef.current._token !== myId) break;
-        try {
-          const r = await api.voiceTts({ text: s, voice, speed });
-          if (r.skipped) continue;
-          if (audioQueueRef.current._token !== myId) break;
-          // v1.29.12: 用 HTTP 接口播（替代 data URL）
-          setTtsLoadingMsgId(null); // v1.29.17: 合成完成，开始播放
-          if (!r.audioUrl) {
-            setErrorMsg('语音合成失败：未返回音频');
-            break;
-          }
-          audioQueueRef.current.push({ url: r.audioUrl });
-          // 第一句到了就开始播
-          const el = audioElRef.current;
-          if (!el || el.paused || !el.src) playNext();
-        } catch (e) {
-          console.warn('[voice] TTS 失败:', e.message);
-          // v1.29.13: TTS 失败时给用户可见提示（之前静默）
-          setErrorMsg('语音合成失败：' + (e.message || '未知错误'));
-          break;
-        }
-      }
-    } catch (e) {
-      console.warn('[voice] 播放失败:', e.message);
-    }
-    // 播完队列会自动 playNext 到空；这里不强制清 playingMsgId，playNext 会处理
-  };
 
   // v1.17.4: 网络中断后的重试入口
   // v1.27.1: 重试带 regenerate，后端按内容比对复用已落库的用户消息，不再重复插入
@@ -841,12 +725,6 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           )}
         </div>
         <div className="chat-header-actions">
-          {/* v1.26.0: 语音设置（仅单聊） */}
-          {!isGroup && (
-            <button className="icon-btn" title="语音设置" onClick={() => setVoiceSettingsOpen(true)}>
-              <Icon name="volume" size={18} />
-            </button>
-          )}
           {isGroup && (
             <button className="icon-btn" title="群成员管理" onClick={() => setSettingsOpen(true)}>
               <Icon name="gear" size={18} />
@@ -910,17 +788,6 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
                 <button className="btn secondary small" onClick={regenerate} disabled={regenerating}>
                   {regenerating ? '生成中…' : '↻ 重新生成'}
                 </button>
-                {/* v1.26.0: 朗读；v1.29.18: 语音关闭时隐藏 */}
-                {config?.voice_enabled !== false && (
-                <button
-                  className={`btn secondary small${playingMsgId === m.id ? ' playing' : ''}`}
-                  onClick={() => speakText(m.id, m.content)}
-                  title={ttsLoadingMsgId === m.id ? '生成中…' : playingMsgId === m.id ? '停止' : '朗读对白'}
-                >
-                  <Icon name={playingMsgId === m.id ? 'stop' : 'volume'} size={14} />
-                  {ttsLoadingMsgId === m.id ? '生成中…' : playingMsgId === m.id ? '停止' : '朗读'}
-                </button>
-                )}
               </div>
             )}
             {/* v1.29.16: 群聊每个角色最后一条 AI 消息下常驻重新生成（对齐单聊）；截断时加提示前缀 */}
@@ -1026,18 +893,12 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           </div>
         )}
         <div className="input-wrap">
-          {/* v1.26.0: 按住说话（仅单聊） */}
-          {!isGroup && (
-            <VoiceRecorder onResult={handleVoiceResult} disabled={sending || asrLoading} />
-          )}
           <textarea
             ref={taRef}
             rows={1}
             value={input}
             placeholder={
-              asrLoading
-                ? '语音识别中…'
-                : isGroup
+              isGroup
                   ? '在群里发消息…（@名字 可点名）'
                   : `给 ${character ? character.name : 'TA'} 发消息…`
             }
@@ -1046,7 +907,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
               autoGrow();
             }}
             onKeyDown={handleKeyDown}
-            disabled={sending || asrLoading}
+            disabled={sending}
           />
           <button className="send-btn" onClick={send} disabled={sending || !input.trim()} title="发送">
             <Icon name="send" size={18} />
@@ -1082,10 +943,6 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           onMessagesCleared={() => setMessages([])}
           showToast={showToast}
         />
-      )}
-      {/* v1.26.0: 语音设置 */}
-      {voiceSettingsOpen && (
-        <VoiceSettings onClose={() => setVoiceSettingsOpen(false)} />
       )}
     </div>
   );

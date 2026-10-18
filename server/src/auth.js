@@ -578,14 +578,6 @@ export function mountAuthRoutes(app, authLimiter) {
       worker_model: getSetting('worker_model', ''),
       chat_default_model: getSetting('chat_default_model', ''),
       filter_fallback_models: fb,
-      // v1.26.1: 语音模型（DashScope，不走积分模型白名单）
-      voice_tts_model: getSetting('voice_tts_model', ''),
-      voice_asr_model: getSetting('voice_asr_model', ''),
-      voice_design_model: getSetting('voice_design_model', ''),
-      // v1.29.0: 克隆音色合成模型
-      voice_vc_model: getSetting('voice_vc_model', ''),
-      // v1.29.17: 语音总开关（1=开，0=关）
-      voice_enabled: getSetting('voice_enabled', '1'),
       // v1.18.1: 注册送积分（管理员可配置，默认 100）
       signup_bonus: getSignupBonus(),
       // v1.17.5: 系统提示词模板（管理员可覆盖）
@@ -622,20 +614,6 @@ export function mountAuthRoutes(app, authLimiter) {
       }
       setSetting('filter_fallback_models', JSON.stringify(clean));
       out.filter_fallback_models = clean;
-    }
-    // v1.26.1: 语音模型（DashScope 模型名，不校验白名单，空 = 用默认）
-    // v1.29.0: 增加 voice_vc_model（克隆音色合成模型）
-    // v1.29.17: 语音总开关
-    if (b.voice_enabled !== undefined) {
-      const v = String(b.voice_enabled) === '0' ? '0' : '1';
-      setSetting('voice_enabled', v);
-      out.voice_enabled = v;
-    }
-    for (const key of ['voice_tts_model', 'voice_asr_model', 'voice_design_model', 'voice_vc_model']) {
-      if (b[key] === undefined) continue;
-      const v = String(b[key] || '').trim();
-      setSetting(key, v);
-      out[key] = v;
     }
     // v1.17.5: 扮演模式系统模板（空字符串 = 恢复内置）
     if (b.roleplay_template !== undefined) {
