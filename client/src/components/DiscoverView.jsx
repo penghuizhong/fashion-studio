@@ -3,7 +3,6 @@ import { api, isMultiUserMode } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
 
-const AGE_KEY = 'soulchat-age-ok';
 const CAT_FALLBACK = {
   romance: '恋爱',
   comfort: '治愈',
@@ -15,13 +14,12 @@ const CAT_FALLBACK = {
 };
 const STATUS_LABEL = { pending: '待审核', approved: '已上架', rejected: '被打回' };
 
-// 发现角色：官方预设 / 角色广场 / 集卡图鉴
+// 发现角色：官方预设 / 角色广场
 export default function DiscoverView({
   user,
   config,
   onAdopted,
   onRequireLogin,
-  onExit,
   onOpenSidebar,
   showToast,
 }) {
@@ -33,43 +31,12 @@ export default function DiscoverView({
   const [q, setQ] = useState('');
   const [detail, setDetail] = useState(null);
   const [adopting, setAdopting] = useState(false);
-  const [ageOk, setAgeOk] = useState(() => {
-    try {
-      return localStorage.getItem(AGE_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
-  const [gateOpen, setGateOpen] = useState(() => {
-    try {
-      return localStorage.getItem(AGE_KEY) !== '1';
-    } catch {
-      return true;
-    }
-  });
   // AI 生成
   const [genOpen, setGenOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [genModel, setGenModel] = useState('');
   const [generating, setGenerating] = useState(false);
   const [genResult, setGenResult] = useState(null);
-  // v1.13: 收藏的 AI 生成卡
-  const [savedCards, setSavedCards] = useState(null);
-  const [savedDetail, setSavedDetail] = useState(null);
-
-  const loadSavedCards = async () => {
-    if (!loggedIn) return;
-    try {
-      const r = await api.getSavedCards();
-      setSavedCards((r && r.cards) || []);
-    } catch {
-      setSavedCards([]);
-    }
-  };
-  useEffect(() => {
-    if (section === 'saved') loadSavedCards();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [section]);
 
   useEffect(() => {
     api
@@ -91,18 +58,8 @@ export default function DiscoverView({
     });
   }, [cards, cat, q]);
 
-  const confirmAge = () => {
-    try {
-      localStorage.setItem(AGE_KEY, '1');
-    } catch {
-      /* 忽略 */
-    }
-    setAgeOk(true);
-    setGateOpen(false);
-  };
-
   // 领养：预设卡 / AI 生成卡
-  const adopt = async (card, presetId, savedId) => {
+  const adopt = async (card, presetId) => {
     if (!loggedIn) {
       onRequireLogin();
       return;
@@ -111,9 +68,9 @@ export default function DiscoverView({
     setAdopting(true);
     try {
       const r = await api.adoptCharacterCard(
-        presetId ? { preset_id: presetId } : { card, saved_id: savedId || undefined }
+        presetId ? { preset_id: presetId } : { card }
       );
-      afterAdopt(r, savedId);
+      afterAdopt(r);
     } catch (e) {
       showToast((e && e.message) || '领养失败');
     } finally {
@@ -121,14 +78,11 @@ export default function DiscoverView({
     }
   };
 
-  const afterAdopt = (r, savedId) => {
+  const afterAdopt = (r) => {
     showToast(`已领养 ${r.character.name}`);
-    if (r.collection_reward > 0) showToast(`集齐官方角色卡！+${r.collection_reward} 积分`, 3500);
     setDetail(null);
     setGenResult(null);
     setGenOpen(false);
-    setSavedDetail(null);
-    if (savedId) loadSavedCards();
     onAdopted(r.character.id, r.conversation.id);
   };
 
@@ -148,8 +102,8 @@ export default function DiscoverView({
     try {
       const r = await api.generateCharacterCard({ prompt: desc, model: genModel || undefined });
       setGenResult(r);
-      if (r.cost) showToast(`生成成功，已保存到「我的收藏」，消耗 ${r.cost.points} 积分`);
-      else showToast('生成成功，已保存到「我的收藏」');
+      if (r.cost) showToast(`生成成功，消耗 ${r.cost.points} 积分`);
+      else showToast('生成成功');
     } catch (e) {
       showToast((e && e.message) || '生成失败');
     } finally {
@@ -158,70 +112,6 @@ export default function DiscoverView({
   };
 
   const models = (config && (config.chat_models || config.points_models)) || [];
-
-  const deleteSaved = async (id) => {
-    if (!window.confirm('确定删除这张收藏的角色卡吗？')) return;
-    try {
-      await api.deleteSavedCard(id);
-      showToast('已删除');
-      setSavedDetail(null);
-      loadSavedCards();
-    } catch (e) {
-      showToast((e && e.message) || '删除失败');
-    }
-  };
-
-  // 年龄门未过：占位页
-  if (!ageOk) {
-    return (
-      <div className="discover">
-        <header className="discover-header">
-          <div className="discover-header-inner">
-            <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
-              <Icon name="menu" size={22} />
-            </button>
-            <h2>发现角色</h2>
-          </div>
-        </header>
-        <div className="discover-inner">
-        <div className="discover-gate">
-          <div className="gate-card">
-          <div className="gate-emoji"><Icon name="compass" size={40} /></div>
-          <h2>发现角色</h2>
-          <p>官方预设、玩家广场、AI 生成，开始前请确认：</p>
-          <button className="btn primary" onClick={() => setGateOpen(true)}>
-            进入前确认年龄
-          </button>
-          {onExit && (
-            <button className="btn secondary" onClick={onExit}>
-              以后再说
-            </button>
-          )}
-        </div>
-        {gateOpen && (
-          <div className="modal-overlay" onClick={() => setGateOpen(false)}>
-            <div className="modal" onClick={(e) => e.stopPropagation()}>
-              <h3>年龄确认</h3>
-              <p className="gate-text">
-                发现页包含恋爱向等成人向角色卡，广场含玩家投稿内容。请确认你已年满 18
-                岁，并知晓角色均为虚构 AI，不提供医疗、法律等专业建议。
-              </p>
-              <div className="modal-actions">
-                <button className="btn secondary" onClick={() => setGateOpen(false)}>
-                  取消
-                </button>
-                <button className="btn primary" onClick={confirmAge}>
-                  我已年满 18 岁
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <>
@@ -241,12 +131,6 @@ export default function DiscoverView({
         </button>
         <button className={section === 'square' ? 'section-tab active' : 'section-tab'} onClick={() => setSection('square')}>
           角色广场
-        </button>
-        <button className={section === 'dex' ? 'section-tab active' : 'section-tab'} onClick={() => setSection('dex')}>
-          集卡图鉴
-        </button>
-        <button className={section === 'saved' ? 'section-tab active' : 'section-tab'} onClick={() => setSection('saved')}>
-          我的收藏
         </button>
       </div>
 
@@ -309,7 +193,7 @@ export default function DiscoverView({
                   <button
                     className="btn primary"
                     disabled={adopting}
-                    onClick={() => adopt(genResult.card, null, genResult.saved_id)}
+                    onClick={() => adopt(genResult.card)}
                   >
                     {adopting ? '领养中…' : '领养这个角色'}
                   </button>
@@ -383,57 +267,8 @@ export default function DiscoverView({
           onAdopted={afterAdopt}
         />
       )}
-
-      {section === 'dex' && (
-        <DexSection
-          categories={categories}
-          showToast={showToast}
-          onGoPresets={() => setSection('presets')}
-        />
-      )}
-
-      {section === 'saved' && (
-        <>
-          <p className="discover-sub">AI 生成的角色卡会自动保存在这里，满意就领养开聊</p>
-          {!loggedIn ? (
-            <p className="key-desc">登录后查看收藏</p>
-          ) : savedCards === null ? (
-            <p className="key-desc">加载中…</p>
-          ) : savedCards.length === 0 ? (
-            <div className="dex-empty">
-              <p className="key-desc">还没有收藏，去「官方预设」用 AI 生成一张吧</p>
-              <button className="btn secondary" onClick={() => setSection('presets')}>去生成</button>
-            </div>
-          ) : (
-            <div className="card-grid">
-              {savedCards.map((s) => (
-                s.card && (
-                  <div key={s.id} className="preset-card" onClick={() => setSavedDetail(s)}>
-                    <CardFace card={s.card} categories={categories} />
-                    {s.adopted && <span className="preset-badge">已领养</span>}
-                  </div>
-                )
-              ))}
-            </div>
-          )}
-        </>
-      )}
       </div>
     </div>
-    {savedDetail && savedDetail.card && (
-      <CardDetailModal
-        card={savedDetail.card}
-        categories={categories}
-        onClose={() => setSavedDetail(null)}
-        onAdopt={savedDetail.adopted ? null : () => adopt(savedDetail.card, null, savedDetail.id)}
-        adopting={adopting}
-        extraActions={
-          <button className="btn danger secondary" onClick={() => deleteSaved(savedDetail.id)}>
-            删除
-          </button>
-        }
-      />
-    )}
   </>
   );
 }
@@ -952,98 +787,6 @@ function MyPublishedModal({ showToast, onClose }) {
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-// ---------- 集卡图鉴 ----------
-function DexSection({ categories, showToast, onGoPresets }) {
-  const [data, setData] = useState(null);
-  useEffect(() => {
-    api
-      .getCollection()
-      .then(setData)
-      .catch(() => showToast('图鉴加载失败'));
-  }, [showToast]);
-  if (!data) return <div className="discover-loading">加载中…</div>;
-  const pct = data.total ? Math.round((data.adopted_count / data.total) * 100) : 0;
-  const remain = data.total - data.adopted_count;
-  return (
-    <div className="dex">
-      <p className="discover-sub">领养角色即点亮图鉴，集齐官方 18 张有惊喜</p>
-      <div className="dex-progress-card">
-        <div className="dex-progress-head">
-          <span>
-            官方图鉴 {data.adopted_count}/{data.total}
-          </span>
-          <span className="dex-pct">{pct}%</span>
-        </div>
-        <div className="dex-bar">
-          <div className="dex-fill" style={{ width: `${pct}%` }} />
-        </div>
-        <div className="dex-reward">
-          {data.reward_claimed
-            ? '集齐奖励已领取（+200 积分）'
-            : remain === 0
-              ? '已集齐！奖励稍后到账'
-              : `还差 ${remain} 张集齐，集齐奖 ${data.reward_points} 积分`}
-        </div>
-      </div>
-      <div className="dex-grid">
-        {data.presets.map((p) => (
-          <div
-            key={p.id}
-            className={`dex-item${p.adopted ? '' : ' locked'}`}
-            onClick={() => {
-              if (!p.adopted) onGoPresets();
-            }}
-            title={p.adopted ? p.tagline : '去官方预设领养'}
-          >
-            <span className="dex-avatar">{p.adopted ? <Avatar src={p.avatar} size={40} /> : <Icon name="eyeOff" size={20} />}</span>
-            <span className="dex-name">{p.name}</span>
-            <span className="dex-cat">{categories[p.category] || p.category}</span>
-          </div>
-        ))}
-      </div>
-      {data.shared_adopted.length > 0 && (
-        <>
-          <div className="greeting-label">我领养的广场卡（{data.shared_adopted.length}）</div>
-          <div className="card-grid">
-            {data.shared_adopted.map((s) => (
-              <div key={s.id} className="preset-card" style={{ cursor: 'default' }}>
-                <CardFace card={s.card} categories={categories} />
-                <div className="shared-stats">
-                  <span className="shared-nums">{s.adopt_count} 人领养</span>
-                  <span className="tag-badge">已领养</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-      {data.my_grown && data.my_grown.length > 0 && (
-        <>
-          <div className="greeting-label" style={{ marginTop: 12 }}>
-            我的养成（{data.my_grown.filter((g) => g.in_dex).length}/{data.my_grown.length} 进图鉴 · {data.dex_threshold || 5} 条记忆准入）
-          </div>
-          <p className="discover-sub">和角色多聊天、产生 {data.dex_threshold || 5} 条记忆后即可进图鉴</p>
-          <div className="dex-grid">
-            {data.my_grown.map((g) => (
-              <div
-                key={`grown-${g.id}`}
-                className={`dex-item${g.in_dex ? '' : ' locked'}`}
-                title={g.in_dex ? (g.tagline || g.name) : `养成中：${g.fact_count}/${data.dex_threshold || 5} 条记忆`}
-              >
-                <span className="dex-avatar">{g.in_dex ? <Avatar src={g.avatar} size={40} /> : <Icon name="sparkles" size={20} />}</span>
-                <span className="dex-name">{g.name}</span>
-                <span className="dex-cat">
-                  {g.in_dex ? '已收录' : `${g.fact_count}/${data.dex_threshold || 5} 记忆`}
-                </span>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
     </div>
   );
 }

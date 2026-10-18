@@ -304,7 +304,6 @@ export default function App() {
             config={config}
             onAdopted={() => {}}
             onRequireLogin={handleRequireLogin}
-            onExit={null}
             onOpenSidebar={() => setSidebarOpen(true)}
             showToast={showToast}
           />
@@ -384,7 +383,6 @@ export default function App() {
             config={config}
             onAdopted={handleAdopted}
             onRequireLogin={handleRequireLogin}
-            onExit={() => setView({ type: 'empty' })}
             onOpenSidebar={() => setSidebarOpen(true)}
             showToast={showToast}
           />
@@ -411,6 +409,8 @@ export default function App() {
             characters={characters}
             onOpenSidebar={() => setSidebarOpen(true)}
             onOpenDiscover={handleOpenDiscover}
+            onOpenStudio={handleOpenStudio}
+            onOpenAssets={handleOpenAssets}
             onAdopted={handleAdopted}
             onGroupCreated={(g) => handleSelectConversation(null, g.id, true)}
             onRequireLogin={handleRequireLogin}

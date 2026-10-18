@@ -49,22 +49,9 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
   const [jbPresets, setJbPresets] = useState([]);
   const [rpDirty, setRpDirty] = useState(false);
   const [rpSaving, setRpSaving] = useState(false);
-  // v1.17.8: 破限模式年龄确认弹窗
-  // v1.17.9: 用破限专用 key（soulchat-jb-age-ok），与发现页分开：勾选破限必弹一次
-  const [jbGateOpen, setJbGateOpen] = useState(false);
-  const jbAgeOk = () => {
-    try { return localStorage.getItem('soulchat-jb-age-ok') === '1'; } catch { return false; }
-  };
   const handleJbToggle = (e) => {
     const on = e.target.checked;
-    if (on && !jbAgeOk()) { setJbGateOpen(true); return; } // 未确认年龄：先弹确认框，不直接开启
     setJailbreakPreset(on ? (jbPresets[0] && jbPresets[0].key) || null : null);
-    setRpDirty(true);
-  };
-  const confirmJbAge = () => {
-    try { localStorage.setItem('soulchat-jb-age-ok', '1'); } catch { /* 忽略 */ }
-    setJbGateOpen(false);
-    setJailbreakPreset((jbPresets[0] && jbPresets[0].key) || null);
     setRpDirty(true);
   };
   const [saving, setSaving] = useState(false);
@@ -404,8 +391,7 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
                             </select>
                           )}
                           <p className="jb-warning">
-                            温馨提示：破限模式会大幅减少 AI 的拒绝，但回复可能包含成人向内容，请确认你已年满 18
-                            岁。破限指令约 0.5KB，按正常对话计费。
+                            温馨提示：破限模式会大幅减少 AI 的拒绝。破限指令约 0.5KB，按正常对话计费。
                           </p>
                         </>
                       )}
@@ -449,26 +435,6 @@ export default function CharacterSettingsModal({ characterId, onClose, onCharact
           )}
         </div>
       </div>
-      {/* v1.17.8: 破限模式年龄确认 */}
-      {jbGateOpen && (
-        <div className="modal-overlay" onClick={() => setJbGateOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>年龄确认</h3>
-            <p className="gate-text">
-              破限模式会大幅减少 AI 的拒绝，回复可能包含成人向虚构内容。请确认你已年满 18
-              岁，并知晓角色均为虚构 AI，不提供医疗、法律等专业建议。
-            </p>
-            <div className="modal-actions">
-              <button className="btn secondary" onClick={() => setJbGateOpen(false)}>
-                取消
-              </button>
-              <button className="btn primary" onClick={confirmJbAge}>
-                我已年满 18 岁
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

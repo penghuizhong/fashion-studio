@@ -51,8 +51,6 @@ import {
   deductPoints,
   maybeInviteReward,
   maybeSignupBonus,
-  maybeCollectionReward,
-  COLLECTION_REWARD,
   hasSignupBonus,
   recordByokUsage,
   getBalance,
@@ -435,7 +433,6 @@ export function createApp() {
     const charId = randomUUID();
     const convId = randomUUID();
     const title = `与${card.name}的相遇`;
-    let reward = 0;
     db.transaction(() => {
       db.prepare(
         'INSERT INTO characters(id,user_id,name,avatar,soul_md,user_md,memory_md,model,temperature,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)'
@@ -471,16 +468,9 @@ export function createApp() {
         );
       }
     })();
-    // 集齐官方卡奖励（多用户模式，幂等；失败不影响领养）
-    try {
-      if (uid && cardKey && cardKey.startsWith('preset:')) reward = maybeCollectionReward(uid, getPresetCards().length);
-    } catch (e) {
-      console.warn('[points] 集卡奖励检查失败:', e.message);
-    }
     return {
       character: getChar(charId, req),
       conversation: { id: convId, character_id: charId, title, created_at: t, updated_at: t },
-      collection_reward: reward,
     };
   }
 
@@ -503,57 +493,7 @@ export function createApp() {
         return res.status(400).json({ error: '缺少 preset_id 或 card' });
       }
       const out = adoptCardInternal(card, req, cardKey);
-      // v1.13: 从收藏领养时标记已领养
-      try {
-        const uid = uidOf(req);
-        const sid = Number(body.saved_id) || 0;
-        if (uid && sid > 0 && out && out.character && out.character.id) {
-          db.prepare('UPDATE saved_cards SET adopted = 1, character_id = ? WHERE id = ? AND user_id = ?')
-            .run(out.character.id, sid, uid);
-        }
-      } catch (e) {
-        console.error('[saved_cards] mark adopted failed:', e.message);
-      }
       res.status(201).json(out);
-    })
-  );
-
-  // ---------- v1.13: 收藏的 AI 生成卡 ----------
-  // 列表（仅自己）
-  app.get(
-    '/api/saved-cards',
-    ah(async (req, res) => {
-      const uid = uidOf(req);
-      if (!uid) return res.status(401).json({ error: '未登录' });
-      const rows = db
-        .prepare('SELECT id, card_json, prompt, adopted, character_id, created_at FROM saved_cards WHERE user_id = ? ORDER BY created_at DESC LIMIT 100')
-        .all(uid);
-      res.json({
-        cards: rows.map((r) => {
-          let card = null;
-          try { card = JSON.parse(r.card_json); } catch {}
-          return {
-            id: r.id,
-            card,
-            prompt: r.prompt,
-            adopted: !!r.adopted,
-            character_id: r.character_id,
-            created_at: r.created_at,
-          };
-        }),
-      });
-    })
-  );
-
-  // 删除（仅自己）
-  app.delete(
-    '/api/saved-cards/:id',
-    ah(async (req, res) => {
-      const uid = uidOf(req);
-      if (!uid) return res.status(401).json({ error: '未登录' });
-      const r = db.prepare('DELETE FROM saved_cards WHERE id = ? AND user_id = ?').run(req.params.id, uid);
-      if (!r.changes) return res.status(404).json({ error: '不存在或无权限' });
-      res.json({ ok: true });
     })
   );
 
@@ -757,68 +697,6 @@ export function createApp() {
     })
   );
 
-  // 集卡图鉴：官方 18 张收集进度 + 已领养的广场卡
-  app.get(
-    '/api/character-cards/collection',
-    ah(async (req, res) => {
-      const uid = uidOf(req);
-      const collUid = uid || 'local';
-      const presets = getPresetCards();
-      const adoptedKeys = new Set(
-        db.prepare('SELECT card_key FROM user_collection WHERE user_id = ?').all(collUid).map((r) => r.card_key)
-      );
-      const adoptedCount = presets.filter((c) => adoptedKeys.has(`preset:${c.id}`)).length;
-      const rewardClaimed = uid
-        ? !!db
-            .prepare("SELECT id FROM points_ledger WHERE user_id = ? AND reason = 'collection_reward' LIMIT 1")
-            .get(uid)
-        : adoptedCount >= presets.length; // 单用户无账本：集齐即视为完成
-      // 已领养的广场卡
-      const sharedAdopted = db
-        .prepare(
-          `SELECT s.id, s.card_json, s.adopt_count FROM shared_cards s
-           JOIN user_collection c ON c.card_key = ('shared:' || s.id)
-           WHERE c.user_id = ? ORDER BY c.adopted_at DESC`
-        )
-        .all(collUid)
-        .map((r) => ({ id: r.id, card: JSON.parse(r.card_json), adopt_count: r.adopt_count }));
-      // v1.13: 我养成的角色（5 条记忆进图鉴；facts 经 character_id 隔离，无需 user_id）
-      let myGrown = [];
-      if (uid) {
-        myGrown = db
-          .prepare(
-            `SELECT c.id, c.name, c.avatar,
-              (SELECT COUNT(*) FROM memory_facts f WHERE f.character_id = c.id AND f.superseded_by IS NULL) AS fact_count
-             FROM characters c WHERE c.user_id = ? ORDER BY fact_count DESC, c.created_at DESC LIMIT 100`
-          )
-          .all(uid)
-          .map((r) => ({
-            id: r.id,
-            name: r.name,
-            avatar: r.avatar,
-            fact_count: r.fact_count || 0,
-            in_dex: (r.fact_count || 0) >= 5,
-          }));
-      }
-      res.json({
-        presets: presets.map((c) => ({
-          id: c.id,
-          name: c.name,
-          avatar: c.avatar,
-          category: c.category,
-          tagline: c.tagline,
-          adopted: adoptedKeys.has(`preset:${c.id}`),
-        })),
-        adopted_count: adoptedCount,
-        total: presets.length,
-        reward_points: COLLECTION_REWARD,
-        reward_claimed: rewardClaimed,
-        shared_adopted: sharedAdopted,
-        my_grown: myGrown,
-        dex_threshold: 5,
-      });
-    })
-  );
 
   // AI 生成角色卡：成功后按真实用量扣积分（积分模式），失败不扣
   app.post(
@@ -900,21 +778,7 @@ export function createApp() {
         };
         recordByokUsage(uid, model, 'character_generate', usage);
       }
-      // v1.13: 生成成功自动保存到收藏
-      let savedId = null;
-      if (uid && result && result.card) {
-        try {
-          const r = db
-            .prepare(
-              'INSERT INTO saved_cards(user_id, card_json, prompt, created_at) VALUES(?,?,?,?)'
-            )
-            .run(uid, JSON.stringify(result.card), desc, new Date().toISOString());
-          savedId = Number(r.lastInsertRowid);
-        } catch (e) {
-          console.error('[saved_cards] auto-save failed:', e.message);
-        }
-      }
-      res.json({ card: result.card, cost, saved_id: savedId });
+      res.json({ card: result.card, cost });
     })
   );
 

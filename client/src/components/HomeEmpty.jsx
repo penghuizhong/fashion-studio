@@ -1,103 +1,76 @@
-// v1.16.6 首页角色墙：Top 6-8 领养数卡片轻轻浮动 + 拼图卡进发现页 + 底部 AI 生成输入框
-// 新用户 10 秒开聊：挑一张现成的，或一句话生成一个
-// v1.25.4: 加群聊入口（多角色同场，@点名互动）
+// v0.3.1 首页改版：工作台式布局（数据概览+快捷入口+员工助手+最近作品）
+// 不再是角色墙选妃模式
 import { useEffect, useState } from 'react';
 import { api, isMultiUserMode } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
-import GroupCreateModal from './GroupCreateModal.jsx';
 
-const WALL_COUNT = 8;
+function imgUrl(p) {
+  if (!p) return '';
+  if (/^https?:\/\//.test(p)) return p;
+  return p.startsWith('/') ? p : `/${p}`;
+}
 
 export default function HomeEmpty({
   user,
   config,
-  characters,
   onOpenSidebar,
-  onOpenDiscover,
+  onOpenStudio,
+  onOpenAssets,
   onAdopted,
-  onGroupCreated,
   onRequireLogin,
   showToast,
 }) {
   const loggedIn = !isMultiUserMode() || !!user;
-  const [wallCards, setWallCards] = useState([]);
-  const [collageCards, setCollageCards] = useState([]);
+  const [staff, setStaff] = useState([]);
   const [adoptingId, setAdoptingId] = useState(null);
-  const [groupModalOpen, setGroupModalOpen] = useState(false);
-  // AI 生成
-  const [prompt, setPrompt] = useState('');
-  const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState(null);
+  // 数据概览
+  const [tplTotal, setTplTotal] = useState(null);
+  const [tplGrowing, setTplGrowing] = useState(0);
+  const [assetTotal, setAssetTotal] = useState(null);
+  const [recentAssets, setRecentAssets] = useState([]);
+  const [points, setPoints] = useState(null);
 
   useEffect(() => {
-    api
-      .getPresetCards()
-      .then((d) => {
-        const cards = (d && d.cards) || [];
-        // 按领养数排序（后端已排好），取前 8 张上墙
-        setWallCards(cards.slice(0, WALL_COUNT));
-        // 拼图卡用接下来的 4 张
-        setCollageCards(cards.slice(WALL_COUNT, WALL_COUNT + 4));
-      })
-      .catch(() => {});
+    api.getPresetCards().then((d) => setStaff((d && d.cards) || [])).catch(() => {});
+    // 款式卡
+    api.studio.listTemplates().then((r) => {
+      const t = r.templates || [];
+      setTplTotal(t.length);
+      setTplGrowing(t.filter((x) => x.status !== 'final').length);
+    }).catch(() => setTplTotal(0));
+    // 资产库总数 + 最近 4 张
+    api.studio.assets({ limit: 4 }).then((r) => {
+      setAssetTotal(r.total || 0);
+      setRecentAssets(r.assets || []);
+    }).catch(() => setAssetTotal(0));
+    // 积分（多用户模式）
+    if (isMultiUserMode() && loggedIn) {
+      api.getPoints().then((r) => setPoints(r.balance ?? r.points ?? null)).catch(() => {});
+    }
   }, []);
 
-  const adopt = async (card, presetId, savedId) => {
+  const adopt = async (card, presetId) => {
     if (!loggedIn) {
       onRequireLogin();
       return;
     }
     if (adoptingId) return;
-    setAdoptingId(presetId || 'gen');
+    setAdoptingId(presetId);
     try {
-      const r = await api.adoptCharacterCard(
-        presetId ? { preset_id: presetId } : { card, saved_id: savedId || undefined }
-      );
-      showToast(`已领养 ${r.character.name}`);
-      if (r.collection_reward > 0) showToast(`集齐官方角色卡！+${r.collection_reward} 积分`, 3500);
+      const r = await api.adoptCharacterCard({ preset_id: presetId });
+      showToast(`已添加 ${r.character.name} 到通讯录`);
       onAdopted(r.character.id, r.conversation.id);
     } catch (e) {
-      showToast((e && e.message) || '领养失败');
+      showToast((e && e.message) || '添加失败');
     } finally {
       setAdoptingId(null);
     }
   };
 
-  const openGroupModal = () => {
-    if (!loggedIn) {
-      onRequireLogin();
-      return;
-    }
-    setGroupModalOpen(true);
-  };
-
-  const generate = async () => {
-    if (!loggedIn) {
-      onRequireLogin();
-      return;
-    }
-    const desc = prompt.trim();
-    if (!desc) {
-      showToast('先用一句话描述你想要的角色');
-      return;
-    }
-    if (generating) return;
-    setGenerating(true);
-    setGenResult(null);
-    try {
-      const r = await api.generateCharacterCard({ prompt: desc });
-      setGenResult(r);
-      if (r.cost) showToast(`生成成功，消耗 ${r.cost.points} 积分`);
-      else showToast('生成成功');
-    } catch (e) {
-      showToast((e && e.message) || '生成失败');
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const card = genResult && genResult.card;
+  const today = new Date();
+  const dateStr = `${today.getMonth() + 1}月${today.getDate()}日`;
+  const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][today.getDay()];
 
   return (
     <div className="home-empty">
@@ -108,146 +81,82 @@ export default function HomeEmpty({
         <span className="home-logo">Fashion Studio</span>
       </header>
 
-      <div className="home-body wall-body">
-        <h1 className="home-title">今天想和谁聊天？</h1>
+      <div className="home-body work-body">
+        <div className="work-greet">
+          <h1 className="home-title">{dateStr} {weekday}，今天做什么？</h1>
+        </div>
 
-        {/* 角色圆墙：Top 领养数卡片在圆内轻轻漂移（鱼缸式） */}
-        {wallCards.length > 0 && (
-          <div className="circle-wall">
-            <div className="circle-center">
-              <img src="/favicon.png" alt="Fashion Studio" />
-            </div>
-            {wallCards.map((c, i) => {
-              const angle = (i / wallCards.length) * 360 - 90;
-              const rad = (angle * Math.PI) / 180;
-              const R = 36;
-              const x = 50 + R * Math.cos(rad);
-              const y = 50 + R * Math.sin(rad);
-              return (
-                <span
-                  key={c.id}
-                  className="orbit-slot"
-                  style={{ left: `${x}%`, top: `${y}%` }}
-                >
-                  <button
-                    className={`orbit-card drift-${i % 4}`}
-                    style={{ animationDelay: `${(i % 8) * 0.8}s` }}
-                    onClick={() => adopt(c, c.id)}
-                    disabled={!!adoptingId}
-                  >
-                    <Avatar src={c.avatar} size={56} className="orbit-avatar" />
-                    <span className="orbit-name">{c.name}</span>
-                    {adoptingId === c.id && <span className="orbit-loading">…</span>}
-                  </button>
-                </span>
-              );
-            })}
+        {/* 数据概览 */}
+        <div className="work-stats">
+          <div className="work-stat" onClick={onOpenStudio}>
+            <span className="work-stat-num">{tplTotal === null ? '–' : tplTotal}</span>
+            <span className="work-stat-label">款式卡</span>
+            {tplTotal > 0 && <span className="work-stat-sub">{tplGrowing} 培育中</span>}
           </div>
-        )}
+          <div className="work-stat" onClick={onOpenAssets}>
+            <span className="work-stat-num">{assetTotal === null ? '–' : assetTotal}</span>
+            <span className="work-stat-label">资产图片</span>
+          </div>
+          {points !== null && (
+            <div className="work-stat">
+              <span className="work-stat-num">{points}</span>
+              <span className="work-stat-label">积分余额</span>
+            </div>
+          )}
+        </div>
 
-        {/* 拼图条：进发现页 */}
-        {collageCards.length >= 4 && (
-          <button className="wall-collage-strip" onClick={onOpenDiscover}>
-            <span className="collage-row">
-              {collageCards.map((c) => (
-                <Avatar key={c.id} src={c.avatar} size={32} />
-              ))}
-            </span>
-            <span className="collage-label">发现更多角色</span>
-            <Icon name="chevronRight" size={16} />
+        {/* 快捷入口 */}
+        <div className="work-actions">
+          <button className="work-action primary" onClick={onOpenStudio}>
+            <Icon name="sparkles" size={20} />
+            <span>解析款式</span>
           </button>
-        )}
-
-        {/* v1.25.4: 群聊入口（头像拼图风格） */}
-        <button className="wall-collage-strip" onClick={openGroupModal}>
-          <span className="collage-row">
-            {(wallCards.slice(0, 4).length >= 4 ? wallCards.slice(0, 4) : collageCards.slice(0, 4)).map((c) => (
-              <Avatar key={c.id} src={c.avatar} size={32} />
-            ))}
-          </span>
-          <span className="collage-label">群聊 · 多角色同场，@点名互动</span>
-          <Icon name="chevronRight" size={16} />
-        </button>
-
-        {/* 生成结果卡 */}
-        {card && (
-          <div className="home-gen-result">
-            <div className="home-gen-card">
-              <Avatar src={card.avatar} size={64} className="home-hot-avatar" />
-              <div className="home-gen-meta">
-                <div className="home-hot-name">{card.name}</div>
-                <div className="home-hot-tag">{card.tagline || ''}</div>
-                {card.greeting && (
-                  <div className="home-gen-greeting">
-                    「{card.greeting.slice(0, 60)}{card.greeting.length > 60 ? '…' : ''}」
-                  </div>
-                )}
-              </div>
-            </div>
-            {genResult.cost && (
-              <div className="home-gen-cost">
-                本次消耗 {genResult.cost.points} 积分（{genResult.cost.tokens_input}+
-                {genResult.cost.tokens_output} tokens）
-              </div>
-            )}
-            <div className="home-gen-actions">
-              <button
-                className="btn primary"
-                disabled={!!adoptingId}
-                onClick={() => adopt(card, null, genResult.saved_id)}
-              >
-                {adoptingId ? '领养中…' : '领养开聊'}
-              </button>
-              <button className="btn secondary" onClick={generate} disabled={generating}>
-                换一张
-              </button>
-              <button className="btn secondary" onClick={() => setGenResult(null)}>
-                收起
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* 底部 AI 生成输入框（缩小版） */}
-      <div className="home-gen-bottom">
-        <div className="home-gen-capsule small">
-          <input
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') generate();
-            }}
-            placeholder="描述你想要的角色，AI 为你生成…"
-            maxLength={500}
-            disabled={generating}
-          />
-          <button
-            className="home-gen-btn"
-            onClick={generate}
-            disabled={generating || !prompt.trim()}
-            title="生成角色"
-          >
-            {generating ? <span className="spin">⏳</span> : <Icon name="sparkles" size={18} />}
+          <button className="work-action" onClick={onOpenAssets}>
+            <Icon name="image" size={20} />
+            <span>资产库</span>
           </button>
         </div>
-        <p className="home-gen-hint">
-          {isMultiUserMode() ? 'AI 生成按实际用量扣积分，失败不扣' : '使用你自己的 Key 生成，不扣平台积分'}
-        </p>
-      </div>
 
-      {groupModalOpen && (
-        <GroupCreateModal
-          characters={characters || []}
-          onClose={() => setGroupModalOpen(false)}
-          onCreated={onGroupCreated}
-          onCreateCharacter={() => {
-            setGroupModalOpen(false);
-            onOpenSidebar();
-          }}
-          showToast={showToast}
-        />
-      )}
+        {/* 员工助手 */}
+        {staff.length > 0 && (
+          <div className="work-section">
+            <h3 className="work-section-title">员工助手</h3>
+            <div className="work-staff">
+              {staff.map((c) => (
+                <button
+                  key={c.id}
+                  className="work-staff-card"
+                  onClick={() => adopt(c, c.id)}
+                  disabled={!!adoptingId}
+                >
+                  <Avatar src={c.avatar} size={48} />
+                  <span className="work-staff-name">{c.name}</span>
+                  <span className="work-staff-tag">{c.tagline}</span>
+                  {adoptingId === c.id && <span className="orbit-loading">…</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 最近作品 */}
+        {recentAssets.length > 0 && (
+          <div className="work-section">
+            <h3 className="work-section-title">最近作品</h3>
+            <div className="work-recent">
+              {recentAssets.map((a) => (
+                <button key={a.id} className="work-recent-item" onClick={onOpenAssets}>
+                  {(a.thumb_path || a.image_path) ? (
+                    <img src={imgUrl(a.thumb_path || a.image_path)} alt="" loading="lazy" />
+                  ) : (
+                    <span className="dim">已删</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

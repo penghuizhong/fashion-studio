@@ -467,14 +467,14 @@ export async function runSingle() {
     ok('21. 不存在的对话发消息 → error 事件或 HTTP 404', status === 404 || hasError, `status=${status} events=${events.map((e) => e.event).join(',')}`);
   }
 
-  // 22. 预设角色卡列表：18 张 + 7 个分类
+  // 22. 预设角色卡列表：5 张员工卡 + 1 个分类
   {
     const r = await req('GET', '/api/character-cards/presets');
     const cats = r.json && r.json.categories;
     ok(
-      '22. GET /api/character-cards/presets → 200，18 张卡，7 个分类',
-      r.status === 200 && Array.isArray(r.json.cards) && r.json.cards.length === 18 &&
-        cats && Object.keys(cats).length === 7 &&
+      '22. GET /api/character-cards/presets → 200，5 张员工卡，1 个分类',
+      r.status === 200 && Array.isArray(r.json.cards) && r.json.cards.length === 5 &&
+        cats && Object.keys(cats).length === 1 &&
         r.json.cards.every((c) => c.id && c.name && c.greeting && c.soul_md && cats[c.category]),
       `status=${r.status} n=${r.json && r.json.cards && r.json.cards.length}`
     );
@@ -482,14 +482,14 @@ export async function runSingle() {
 
   // 23. 一键领养：建角色 + 建对话 + 开场白首条消息
   {
-    const r = await req('POST', '/api/character-cards/adopt', { preset_id: 'luchen' });
+    const r = await req('POST', '/api/character-cards/adopt', { preset_id: 'shenyan' });
     const ch = r.json && r.json.character;
     const conv = r.json && r.json.conversation;
     const msgs = conv ? await req('GET', `/api/conversations/${conv.id}/messages`) : null;
     const first = msgs && msgs.json && msgs.json[0];
     ok(
       '23. POST adopt 预设卡 → 201：角色/对话/开场白消息齐全',
-      r.status === 201 && ch && ch.name === '陆沉' && conv && conv.id &&
+      r.status === 201 && ch && ch.name === '沈砚' && conv && conv.id &&
         Array.isArray(msgs.json) && msgs.json.length === 1 &&
         first.role === 'assistant' && first.content.length > 60,
       `status=${r.status} name=${ch && ch.name} msgs=${msgs && msgs.json && msgs.json.length}`
@@ -610,29 +610,6 @@ export async function runSingle() {
       `list0=${list0.json && list0.json.length} ad=${ad.status} like=${like1.json.liked}/${like2.json.liked} rc1=${rc1} mid=${listMid.json && listMid.json.length} list1=${list1.json && list1.json.length}`
     );
     if (adChar) await req('DELETE', `/api/characters/${adChar.id}`);
-  }
-
-  // 28. 图鉴：领养 2 张预设 → adopted_count 2；单用户无账本不报错
-  {
-    const a1 = await req('POST', '/api/character-cards/adopt', { preset_id: 'luchen' });
-    const a2 = await req('POST', '/api/character-cards/adopt', { preset_id: 'taoyao' });
-    const col = await req('GET', '/api/character-cards/collection');
-    ok(
-      '28. 领养 2 张预设 → 图鉴 adopted_count=2/18，未领养标记正确',
-      a1.status === 201 && a2.status === 201 &&
-        col.json && col.json.adopted_count === 2 && col.json.total === 18 &&
-        col.json.presets.filter((p) => p.adopted).length === 2,
-      `a=${a1.status},${a2.status} adopted=${col.json && col.json.adopted_count}`
-    );
-    for (const a of [a1, a2]) {
-      const ch = a.json && a.json.character;
-      if (ch) await req('DELETE', `/api/characters/${ch.id}`);
-    }
-    // 清理投稿角色
-    const chars = await req('GET', '/api/characters');
-    for (const c of (chars.json || []).filter((x) => x.name === '投稿测试角')) {
-      await req('DELETE', `/api/characters/${c.id}`);
-    }
   }
 
   // 29. v1.27.1: 单聊失败重试不叠加用户消息——同内容 + regenerate 多次只保留一条

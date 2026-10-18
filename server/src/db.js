@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS card_reports(
   created_at TEXT,
   PRIMARY KEY(user_id, shared_card_id)
 );
--- ---- 集卡图鉴 ----
+-- ---- 领养记录（广场卡已领养标记用） ----
 CREATE TABLE IF NOT EXISTS user_collection(
   user_id TEXT NOT NULL,
   card_key TEXT NOT NULL,

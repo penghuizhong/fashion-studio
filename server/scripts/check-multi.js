@@ -487,8 +487,8 @@ export async function runMulti() {
     const noAdopt = await req('POST', '/api/character-cards/adopt', { preset_id: 'luchen' });
     const noGen = await req('POST', '/api/character-cards/generate', { prompt: '测试' });
     ok(
-      'M28. 预设列表未登录 → 200（18 张）；adopt/generate 未登录 → 401',
-      pub.status === 200 && Array.isArray(pub.json.cards) && pub.json.cards.length === 18 &&
+      'M28. 预设列表未登录 → 200（5 张）；adopt/generate 未登录 → 401',
+      pub.status === 200 && Array.isArray(pub.json.cards) && pub.json.cards.length === 5 &&
         noAdopt.status === 401 && noGen.status === 401,
       `pub=${pub.status} n=${pub.json && pub.json.cards && pub.json.cards.length} adopt=${noAdopt.status} gen=${noGen.status}`
     );
@@ -496,14 +496,14 @@ export async function runMulti() {
 
   // M29. 登录后领养：201 且链路完整；其他用户查该角色 → 404（隔离）
   {
-    const ad = await req('POST', '/api/character-cards/adopt', { preset_id: 'taoyao' }, { jar: jarC });
+    const ad = await req('POST', '/api/character-cards/adopt', { preset_id: 'sujin' }, { jar: jarC });
     const ch = ad.json && ad.json.character;
     const conv = ad.json && ad.json.conversation;
     const msgs = conv ? await req('GET', `/api/conversations/${conv.id}/messages`, undefined, { jar: jarC }) : null;
     const other = ch ? await req('GET', `/api/characters/${ch.id}`, undefined, { jar: jarAdminM }) : null;
     ok(
       'M29. 登录后 adopt → 201：角色/对话/开场白齐全；其他用户查 → 404',
-      ad.status === 201 && ch && ch.name === '桃夭' && conv && conv.id &&
+      ad.status === 201 && ch && ch.name === '苏锦' && conv && conv.id &&
         Array.isArray(msgs.json) && msgs.json.length === 1 && msgs.json[0].role === 'assistant' &&
         other.status === 404,
       `adopt=${ad.status} name=${ch && ch.name} msgs=${msgs && msgs.json && msgs.json.length} other=${other && other.status}`
@@ -616,29 +616,6 @@ export async function runMulti() {
       `bad=${bad.status} rp2msg=${rp2.json.message} rc1=${rc1} list=${list.json && list.json.length} backToPending=${pend.json.some((x) => x.id === sid)}`
     );
     await req('DELETE', `/api/characters/${ch.json.id}`, undefined, { jar: jarC });
-  }
-
-  // M34. 集卡奖励：领养全部 18 张预设 → 账本 collection_reward +200（幂等，不重复发）
-  {
-    const presets = await req('GET', '/api/character-cards/presets');
-    const ids = presets.json.cards.map((c) => c.id);
-    for (const pid of ids) {
-      await req('POST', '/api/character-cards/adopt', { preset_id: pid }, { jar: jarB2b });
-    }
-    const ledger = await req('GET', '/api/points/ledger?limit=100', undefined, { jar: jarB2b });
-    const rewards = (Array.isArray(ledger.json) ? ledger.json : []).filter((x) => x.reason === 'collection_reward');
-    const col = await req('GET', '/api/character-cards/collection', undefined, { jar: jarB2b });
-    // 再领养一次已有点亮的卡，不重复发奖
-    await req('POST', '/api/character-cards/adopt', { preset_id: ids[0] }, { jar: jarB2b });
-    const ledger2 = await req('GET', '/api/points/ledger?limit=100', undefined, { jar: jarB2b });
-    const rewards2 = (Array.isArray(ledger2.json) ? ledger2.json : []).filter((x) => x.reason === 'collection_reward');
-    ok(
-      'M34. 集齐 18 张预设 → collection_reward +200（仅一次）；图鉴 18/18 且 reward_claimed',
-      rewards.length === 1 && rewards[0].delta === 200 && rewards[0].reason_label === '集卡奖励' &&
-        col.json && col.json.adopted_count === 18 && col.json.reward_claimed === true &&
-        rewards2.length === 1,
-      `rewards=${rewards.length} delta=${rewards[0] && rewards[0].delta} adopted=${col.json && col.json.adopted_count} again=${rewards2.length}`
-    );
   }
 
   // M35. 管理员打回：填理由 → 我的投稿显示 rejected + 理由

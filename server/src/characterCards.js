@@ -5,13 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 // 分类 id → 中文名（前后端共用展示）
 export const CARD_CATEGORIES = {
-  romance: '恋爱',
-  comfort: '治愈',
-  anime: '二次元',
-  xianxia: '仙侠',
-  mystery: '悬疑',
-  comedy: '搞笑',
-  history: '历史',
+  staff: '公司员工',
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
