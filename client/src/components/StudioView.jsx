@@ -23,14 +23,15 @@ const imgUrl = (p) => (p ? `/${p}` : '');
 const dnaVal = (dna, key) => (dna && dna[key] && dna[key].value) || '';
 const dnaConf = (dna, key) => (dna && dna[key] && typeof dna[key].confidence === 'number' ? dna[key].confidence : 0);
 
-// ---------- DNA 字段编辑器（双栏核对 / 抽屉编辑共用） ----------
-function DnaFields({ dna, setDna, readOnly }) {
+// ---------- DNA 字段编辑器（双栏核对 / 抽屉编辑共用；P5: 字段按类目预设动态） ----------
+function DnaFields({ dna, setDna, readOnly, fields }) {
   const setVal = (key, val) => {
     setDna((d) => ({ ...d, [key]: { value: val, confidence: 1 } }));
   };
+  const list = Array.isArray(fields) && fields.length ? fields : DNA_FIELDS;
   return (
     <div className="dna-fields">
-      {DNA_FIELDS.map(({ key, label }) => {
+      {list.map(({ key, label }) => {
         const conf = dnaConf(dna, key);
         const low = conf < 0.75;
         const val = dnaVal(dna, key);
@@ -69,6 +70,10 @@ function CloneModal({ onClose, onSaved, showToast }) {
   const [busy, setBusy] = useState(false);
   const [visionModels, setVisionModels] = useState([]);
   const [visionModel, setVisionModel] = useState('');
+  // P5: 类目预设
+  const [presets, setPresets] = useState([]);
+  const [presetId, setPresetId] = useState('');
+  const [presetFields, setPresetFields] = useState([]);
   const fileRef = useRef(null);
 
   useEffect(() => {
@@ -77,7 +82,21 @@ function CloneModal({ onClose, onSaved, showToast }) {
       setVisionModels(ms);
       if (ms.length) setVisionModel(ms[0].model_id);
     }).catch(() => {});
+    api.studio.dnaPresets().then((r) => {
+      const ps = r.presets || [];
+      setPresets(ps);
+      if (ps.length) {
+        setPresetId(ps[0].id);
+        setPresetFields(ps[0].fields || []);
+      }
+    }).catch(() => {});
   }, []);
+
+  const onPresetChange = (id) => {
+    setPresetId(id);
+    const p = presets.find((x) => x.id === id);
+    setPresetFields((p && p.fields) || []);
+  };
 
   const handleFiles = useCallback((files) => {
     const f = files && files[0];
@@ -93,11 +112,13 @@ function CloneModal({ onClose, onSaved, showToast }) {
 
   const startExtract = useCallback(async () => {
     if (!imgData || busy) return;
+    if (!presetId) { showToast('请先选择服装类目'); return; }
     setBusy(true);
     setStep('extracting');
     try {
-      const r = await api.studio.extractDna({ imageBase64: imgData.base64, mimeType: imgData.mime, model: visionModel || undefined });
+      const r = await api.studio.extractDna({ imageBase64: imgData.base64, mimeType: imgData.mime, model: visionModel || undefined, preset_id: presetId });
       setDna(r.dna);
+      if (Array.isArray(r.fields) && r.fields.length) setPresetFields(r.fields);
       setStep('review');
     } catch (e) {
       showToast(e.message || '提取失败');
@@ -105,7 +126,7 @@ function CloneModal({ onClose, onSaved, showToast }) {
     } finally {
       setBusy(false);
     }
-  }, [imgData, busy, showToast]);
+  }, [imgData, busy, showToast, presetId, visionModel]);
 
   const save = useCallback(async () => {
     if (busy || !dna) return;
@@ -114,7 +135,8 @@ function CloneModal({ onClose, onSaved, showToast }) {
     try {
       await api.studio.createTemplate({
         name: name.trim(),
-        category: dnaVal(dna, 'category'),
+        category: presetId,
+        preset_id: presetId,
         dna_json: dna,
         gen_params_json: { size },
         source_image_base64: imgData.base64,
@@ -126,7 +148,7 @@ function CloneModal({ onClose, onSaved, showToast }) {
     } finally {
       setBusy(false);
     }
-  }, [busy, dna, name, size, imgData, onSaved, showToast]);
+  }, [busy, dna, name, size, imgData, presetId, onSaved, showToast]);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -165,6 +187,12 @@ function CloneModal({ onClose, onSaved, showToast }) {
         )}
         {step === 'upload' && imgData && (
           <div className="modal-foot" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+            <select className="text-input" value={presetId} onChange={(e) => onPresetChange(e.target.value)}>
+              {presets.length === 0 && <option value="">加载类目中…</option>}
+              {presets.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
             {visionModels.length > 0 ? (
               <select className="text-input" value={visionModel} onChange={(e) => setVisionModel(e.target.value)}>
                 {visionModels.map((m) => (
@@ -192,7 +220,7 @@ function CloneModal({ onClose, onSaved, showToast }) {
                 <img src={imgData.preview} alt="来源图" />
               </div>
               <div className="studio-review-fields">
-                <DnaFields dna={dna} setDna={setDna} />
+                <DnaFields dna={dna} setDna={setDna} fields={presetFields} />
               </div>
             </div>
             <div className="studio-save-row">
@@ -252,13 +280,23 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
   const [batching, setBatching] = useState(false);
   const [batchStep, setBatchStep] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  // P5: 模板关联的类目预设字段（动态渲染）
+  const [presetFields, setPresetFields] = useState([]);
 
   const load = useCallback(async () => {
     try {
-      const [td, h] = await Promise.all([api.studio.getTemplate(templateId), api.studio.history(templateId, showArchived)]);
+      const [td, h, pr] = await Promise.all([
+        api.studio.getTemplate(templateId),
+        api.studio.history(templateId, showArchived),
+        api.studio.dnaPresets().catch(() => null),
+      ]);
       setT(td.template);
       setDna(JSON.parse(td.template.dna_json || '{}'));
       setHistory(h.generations || []);
+      const pid = td.template.preset_id;
+      const presets = (pr && pr.presets) || [];
+      const p = presets.find((x) => x.id === pid);
+      setPresetFields((p && p.fields) || []);
     } catch (e) {
       showToast(e.message || '加载失败');
     }
@@ -425,7 +463,7 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
 
         <div className="drawer-sec">
           <div className="drawer-sec-title">DNA</div>
-          <DnaFields dna={dna} setDna={setDna} readOnly={isFinal} />
+          <DnaFields dna={dna} setDna={setDna} readOnly={isFinal} fields={presetFields} />
           {!isFinal && (
             <button className="btn secondary small" disabled={busy} onClick={saveDna}>保存 DNA</button>
           )}

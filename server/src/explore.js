@@ -1,4 +1,5 @@
 // P4 发散创建：发散引擎（纯函数）+ 渲染复用
+// P5: DNA 字段按类目预设动态（废弃旧 11 字段定死）
 import { getConfig } from './config.js';
 import { getDb } from './db.js';
 import { ah } from './asyncHandler.js';
@@ -7,9 +8,10 @@ import { listImageModelsCompat } from './registry.js';
 import { calcPoints, deductPoints } from './points.js';
 import { postJson, stripFences } from './llm.js';
 import { renderDnaPrompt, generateImage, saveStudioImage } from './image.js';
+import { getPreset } from './dnaPresets.js';
 
-// DNA 11 字段（与 extractDna 对齐）
-export const DNA_FIELDS = [
+// 旧 11 字段保留作回退（无预设时的兼容）；正常流程一律走预设
+const LEGACY_DNA_FIELDS = [
   'category', 'silhouette', 'collar', 'sleeve', 'skirt', 'fabric',
   'primary_color', 'secondary_color', 'style', 'details', 'scene',
 ];
@@ -28,21 +30,27 @@ const AXIS_SEEDS = {
   secondary_color: ['金', '银', '红', '墨绿'],
 };
 
-function blankDna() {
+function fieldsOf(preset) {
+  const fs = preset && preset.fields && preset.fields.length ? preset.fields : null;
+  if (fs) return fs.map((f) => ({ key: f.key, label: f.label }));
+  return LEGACY_DNA_FIELDS.map((k) => ({ key: k, label: k }));
+}
+
+function blankDna(preset) {
   const dna = {};
-  for (const f of DNA_FIELDS) dna[f] = { value: '', confidence: 0 };
+  for (const f of fieldsOf(preset)) dna[f.key] = { value: '', confidence: 0 };
   return dna;
 }
 
-function normalizeDna(raw) {
-  const dna = blankDna();
+function normalizeDna(raw, preset) {
+  const dna = blankDna(preset);
   if (raw && typeof raw === 'object') {
-    for (const f of DNA_FIELDS) {
-      const v = raw[f];
+    for (const f of fieldsOf(preset)) {
+      const v = raw[f.key];
       if (v && typeof v === 'object' && 'value' in v) {
-        dna[f] = { value: v.value == null ? '' : v.value, confidence: Number(v.confidence) || 0 };
+        dna[f.key] = { value: v.value == null ? '' : v.value, confidence: Number(v.confidence) || 0 };
       } else if (v != null && typeof v !== 'object') {
-        dna[f] = { value: v, confidence: 0.5 };
+        dna[f.key] = { value: v, confidence: 0.5 };
       }
     }
   }
@@ -50,59 +58,63 @@ function normalizeDna(raw) {
 }
 
 // mock 分支：确定性生成 count 个 DNA，axes 字段轮换取候选值（供回归）
-function mockExpand({ axes, count }) {
+function mockExpand({ axes, count, preset }) {
   const proposals = [];
   for (let i = 0; i < count; i++) {
-    const dna = blankDna();
-    dna.category = { value: '连衣裙', confidence: 0.9 };
+    const dna = blankDna(preset);
     for (const ax of axes) {
       const seeds = AXIS_SEEDS[ax] || ['方案A', '方案B', '方案C', '方案D'];
       dna[ax] = { value: seeds[i % seeds.length], confidence: 0.8 };
     }
-    // 非轴字段填固定合理值
-    if (!axes.includes('fabric')) dna.fabric = { value: '棉', confidence: 0.6 };
-    if (!axes.includes('style')) dna.style = { value: '简约', confidence: 0.6 };
-    proposals.push({ dna, rationale: `mock 候选 ${i + 1}：${axes.map((a) => dna[a].value).join(' / ')}` });
+    proposals.push({ dna, rationale: `mock 候选 ${i + 1}：${axes.map((a) => (dna[a] || {}).value).join(' / ')}` });
   }
   return proposals;
 }
 
-const EXPAND_SYSTEM = `你是服装设计师的灵感发散引擎。用户给出一句灵感（可能为空），你要把它发散成 N 个完整且互异的款式 DNA。
+function buildExpandSystem(preset) {
+  const fields = fieldsOf(preset);
+  const fieldDesc = fields.map((f) => `${f.key}(${f.label})`).join(', ');
+  const pname = (preset && preset.name) || '服装';
+  return `你是服装设计师的灵感发散引擎。用户给出一句灵感（可能为空），你要把它发散成 N 个完整且互异的${pname}款式 DNA。
 
-DNA 有 11 个字段，每个字段格式为 {"value": ..., "confidence": 0~1}：
-category(品类), silhouette(版型), collar(领型), sleeve(袖型), skirt(裙摆), fabric(面料), primary_color(主色), secondary_color(辅色), style(风格), details(细节), scene(场景)。
+DNA 有 ${fields.length} 个字段，每个字段格式为 {"value": ..., "confidence": 0~1}：
+${fieldDesc}。
 
 严格要求：
-1. 只输出 JSON，格式：{"proposals": [{"dna": {11字段}, "rationale": "一句话说明这个方案的差异点"}]}，不要 markdown 代码块之外的任何文字。
+1. 只输出 JSON，格式：{"proposals": [{"dna": {${fields.length}字段}, "rationale": "一句话说明这个方案的差异点"}]}，不要 markdown 代码块之外的任何文字。
 2. N 个方案必须在指定的发散轴字段上两两互异（这是发散的核心，不许换汤不换药）。
 3. 非轴字段填与灵感自洽的合理值；灵感为空时按当季流行风格自由发散。
 4. confidence 按你对该取值的把握填写。`;
+}
 
 /**
  * 发散意图 → N 个完整 DNA
- * @param {Object} p - { intentText, axes, count, model, apiKey, baseUrl, provider, onUsage }
+ * @param {Object} p - { intentText, axes, count, preset, model, apiKey, baseUrl, provider, onUsage }
  * @returns {Promise<Array<{dna, rationale}>>}
  */
-export async function expandIntent({ intentText, axes, count, model, apiKey, baseUrl, provider, onUsage }) {
+export async function expandIntent({ intentText, axes, count, preset, model, apiKey, baseUrl, provider, onUsage }) {
+  const fields = fieldsOf(preset);
+  const validKeys = new Set(fields.map((f) => f.key));
   const ax = [...new Set((axes || []).map((a) => String(a).trim()))];
   const n = Math.floor(Number(count)) || 6;
   if (ax.length === 0) throw new Error('至少选择一个发散轴');
   for (const a of ax) {
-    if (!DNA_FIELDS.includes(a)) throw new Error(`非法发散轴: ${a}`);
+    if (!validKeys.has(a)) throw new Error(`非法发散轴: ${a}`);
   }
   if (n < 2 || n > 8) throw new Error('候选数量须在 2..8 之间');
   const intent = String(intentText || '').slice(0, 500);
 
   const cfg = getConfig();
-  if (cfg.mockLlm) return mockExpand({ axes: ax, count: n });
+  if (cfg.mockLlm) return mockExpand({ axes: ax, count: n, preset });
 
-  const userPrompt = `灵感：${intent || '（空，按流行风格自由发散）'}\n发散轴：${ax.join(', ')}\n数量：${n}`;
+  const labelOf = (k) => (fields.find((f) => f.key === k) || {}).label || k;
+  const userPrompt = `灵感：${intent || '（空，按流行风格自由发散）'}\n发散轴：${ax.map((a) => `${a}(${labelOf(a)})`).join(', ')}\n数量：${n}`;
   let lastErr = null;
   for (const temperature of [0.95, 0.8]) {
     const { json, usage } = await postJson({
       model, temperature, apiKey, baseUrl, provider,
       messages: [
-        { role: 'system', content: EXPAND_SYSTEM },
+        { role: 'system', content: buildExpandSystem(preset) },
         { role: 'user', content: userPrompt },
       ],
     });
@@ -113,7 +125,7 @@ export async function expandIntent({ intentText, axes, count, model, apiKey, bas
       const list = parsed && parsed.proposals;
       if (!Array.isArray(list) || list.length === 0) throw new Error('上游返回为空');
       const proposals = list.slice(0, n).map((p) => ({
-        dna: normalizeDna(p && p.dna),
+        dna: normalizeDna(p && p.dna, preset),
         rationale: String((p && p.rationale) || '').slice(0, 200),
       }));
       return proposals;
@@ -160,6 +172,16 @@ export async function renderOne({ batch, proposalIdx, userId }) {
 
 export const DEFAULT_AXES = ['silhouette', 'fabric', 'style', 'details', 'scene'];
 
+// P5: 按预设取默认发散轴（取预设字段中风格相关的前 5 个；无预设用旧默认）
+export function defaultAxesFor(preset) {
+  if (!preset || !preset.fields || !preset.fields.length) return DEFAULT_AXES;
+  const prefer = ['silhouette', 'fabric', 'style', 'details', 'scene', 'pattern', 'collar', 'neckline'];
+  const keys = preset.fields.map((f) => f.key);
+  const picked = prefer.filter((k) => keys.includes(k));
+  for (const k of keys) if (!picked.includes(k) && picked.length < 5) picked.push(k);
+  return picked.slice(0, 5);
+}
+
 export function mountExploreRoutes(app) {
   const db = getDb();
   const cfg = getConfig();
@@ -185,11 +207,14 @@ export function mountExploreRoutes(app) {
     res.json({ ok: true, models: ms });
   }));
 
-  // POST /api/studio/explore {intent_text?, axes?, count?, render_model_id?, render_size?}
+  // POST /api/studio/explore {intent_text?, axes?, count?, preset_id?, render_model_id?, render_size?}
+  // P5: preset_id 必填（废弃旧 11 字段）；发散轴按预设字段校验
   app.post('/api/studio/explore', ah(async (req, res) => {
     const uid = uidOf(req);
     const b = req.body || {};
-    const axes = Array.isArray(b.axes) && b.axes.length ? b.axes : DEFAULT_AXES;
+    const preset = getPreset(b.preset_id);
+    if (!preset || !preset.is_active) return res.status(400).json({ error: '请选择服装类目' });
+    const axes = Array.isArray(b.axes) && b.axes.length ? b.axes : defaultAxesFor(preset);
     const count = Math.floor(Number(b.count)) || 6;
     // 渲染模型：指定 > 最便宜的启用图片模型
     const imgModels = listImageModelsCompat(true);
@@ -204,7 +229,7 @@ export function mountExploreRoutes(app) {
     let proposals;
     try {
       proposals = await expandIntent({
-        intentText: b.intent_text, axes, count,
+        intentText: b.intent_text, axes, count, preset,
         model: useModel, apiKey: creds.apiKey, baseUrl: creds.baseUrl, provider: creds.provider,
         onUsage: (usage) => {
           try {
@@ -214,17 +239,19 @@ export function mountExploreRoutes(app) {
         },
       });
     } catch (e) {
-      const status = /非法|数量/.test(e.message) ? 400 : 502;
+      const status = /非法|数量|类目/.test(e.message) ? 400 : 502;
       return res.status(status).json({ error: e.message || '发散失败' });
     }
     const now = new Date().toISOString();
     const costEstimate = proposals.length * renderModel.price_per_call;
-    const r = db.prepare(`INSERT INTO exploration_batches(user_id,intent_text,axes_json,count,proposals_json,render_model_id,render_size,cost_estimate,status,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
-      uid, String(b.intent_text || '').slice(0, 500), JSON.stringify(axes), proposals.length,
+    const r = db.prepare(`INSERT INTO exploration_batches(user_id,intent_text,preset_id,axes_json,count,proposals_json,render_model_id,render_size,cost_estimate,status,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      uid, String(b.intent_text || '').slice(0, 500), preset.id, JSON.stringify(axes), proposals.length,
       JSON.stringify(proposals), renderModel.id, renderSize, costEstimate, 'expanded', now, now);
     res.json({
       ok: true, id: r.lastInsertRowid, proposals, cost_estimate: costEstimate,
+      preset_id: preset.id, preset_name: preset.name,
+      fields: preset.fields.map((f) => ({ key: f.key, label: f.label })),
       render_model: { id: renderModel.id, model_id: renderModel.model_id, price_per_call: renderModel.price_per_call },
     });
   }));
@@ -285,9 +312,10 @@ export function mountExploreRoutes(app) {
     for (const idx of [...new Set(indexes)]) {
       const p = proposals[idx];
       if (!p) return res.status(400).json({ error: `候选序号越界: ${idx}` });
-      const tr = db.prepare(`INSERT INTO style_dna_templates(user_id,name,dna_json,gen_params_json,status,version,created_at,updated_at)
-        VALUES(?,?,?,?,'draft',1,?,?)`).run(
-        uid, `发散灵感 #${batch.id}-${idx}`, JSON.stringify(p.dna),
+      const tr = db.prepare(`INSERT INTO style_dna_templates(user_id,name,preset_id,dna_json,gen_params_json,status,version,created_at,updated_at)
+        VALUES(?,?,?,?,?,'draft',1,?,?)`).run(
+        uid, `发散灵感 #${batch.id}-${idx}`, batch.preset_id || '',
+        JSON.stringify(p.dna),
         JSON.stringify({ explore_batch_id: batch.id, proposal_idx: idx }), now, now);
       const tid = tr.lastInsertRowid;
       const r = renderByIdx.get(idx);

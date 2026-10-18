@@ -7,6 +7,7 @@ import { getConfig } from './config.js';
 import { ah } from './asyncHandler.js';
 import { llmCreds } from './auth.js';
 import { extractDna } from './llm.js';
+import { getPreset, listPresets, buildExtractPrompt, mapCnToEn } from './dnaPresets.js';
 import {
   renderDnaPrompt, renderDnaPromptWithOverrides, generateImage, saveStudioImage,
 } from './image.js';
@@ -74,12 +75,20 @@ export function mountStudioRoutes(app) {  const db = getDb();
       .map((m) => ({ id: m.id, model_id: m.model_id, name: m.name, provider_name: m.provider_name }));
     res.json({ ok: true, models: ms });
   }));
-  // POST /api/studio/dna/extract { imageBase64, mimeType?, model? } → { dna }
+  // P5: GET /api/studio/dna-presets → 启用的类目预设（id/name/fields，供克隆+发散下拉）
+  app.get('/api/studio/dna-presets', ah(async (req, res) => {
+    const presets = listPresets(true).map((p) => ({ id: p.id, name: p.name, fields: p.fields }));
+    res.json({ ok: true, presets });
+  }));
+  // POST /api/studio/dna/extract { imageBase64, mimeType?, model?, preset_id } → { dna, preset_id }
+  // P5: preset_id 必填（废弃旧 11 字段）；按预设提示词提取，中文 key 映射回英文 key 返回
   app.post('/api/studio/dna/extract', ah(async (req, res) => {
     const uid = uidOf(req);
-    const { imageBase64, mimeType, model } = req.body || {};
+    const { imageBase64, mimeType, model, preset_id } = req.body || {};
     if (!imageBase64 || typeof imageBase64 !== 'string') return res.status(400).json({ error: '缺少图片数据' });
     if (imageBase64.length > 20 * 1024 * 1024) return res.status(400).json({ error: '图片过大（base64 限 20MB）' });
+    const preset = getPreset(preset_id);
+    if (!preset || !preset.is_active) return res.status(400).json({ error: '请选择服装类目' });
     const creds = llmCreds(req, cfg, requestApiKey);
     let useModel = String(model || '').trim();
     if (!useModel) {
@@ -87,9 +96,11 @@ export function mountStudioRoutes(app) {  const db = getDb();
       useModel = vm ? vm.model_id : '';
     }
     if (!useModel) return res.status(400).json({ error: '请先在模型管理里上架支持视觉的聊天模型，并勾选「支持视觉识图」' });
-    const dna = await extractDna({
+    const systemPrompt = buildExtractPrompt(preset);
+    const raw = await extractDna({
       imageBase64, mimeType: mimeType || 'image/jpeg',
       model: useModel, apiKey: creds.apiKey, baseUrl: creds.baseUrl, provider: creds.provider,
+      systemPrompt,
       onUsage: (usage) => {
         try {
           const pts = calcPoints(useModel, usage);
@@ -97,15 +108,16 @@ export function mountStudioRoutes(app) {  const db = getDb();
         } catch { /* 计费失败不影响主流程 */ }
       },
     });
-    if (!dna) return res.status(502).json({ error: 'DNA 提取失败，请重试或手动填写' });
-    res.json({ ok: true, dna });
+    if (!raw) return res.status(502).json({ error: 'DNA 提取失败，请重试或手动填写' });
+    const dna = mapCnToEn(preset, raw);
+    res.json({ ok: true, dna, preset_id: preset.id, preset_name: preset.name, fields: preset.fields });
   }));
 
   // ---------- 模板 ----------
-  // POST /api/studio/templates { name, source_image_path?, category?, dna_json, gen_params_json? }
+  // POST /api/studio/templates { name, source_image_path?, category?, preset_id?, dna_json, gen_params_json? }
   app.post('/api/studio/templates', ah(async (req, res) => {
     const uid = uidOf(req);
-    const { name, source_image_path, source_image_base64, category, dna_json, gen_params_json } = req.body || {};
+    const { name, source_image_path, source_image_base64, category, preset_id, dna_json, gen_params_json } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: '模板名称必填' });
     if (!dna_json || typeof dna_json !== 'object') return res.status(400).json({ error: 'dna_json 必填' });
     let srcPath = source_image_path || '';
@@ -116,9 +128,9 @@ export function mountStudioRoutes(app) {  const db = getDb();
       } catch { /* 来源图落盘失败不阻塞建模板 */ }
     }
     const now = new Date().toISOString();
-    const r = db.prepare(`INSERT INTO style_dna_templates(user_id,name,source_image_path,category,dna_json,gen_params_json,status,version,created_at,updated_at)
-      VALUES(?,?,?,?,?,?, 'draft',1,?,?)`).run(
-      uid, String(name).trim(), srcPath, category || '',
+    const r = db.prepare(`INSERT INTO style_dna_templates(user_id,name,source_image_path,category,preset_id,dna_json,gen_params_json,status,version,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?, 'draft',1,?,?)`).run(
+      uid, String(name).trim(), srcPath, category || '', preset_id || '',
       JSON.stringify(dna_json), JSON.stringify(gen_params_json || {}), now, now);
     res.json({ ok: true, id: r.lastInsertRowid });
   }));
@@ -143,17 +155,18 @@ export function mountStudioRoutes(app) {  const db = getDb();
     res.json({ ok: true, template: t });
   }));
 
-  // PUT /api/studio/templates/:id { name?, category?, dna_json?, gen_params_json? }；定稿后 403；version+1
+  // PUT /api/studio/templates/:id { name?, category?, preset_id?, dna_json?, gen_params_json? }；定稿后 403；version+1
   app.put('/api/studio/templates/:id', ah(async (req, res) => {
     const t = getTemplate(req.params.id, req);
     if (!t) return res.status(404).json({ error: '模板不存在' });
     if (t.status === 'final') return res.status(403).json({ error: '已定稿的模板不可修改 DNA，请先解锁定' });
-    const { name, category, dna_json, gen_params_json } = req.body || {};
+    const { name, category, preset_id, dna_json, gen_params_json } = req.body || {};
     const now = new Date().toISOString();
-    db.prepare(`UPDATE style_dna_templates SET name=?, category=?, dna_json=?, gen_params_json=?, version=version+1, updated_at=? WHERE id=?`)
+    db.prepare(`UPDATE style_dna_templates SET name=?, category=?, preset_id=?, dna_json=?, gen_params_json=?, version=version+1, updated_at=? WHERE id=?`)
       .run(
         name != null ? String(name).trim() : t.name,
         category != null ? category : t.category,
+        preset_id != null ? preset_id : (t.preset_id || ''),
         dna_json != null ? JSON.stringify(dna_json) : t.dna_json,
         gen_params_json != null ? JSON.stringify(gen_params_json) : t.gen_params_json,
         now, t.id);

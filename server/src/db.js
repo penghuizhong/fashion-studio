@@ -5,6 +5,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 import { getConfig } from './config.js';
 import { encryptSecret } from './secrets.js';
 import { detectProvider } from './providers.js';
+import { DNA_PRESET_SEED } from './dnaPresetsSeed.js';
 
 // 安全随机码：crypto 强随机（邀请码 8 位公开分享，重置码 12 位绝不公开）
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -302,6 +303,17 @@ CREATE TABLE IF NOT EXISTS models(
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_models_kind ON models(kind, is_active);
+-- ---- P5: DNA 类目预设（schema + 提示词模板存库，管理后台可编辑） ----
+CREATE TABLE IF NOT EXISTS dna_presets(
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  fields_json TEXT NOT NULL DEFAULT '[]',
+  prompt TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;
 
 let _db = null;
@@ -471,6 +483,20 @@ export function getDb() {
       const cols = _db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
       if (!cols.includes('user_id')) _db.exec(`ALTER TABLE ${t} ADD COLUMN user_id TEXT`);
     }
+    // P5: DNA 类目预设——模板/发散批次关联预设 id（老库幂等补列）
+    for (const t of ['style_dna_templates', 'exploration_batches']) {
+      const cols = _db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+      if (!cols.includes('preset_id')) _db.exec(`ALTER TABLE ${t} ADD COLUMN preset_id TEXT DEFAULT ''`);
+    }
+    // P5: DNA 类目预设 seed（9 个类目；INSERT OR IGNORE，已有不覆盖用户改过的）
+    try {
+      const now = new Date().toISOString();
+      const ins = _db.prepare(`INSERT OR IGNORE INTO dna_presets(id,name,fields_json,prompt,sort_order,is_active,created_at,updated_at)
+        VALUES(?,?,?,?,?,1,?,?)`);
+      for (const p of DNA_PRESET_SEED) {
+        ins.run(p.id, p.name, JSON.stringify(p.fields), p.prompt, p.sort_order || 0, now, now);
+      }
+    } catch (e) { console.warn('[db] dna_presets seed 失败:', e.message); }
     // 积分系统：users 加列（老库自动补）
     const userCols = _db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
     if (!userCols.includes('points_balance')) _db.exec('ALTER TABLE users ADD COLUMN points_balance INTEGER DEFAULT 0');

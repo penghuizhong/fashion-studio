@@ -34,9 +34,21 @@ const PROMPT_SUFFIX = 'high fashion photography, studio lighting, ultra detailed
 export function renderDnaPrompt(dna) {
   const v = (k) => (dna && dna[k] && dna[k].value) || '';
   const parts = [];
+  const seen = new Set();
   for (const [key, suffix] of DNA_FIELD_ORDER) {
     const val = String(v(key) || '').replace(/_/g, ' ').trim();
     if (val && val !== 'null') parts.push(suffix ? `${val} ${suffix}` : val);
+    seen.add(key);
+  }
+  // P5: 预设新字段（lapel/buttons/waist/rise 等）不在旧顺序表里，按 dna 自身顺序追加
+  if (dna && typeof dna === 'object') {
+    for (const key of Object.keys(dna)) {
+      if (seen.has(key) || key === 'details') continue;
+      const val = v(key);
+      const s = Array.isArray(val) ? val.join(', ') : String(val || '');
+      const clean = s.replace(/_/g, ' ').trim();
+      if (clean && clean !== 'null') parts.push(clean);
+    }
   }
   const det = v('details');
   if (Array.isArray(det)) {

@@ -549,16 +549,25 @@ Schema（value 建议值）：
 {"category":{"value":"evening_dress|mens_suit|...","confidence":0},"silhouette":{"value":"mermaid|A_line|slim|...","confidence":0},"collar":{"value":"sweetheart|...","confidence":0},"sleeve":{"value":"spaghetti_strap|...","confidence":0},"skirt":{"value":"floor_length|...","confidence":0},"fabric":{"value":"satin|chiffon|...","confidence":0},"primary_color":{"value":"颜色名","confidence":0},"secondary_color":{"value":"颜色名或null","confidence":0},"style":{"value":"minimalist|...","confidence":0},"details":{"value":["beading",...],"confidence":0},"scene":{"value":"white_bg|street_snap|...","confidence":0}}`;
 
 // v0.1.0: 趋势图 → 款式 DNA JSON（含置信度）；失败返回 null（调用方标人工填写）
-export async function extractDna({ imageBase64, mimeType, model, apiKey, baseUrl, provider, onUsage, signal }) {
+// P5: 支持 systemPrompt 自定义（类目预设）；不传则用旧通用 DNA_SYSTEM（兼容回归）
+export async function extractDna({ imageBase64, mimeType, model, apiKey, baseUrl, provider, onUsage, signal, systemPrompt }) {
 const cfg = getConfig();
 if (cfg.mockLlm) {
+// P5: 预设模式 mock——按 systemPrompt 是否传入决定返回中文 key 还是旧英文 key
+if (systemPrompt) {
+// 从 prompt 的 Schema 行反推中文 label（"label":{"value" 模式），返回确定性 mock
+const labels = [...String(systemPrompt).matchAll(/"([^"]+)":\{"value"/g)].map((m) => m[1]);
+const mock = {};
+for (const lb of labels) mock[lb] = { value: `mock_${lb}`, confidence: 0.9 };
+return mock;
+}
 return { category: { value: 'evening_dress', confidence: 0.99 }, silhouette: { value: 'mermaid', confidence: 0.9 }, collar: { value: null, confidence: 0.3 }, sleeve: { value: 'spaghetti_strap', confidence: 0.85 }, skirt: { value: 'floor_length', confidence: 0.9 }, fabric: { value: 'satin', confidence: 0.6 }, primary_color: { value: 'champagne', confidence: 0.88 }, secondary_color: { value: null, confidence: 0.5 }, style: { value: 'minimalist', confidence: 0.7 }, details: { value: [], confidence: 0.5 }, scene: { value: 'street_snap', confidence: 0.8 } };
 }
 const json = await llmVision({
 model,
 imageBase64,
 mimeType,
-prompt: DNA_SYSTEM,
+prompt: systemPrompt || DNA_SYSTEM,
 apiKey,
 baseUrl,
 provider,
@@ -569,7 +578,11 @@ const ch = json && json.choices && json.choices[0] && json.choices[0].message;
 const text = (ch && ch.content) || '';
 try {
 const parsed = JSON.parse(stripFences(text));
-if (parsed && typeof parsed === 'object' && parsed.category) return parsed;
+// P5: 预设模式返回任意对象（中文 key，由调用方做 label→key 映射）；旧模式要求有 category 字段
+if (parsed && typeof parsed === 'object') {
+if (systemPrompt) return parsed;
+if (parsed.category) return parsed;
+}
 return null;
 } catch {
 return null;

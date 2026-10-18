@@ -1,20 +1,22 @@
 // P4 发散创建：三步弹窗（意图 → 文字筛选 → 渲染收卡）+ 历史批次
+// P5: 类目预设动态字段（废弃旧 11 字段定死）
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './icons.jsx';
-import { DNA_FIELDS, DEFAULT_AXES, fmtDnaValue } from './DnaFields.js';
+import { DEFAULT_AXES, fmtDnaValue } from './DnaFields.js';
 
 const imgUrl = (p) => (p ? `/${p}` : '');
-const labelOf = (key) => (DNA_FIELDS.find((f) => f.key === key) || {}).label || key;
 
-function DnaCard({ dna, rationale, checked, onToggle }) {
+function DnaCard({ dna, rationale, checked, onToggle, fields }) {
+  const list = Array.isArray(fields) && fields.length ? fields : [];
+  const labelOf = (key) => (list.find((f) => f.key === key) || {}).label || key;
   return (
     <div className={`explore-dna-card${checked ? ' checked' : ''}`} onClick={onToggle}>
       <label className="explore-check">
         <input type="checkbox" checked={!!checked} onChange={onToggle} onClick={(e) => e.stopPropagation()} />
       </label>
       <div className="explore-dna-fields">
-        {DNA_FIELDS.map(({ key, label }) => {
+        {list.map(({ key, label }) => {
           const f = (dna || {})[key] || {};
           const low = Number(f.confidence) < 0.75 && f.value !== '' && f.value != null;
           return (
@@ -38,6 +40,10 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
   const [count, setCount] = useState(6);
   const [imgModels, setImgModels] = useState([]);
   const [renderModelId, setRenderModelId] = useState('');
+  // P5: 类目预设
+  const [presets, setPresets] = useState([]);
+  const [presetId, setPresetId] = useState('');
+  const [presetFields, setPresetFields] = useState([]);
   const [batch, setBatch] = useState(null);
   const [selected, setSelected] = useState([]);
   const [renders, setRenders] = useState([]);
@@ -62,6 +68,37 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
   }, [showToast, renderModelId]);
   useEffect(() => { loadModels(); }, [loadModels]);
 
+  // P5: 加载类目预设；切换类目时重置发散轴为该类目默认
+  useEffect(() => {
+    api.studio.dnaPresets().then((r) => {
+      const ps = r.presets || [];
+      setPresets(ps);
+      if (ps.length && !presetId) {
+        const p0 = ps[0];
+        setPresetId(p0.id);
+        setPresetFields(p0.fields || []);
+        const prefer = ['silhouette', 'fabric', 'style', 'details', 'scene', 'pattern', 'collar', 'neckline'];
+        const keys = (p0.fields || []).map((f) => f.key);
+        const picked = prefer.filter((k) => keys.includes(k));
+        for (const k of keys) if (!picked.includes(k) && picked.length < 5) picked.push(k);
+        setAxes(picked.slice(0, 5));
+      }
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onPresetChange = (id) => {
+    const p = presets.find((x) => x.id === id);
+    if (!p) return;
+    setPresetId(id);
+    setPresetFields(p.fields || []);
+    const prefer = ['silhouette', 'fabric', 'style', 'details', 'scene', 'pattern', 'collar', 'neckline'];
+    const keys = (p.fields || []).map((f) => f.key);
+    const picked = prefer.filter((k) => keys.includes(k));
+    for (const k of keys) if (!picked.includes(k) && picked.length < 5) picked.push(k);
+    setAxes(picked.slice(0, 5));
+  };
+
   const loadBatches = useCallback(async () => {
     try {
       const r = await api.studio.exploreList();
@@ -83,14 +120,16 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
   const startExplore = async () => {
     if (busy) return;
     if (!axes.length) { showToast('至少选一个发散轴'); return; }
+    if (!presetId) { showToast('请先选择服装类目'); return; }
     setBusy(true);
     setBusyMsg('AI 正在发散灵感…');
     try {
       const r = await api.studio.exploreCreate({
-        intent_text: intent.trim(), axes, count,
+        intent_text: intent.trim(), axes, count, preset_id: presetId,
         render_model_id: renderModelId || undefined,
       });
       setBatch(r);
+      if (Array.isArray(r.fields) && r.fields.length) setPresetFields(r.fields);
       setSelected(r.proposals.map((_, i) => i));
       setStep('proposals');
     } catch (e) {
@@ -149,6 +188,10 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     try {
       const r = await api.studio.exploreGet(id);
       setReplay(r.batch);
+      // 回放用批次自己的类目字段
+      const pid = r.batch && r.batch.preset_id;
+      const p = presets.find((x) => x.id === pid);
+      if (p) setPresetFields(p.fields || []);
     } catch (e) {
       showToast(e.message || '加载失败');
     }
@@ -172,6 +215,13 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
           <div className="modal-body">
             {step === 'intent' && (
               <>
+                <label className="key-label">服装类目</label>
+                <select className="text-input" value={presetId} onChange={(e) => onPresetChange(e.target.value)} style={{ width: '100%', marginBottom: 12 }}>
+                  {presets.length === 0 && <option value="">加载类目中…</option>}
+                  {presets.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
                 <label className="key-label">灵感（一句话描述/关键词，可空）</label>
                 <textarea
                   className="explore-intent"
@@ -183,7 +233,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                 />
                 <label className="key-label" style={{ marginTop: 12 }}>发散轴（候选方案在这些字段上拉开差异）</label>
                 <div className="explore-axes">
-                  {DNA_FIELDS.map(({ key, label }) => (
+                  {presetFields.map(({ key, label }) => (
                     <label key={key} className={`explore-axis${axes.includes(key) ? ' checked' : ''}`}>
                       <input type="checkbox" checked={axes.includes(key)} onChange={() => toggleAxis(key)} />
                       {label}
@@ -192,7 +242,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                 </div>
                 <div className="key-input-row" style={{ marginTop: 12 }}>
                   <label className="key-label">候选数量</label>
-                  {[4, 6, 8].map((n) => (
+                  {[2, 4, 6, 8].map((n) => (
                     <button key={n} className={`btn small${count === n ? ' primary' : ' secondary'}`} onClick={() => setCount(n)}>{n} 张</button>
                   ))}
                 </div>
@@ -221,7 +271,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                 </div>
                 <div className="explore-grid">
                   {proposals.map((p, i) => (
-                    <DnaCard key={i} dna={p.dna} rationale={p.rationale} checked={selected.includes(i)} onToggle={() => toggleSel(i)} />
+                    <DnaCard key={i} dna={p.dna} rationale={p.rationale} checked={selected.includes(i)} onToggle={() => toggleSel(i)} fields={presetFields} />
                   ))}
                 </div>
                 <div className="save-row">
@@ -290,7 +340,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
               <button className="btn secondary small" onClick={() => setReplay(null)}>返回列表</button>
             </div>
             {(JSON.parse(replay.proposals_json || '[]')).map((p, i) => (
-              <DnaCard key={i} dna={p.dna} rationale={p.rationale} checked={false} onToggle={() => {}} />
+              <DnaCard key={i} dna={p.dna} rationale={p.rationale} checked={false} onToggle={() => {}} fields={presetFields} />
             ))}
             {(JSON.parse(replay.renders_json || '[]')).filter((r) => !r.error).length > 0 && (
               <div className="explore-render-grid" style={{ marginTop: 12 }}>

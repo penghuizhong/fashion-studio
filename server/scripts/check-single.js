@@ -706,22 +706,23 @@ export async function runSingle() {
     db.prepare(`INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,sort_order,created_at)
       VALUES(?,?,?,?,?,?,?,?,?,?)`).run('model_exptest', 'prov_exptest', 'image', 'test/explore-img', '探索测试图', '{"per_call":5}', '{"sizes":["1:1"]}', 1, 0, now);
 
-    const FIELDS = ['category','silhouette','collar','sleeve','skirt','fabric','primary_color','secondary_color','style','details','scene'];
+    const FIELDS = ['silhouette','neckline','sleeve_length','sleeve_type','skirt_length','skirt_shape','waistline','fabric','primary_color','secondary_color','style','details','scene'];
 
-    // E1. 发散：4 候选、11 字段齐全、轴上有差异、费用预估正确
-    const e1 = await req('POST', '/api/studio/explore', { axes: ['silhouette', 'fabric'], count: 4 });
+    // E1. 发散：4 候选、13 字段齐全、轴上有差异、费用预估正确
+    const e1 = await req('POST', '/api/studio/explore', { preset_id: 'dress', axes: ['silhouette', 'fabric'], count: 4 });
     const bid = e1.json && e1.json.id;
     const props = (e1.json && e1.json.proposals) || [];
     const fieldsOk = props.length === 4 && props.every((x) => x.dna && FIELDS.every((f) => x.dna[f] && 'value' in x.dna[f]));
     const silVals = new Set(props.map((x) => x.dna.silhouette.value));
-    ok('E1. 发散创建：4 候选、11 字段齐全、发散轴有差异、预估 4×5=20',
+    ok('E1. 发散创建：4 候选、13 字段齐全、发散轴有差异、预估 4×5=20',
       e1.status === 200 && bid && fieldsOk && silVals.size > 1 && e1.json.cost_estimate === 20,
       `status=${e1.status} fieldsOk=${fieldsOk} silVals=${silVals.size} estimate=${e1.json && e1.json.cost_estimate}`);
 
     // E2. 非法入参
-    const e2a = await req('POST', '/api/studio/explore', { axes: ['not_a_field'], count: 4 });
-    const e2b = await req('POST', '/api/studio/explore', { axes: ['silhouette'], count: 20 });
-    ok('E2. 非法发散轴 → 400；count=20 → 400', e2a.status === 400 && e2b.status === 400, `a=${e2a.status} b=${e2b.status}`);
+    const e2a = await req('POST', '/api/studio/explore', { preset_id: 'dress', axes: ['not_a_field'], count: 4 });
+    const e2b = await req('POST', '/api/studio/explore', { preset_id: 'dress', axes: ['silhouette'], count: 20 });
+    const e2c = await req('POST', '/api/studio/explore', { axes: ['silhouette'], count: 4 });
+    ok('E2. 非法发散轴 → 400；count=20 → 400；缺 preset_id → 400', e2a.status === 400 && e2b.status === 400 && e2c.status === 400, `a=${e2a.status} b=${e2b.status} c=${e2c.status}`);
 
     // E3. 文字筛选
     const e3a = await req('POST', `/api/studio/explore/${bid}/select`, { indexes: [99] });
@@ -789,21 +790,79 @@ export async function runSingle() {
       v1.status === 200 && vmodels.length === 1 && vmodels[0].model_id === 'test/vision-model',
       `status=${v1.status} count=${vmodels.length}`);
 
-    // V2. 不传 model 时自动用视觉模型（mock 下返回 mock DNA）
+    // V2. 不传 model 时自动用视觉模型（mock 下返回 mock DNA，按预设字段）
     const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-    const v2 = await req('POST', '/api/studio/dna/extract', { imageBase64: tinyPng, mimeType: 'image/png' });
-    ok('V2. 不传模型 → 自动用视觉模型提取成功',
-      v2.status === 200 && v2.json && v2.json.dna && v2.json.dna.category,
+    const v2 = await req('POST', '/api/studio/dna/extract', { imageBase64: tinyPng, mimeType: 'image/png', preset_id: 'suit' });
+    ok('V2. 不传模型 → 自动用视觉模型提取成功（西装 11 字段）',
+      v2.status === 200 && v2.json && v2.json.dna && v2.json.dna.silhouette && v2.json.dna.lapel && v2.json.preset_id === 'suit',
       `status=${v2.status}`);
+
+    // V2b. 不传 preset_id → 400 提示选类目
+    const v2b = await req('POST', '/api/studio/dna/extract', { imageBase64: tinyPng, mimeType: 'image/png' });
+    ok('V2b. 缺 preset_id → 400 提示选类目',
+      v2b.status === 400 && /类目/.test(v2b.json && v2b.json.error || ''),
+      `status=${v2b.status} err=${v2b.json && v2b.json.error}`);
 
     // V3. 删掉视觉模型后 → 400 友好提示
     db.prepare('DELETE FROM models WHERE id=?').run('model_vtest');
-    const v3 = await req('POST', '/api/studio/dna/extract', { imageBase64: tinyPng, mimeType: 'image/png' });
+    const v3 = await req('POST', '/api/studio/dna/extract', { imageBase64: tinyPng, mimeType: 'image/png', preset_id: 'suit' });
     ok('V3. 无视觉模型 → 400 提示去上架',
       v3.status === 400 && /视觉/.test(v3.json && v3.json.error || ''),
       `status=${v3.status} err=${v3.json && v3.json.error}`);
 
     db.prepare('DELETE FROM models WHERE id=?').run('model_vtest2');
     db.prepare('DELETE FROM providers WHERE id=?').run('prov_vtest');
+  }
+
+  // P1-P3. P5 DNA 类目预设
+  {
+    // P1. 公开列表：9 个预设，西装 11 字段、连衣裙 13 字段
+    const p1 = await req('GET', '/api/studio/dna-presets');
+    const ps = (p1.json && p1.json.presets) || [];
+    const suit = ps.find((x) => x.id === 'suit');
+    const dress = ps.find((x) => x.id === 'dress');
+    ok('P1. 预设列表：9 个类目，西装 11 字段、连衣裙 13 字段',
+      p1.status === 200 && ps.length === 9 && (suit.fields || []).length === 11 && (dress.fields || []).length === 13,
+      `status=${p1.status} count=${ps.length}`);
+
+    // P2. 模板创建带 preset_id，详情能读回
+    const tp = await req('POST', '/api/studio/templates', {
+      name: '预设测试模板', preset_id: 'pants', category: 'pants',
+      dna_json: { silhouette: { value: '直筒', confidence: 0.9 } },
+    });
+    const tid = tp.json && tp.json.id;
+    const tg = tid && await req('GET', `/api/studio/templates/${tid}`);
+    ok('P2. 模板 preset_id 存取',
+      tp.status === 200 && tg.json && tg.json.template.preset_id === 'pants',
+      `create=${tp.status} preset=${tg.json && tg.json.template.preset_id}`);
+    if (tid) { const { getDb } = await import('../src/db.js'); getDb().prepare('DELETE FROM style_dna_templates WHERE id=?').run(tid); }
+
+    // P3. 发散收卡带 preset_id（E6 已清理测试模型，这里重建）
+    {
+      const { getDb: getDbP3a } = await import('../src/db.js');
+      const dbP3 = getDbP3a();
+      const nowP3 = new Date().toISOString();
+      dbP3.prepare(`INSERT INTO providers(id,name,preset,kind,base_url,api_key_encrypted,is_default,is_active,sort_order,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)`).run('prov_p3test', 'P3测试供应商', 'custom', 'image', 'https://example.com/v1', '', 0, 1, 0, nowP3);
+      dbP3.prepare(`INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,sort_order,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)`).run('model_p3test', 'prov_p3test', 'image', 'test/p3-img', 'P3测试图', '{"per_call":5}', '{"sizes":["1:1"]}', 1, 0, nowP3);
+    }
+    const p3 = await req('POST', '/api/studio/explore', { preset_id: 'pants', axes: ['silhouette'], count: 2 });
+    const pbid = p3.json && p3.json.id;
+    const pa = pbid ? await req('POST', `/api/studio/explore/${pbid}/adopt`, { indexes: [0] }) : null;
+    const ptid = pa && pa.json && pa.json.template_ids && pa.json.template_ids[0];
+    const { getDb: getDbP3 } = await import('../src/db.js');
+    const ptpl = ptid && getDbP3().prepare('SELECT preset_id FROM style_dna_templates WHERE id=?').get(ptid);
+    ok('P3. 发散收卡带 preset_id',
+      p3.status === 200 && pa && pa.status === 200 && ptpl && ptpl.preset_id === 'pants',
+      `explore=${p3.status} adopt=${pa && pa.status} preset=${ptpl && ptpl.preset_id}`);
+    // 清理 P3 测试数据
+    {
+      const { getDb: getDbP3b } = await import('../src/db.js');
+      const dbP3b = getDbP3b();
+      if (ptid) dbP3b.prepare('DELETE FROM style_dna_templates WHERE id=?').run(ptid);
+      dbP3b.prepare('DELETE FROM models WHERE id=?').run('model_p3test');
+      dbP3b.prepare('DELETE FROM providers WHERE id=?').run('prov_p3test');
+    }
   }
 }

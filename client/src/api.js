@@ -402,6 +402,12 @@ export const api = {
     exploreAdopt: (id, indexes) => post(`/api/studio/explore/${id}/adopt`, { indexes }),
     imageModels: () => get('/api/studio/image-models'),
     visionModels: () => get('/api/studio/vision-models'),
+    // P5: DNA 类目预设
+    dnaPresets: () => get('/api/studio/dna-presets'),
+    adminDnaPresets: () => get('/api/admin/dna-presets'),
+    adminDnaPresetCreate: (data) => post('/api/admin/dna-presets', data),
+    adminDnaPresetUpdate: (id, data) => put(`/api/admin/dna-presets/${id}`, data),
+    adminDnaPresetDelete: (id) => del(`/api/admin/dna-presets/${id}`),
     assets: (params = {}) => {
       const q = new URLSearchParams();
       for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, v);

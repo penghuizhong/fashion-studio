@@ -11,6 +11,7 @@ import { assertPublicHttpsUrl, llmFetch } from './llm.js';
 import { fetchUpstreamModels, refreshProviderModels, getCachedModels } from './registry.js';
 import { API_PROVIDERS, getProvider, detectProvider } from './providers.js';
 import { ah } from './asyncHandler.js';
+import { listPresets as listDnaPresets } from './dnaPresets.js';
 import {
   listPointsModels,
   listPointsModelRows,
@@ -542,6 +543,56 @@ export function mountAuthRoutes(app, authLimiter) {
   app.delete('/api/admin/models/:id', needMulti, needLogin, needAdmin, (req, res) => {
     try {
       res.json(deleteModel(req.params.id));
+    } catch (e) {
+      res.status(400).json({ error: e.message || '删除失败' });
+    }
+  });
+  // P5: DNA 类目预设管理（schema + 提示词模板存库；单用户模式 400，走 needMulti）
+  app.get('/api/admin/dna-presets', needMulti, needLogin, needAdmin, (req, res) => {
+    res.json({ ok: true, presets: listDnaPresets(false) });
+  });
+  app.post('/api/admin/dna-presets', needMulti, needLogin, needAdmin, (req, res) => {
+    try {
+      const b = req.body || {};
+      const id = String(b.id || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+      if (!id) return res.status(400).json({ error: 'id 必填（英文小写/数字/下划线）' });
+      if (!String(b.name || '').trim()) return res.status(400).json({ error: '名称必填' });
+      const fields = Array.isArray(b.fields) ? b.fields.filter((f) => f && f.key && f.label) : [];
+      if (!fields.length) return res.status(400).json({ error: '至少需要一个字段' });
+      const now = new Date().toISOString();
+      getDb().prepare(`INSERT INTO dna_presets(id,name,fields_json,prompt,sort_order,is_active,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?)`).run(
+        id, String(b.name).trim(), JSON.stringify(fields), String(b.prompt || ''),
+        Number(b.sort_order) || 0, b.is_active === false ? 0 : 1, now, now);
+      res.json({ ok: true, id });
+    } catch (e) {
+      res.status(400).json({ error: /UNIQUE|PRIMARY/i.test(e.message) ? 'id 已存在' : (e.message || '保存失败') });
+    }
+  });
+  app.put('/api/admin/dna-presets/:id', needMulti, needLogin, needAdmin, (req, res) => {
+    try {
+      const b = req.body || {};
+      const row = getDb().prepare('SELECT * FROM dna_presets WHERE id=?').get(req.params.id);
+      if (!row) return res.status(404).json({ error: '预设不存在' });
+      const fields = Array.isArray(b.fields) ? b.fields.filter((f) => f && f.key && f.label) : null;
+      if (fields && !fields.length) return res.status(400).json({ error: '至少需要一个字段' });
+      getDb().prepare(`UPDATE dna_presets SET name=?, fields_json=?, prompt=?, sort_order=?, is_active=?, updated_at=? WHERE id=?`).run(
+        b.name != null ? String(b.name).trim() : row.name,
+        fields ? JSON.stringify(fields) : row.fields_json,
+        b.prompt != null ? String(b.prompt) : row.prompt,
+        b.sort_order != null ? Number(b.sort_order) || 0 : row.sort_order,
+        b.is_active != null ? (b.is_active ? 1 : 0) : row.is_active,
+        new Date().toISOString(), req.params.id);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(400).json({ error: e.message || '保存失败' });
+    }
+  });
+  app.delete('/api/admin/dna-presets/:id', needMulti, needLogin, needAdmin, (req, res) => {
+    try {
+      const r = getDb().prepare('DELETE FROM dna_presets WHERE id=?').run(req.params.id);
+      if (!r.changes) return res.status(404).json({ error: '预设不存在' });
+      res.json({ ok: true });
     } catch (e) {
       res.status(400).json({ error: e.message || '删除失败' });
     }

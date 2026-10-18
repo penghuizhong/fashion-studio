@@ -5,6 +5,7 @@ import { api, fetchModels, DEFAULT_BASE_URL } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
 import ModelsTab from './ModelsTab.jsx';
+import DnaPresetsTab from './DnaPresetsTab.jsx';
 import ModelPicker from './ModelPicker.jsx';
 
 // 错误边界：渲染崩溃时显示错误信息而不是黑屏
@@ -223,6 +224,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   ];
   if (isAdmin) TABS.push({ id: 'stats', icon: 'chart', label: '统计' });
   if (isAdmin) TABS.push({ id: 'models', icon: 'cpu', label: '模型管理' });
+  if (isAdmin) TABS.push({ id: 'dna-presets', icon: 'book', label: '类目预设' });
   if (isAdmin) TABS.push({ id: 'prompts', icon: 'chat', label: '提示词' });
   if (isAdmin) TABS.push({ id: 'review', icon: 'shield', label: '审核' });
 
@@ -837,6 +839,9 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
           )}
           {tab === 'models' && isAdmin && (
             <ModelsTab showToast={showToast} />
+          )}
+          {tab === 'dna-presets' && isAdmin && (
+            <DnaPresetsTab showToast={showToast} />
           )}
           {tab === 'prompts' && isAdmin && (
             <>
