@@ -17,7 +17,8 @@ const DNA_FIELDS = [
   { key: 'details', label: '细节元素' },
   { key: 'scene', label: '场景' },
 ];
-const SIZES = ['3:4', '1:1', '16:9'];
+// API 原生像素尺寸（与后端默认 1024x1024 对齐；DashScope 适配器会自动把 x 换成 *）
+const SIZES = ['1024x1024', '1024x1792', '1792x1024'];
 const imgUrl = (p) => (p ? `/${p}` : '');
 const dnaVal = (dna, key) => (dna && dna[key] && dna[key].value) || '';
 const dnaConf = (dna, key) => (dna && dna[key] && typeof dna[key].confidence === 'number' ? dna[key].confidence : 0);
@@ -64,7 +65,7 @@ function CloneModal({ onClose, onSaved, showToast }) {
   const [imgData, setImgData] = useState(null); // { base64, mime, preview }
   const [dna, setDna] = useState(null);
   const [name, setName] = useState('');
-  const [size, setSize] = useState('3:4');
+  const [size, setSize] = useState('1024x1024');
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
 

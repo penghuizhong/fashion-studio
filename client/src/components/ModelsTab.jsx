@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './icons.jsx';
 import ModelPicker from './ModelPicker.jsx';
+import { SIZE_FAMILIES, guessFamily, familyById } from './ImageSizePresets.js';
 
 const PRESETS = [
   { id: 'openrouter', name: 'OpenRouter' },
@@ -17,7 +18,7 @@ const KIND_LABEL = { llm: '仅聊天', image: '仅图片', both: '聊天+图片'
 const emptyPForm = { name: '', preset: 'custom', kind: 'both', base_url: '', api_key: '', is_active: true };
 const emptyMForm = {
   provider_id: '', kind: 'chat', model_id: '', name: '',
-  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '["3:4","1:1","16:9"]', is_active: true,
+  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024',
 };
 
 export default function ModelsTab({ showToast }) {
@@ -29,6 +30,7 @@ export default function ModelsTab({ showToast }) {
   const [pTesting, setPTesting] = useState('');
   const [mEditing, setMEditing] = useState(null);
   const [mForm, setMForm] = useState(emptyMForm);
+  const [sizeFamily, setSizeFamily] = useState('generic');
   const [mBusy, setMBusy] = useState(false);
   const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null });
   const [modelCfgSaving, setModelCfgSaving] = useState(false);
@@ -137,9 +139,27 @@ export default function ModelsTab({ showToast }) {
   // ---- 模型 ----
   const chatModels = models.filter((m) => m.kind === 'chat');
   const imageModels = models.filter((m) => m.kind === 'image');
+  const applyFamily = (fid) => {
+    setSizeFamily(fid);
+    const f = familyById(fid);
+    setMForm((m) => ({ ...m, sizes: f.sizes.join(',') }));
+  };
+  // 模型 ID 变化时按关键词猜家族并带出尺寸（仅图片模型）
+  const onModelIdChange = (v) => {
+    setMForm((m) => {
+      const next = { ...m, model_id: v };
+      if (m.kind === 'image') {
+        const fid = guessFamily(v);
+        setSizeFamily(fid);
+        next.sizes = familyById(fid).sizes.join(',');
+      }
+      return next;
+    });
+  };
   const mStartNew = (kind) => {
     const firstProv = providers.find((p) => p.is_active && (p.kind === 'both' || p.kind === (kind === 'chat' ? 'llm' : 'image')));
     setMForm({ ...emptyMForm, kind, provider_id: firstProv ? firstProv.id : '' });
+    setSizeFamily('generic');
     loadPulledModels(firstProv ? firstProv.id : '');
     setMEditing('new');
   };
@@ -148,8 +168,9 @@ export default function ModelsTab({ showToast }) {
       provider_id: m.provider_id, kind: m.kind, model_id: m.model_id, name: m.name || '',
       input_per_1m: m.pricing.input_per_1m || '', output_per_1m: m.pricing.output_per_1m || '',
       per_call: m.pricing.per_call || '',
-      sizes: JSON.stringify(m.extra.sizes || []), is_active: !!m.is_active,
+      sizes: (m.extra.sizes || []).join(','),
     });
+    setSizeFamily(guessFamily(m.model_id));
     setMEditing(m.id);
   };
   const mSave = async () => {
@@ -165,20 +186,21 @@ export default function ModelsTab({ showToast }) {
       const pc = Math.floor(Number(mForm.per_call));
       if (pc == null || pc < 0 || Number.isNaN(pc)) { showToast('按次单价必须是非负整数'); return; }
       pricing.per_call = pc;
-      try {
-        const sz = JSON.parse(mForm.sizes || '[]');
-        extra.sizes = Array.isArray(sz) ? sz : [];
-      } catch { showToast('尺寸档位 JSON 格式错误'); return; }
+      extra.sizes = String(mForm.sizes || '').split(/[,，、\s]+/).map((x) => x.trim()).filter(Boolean);
     }
     setMBusy(true);
     try {
       const body = {
         provider_id: mForm.provider_id, kind: mForm.kind,
         model_id: mForm.model_id.trim(), name: mForm.name.trim(),
-        pricing, extra, is_active: mForm.is_active,
+        pricing, extra,
       };
-      if (mEditing === 'new') await api.adminModels.create(body);
-      else await api.adminModels.update(mEditing, body);
+      if (mEditing === 'new') {
+        body.is_active = true; // 上架即启用
+        await api.adminModels.create(body);
+      } else {
+        await api.adminModels.update(mEditing, body); // 启停走列表「上架/下架」按钮
+      }
       showToast('已保存');
       setMEditing(null);
       await load();
@@ -339,7 +361,7 @@ export default function ModelsTab({ showToast }) {
           <div style={{ marginTop: 8 }}>
             <ModelPicker
               value={mForm.model_id}
-              onChange={(v) => setMForm((f) => ({ ...f, model_id: v }))}
+              onChange={onModelIdChange}
               models={pulledModels}
               placeholder="模型 ID：输入筛选 400+ 可用模型，或手动输入"
               disabled={mEditing !== 'new'}
@@ -354,19 +376,31 @@ export default function ModelsTab({ showToast }) {
             <input value={mForm.name} onChange={setM('name')} placeholder="显示名（留空则用模型 ID）" />
           </div>
           {mForm.kind === 'chat' ? (
-            <div className="key-input-row" style={{ marginTop: 8 }}>
-              <input type="number" min="1" value={mForm.input_per_1m} onChange={setM('input_per_1m')} placeholder="输入单价 /1M tokens" />
-              <input type="number" min="1" value={mForm.output_per_1m} onChange={setM('output_per_1m')} placeholder="输出单价 /1M tokens" />
-            </div>
+            <>
+              <div className="key-input-row" style={{ marginTop: 8 }}>
+                <input type="number" min="1" value={mForm.input_per_1m} onChange={setM('input_per_1m')} placeholder="输入单价 /1M tokens" />
+              </div>
+              <div className="key-input-row" style={{ marginTop: 8 }}>
+                <input type="number" min="1" value={mForm.output_per_1m} onChange={setM('output_per_1m')} placeholder="输出单价 /1M tokens" />
+              </div>
+            </>
           ) : (
-            <div className="key-input-row" style={{ marginTop: 8 }}>
-              <input type="number" min="0" value={mForm.per_call} onChange={setM('per_call')} placeholder="单价（积分/次）" />
-              <input value={mForm.sizes} onChange={setM('sizes')} placeholder='尺寸档位 JSON，如：["3:4","1:1"]' spellCheck={false} />
-            </div>
+            <>
+              <div className="key-input-row" style={{ marginTop: 8 }}>
+                <input type="number" min="0" value={mForm.per_call} onChange={setM('per_call')} placeholder="单价（积分/次）" />
+              </div>
+              <div className="key-input-row" style={{ marginTop: 8 }}>
+                <select value={sizeFamily} onChange={(e) => applyFamily(e.target.value)} title="模型家族：自动带出该家族常用尺寸">
+                  {SIZE_FAMILIES.map((f) => (
+                    <option key={f.id} value={f.id}>{f.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="key-input-row" style={{ marginTop: 8 }}>
+                <input value={mForm.sizes} onChange={setM('sizes')} placeholder="尺寸档位（API 原生值，逗号分隔），如：1024x1024,1792x1024" spellCheck={false} />
+              </div>
+            </>
           )}
-          <label className="key-desc small" style={{ display: 'block', marginTop: 8 }}>
-            <input type="checkbox" checked={mForm.is_active} onChange={setM('is_active')} /> 启用
-          </label>
           <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
             <button className="btn primary small" disabled={mBusy} onClick={mSave}>保存</button>
             <button className="btn secondary small" onClick={() => setMEditing(null)}>取消</button>
