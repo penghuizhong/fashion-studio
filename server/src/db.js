@@ -497,6 +497,36 @@ export function getDb() {
         ins.run(p.id, p.name, JSON.stringify(p.fields), p.prompt, p.sort_order || 0, now, now);
       }
     } catch (e) { console.warn('[db] dna_presets seed 失败:', e.message); }
+    // P5: 一次性清理旧 11 字段模板（用户 2026-10-18 明确要求删干净防串）
+    // 判定：preset_id 为空的即为旧模板；连带其生成记录与磁盘图片一起删；幂等（无旧模板时 no-op）
+    try {
+      const oldTpls = _db.prepare("SELECT id, name, source_image_path FROM style_dna_templates WHERE preset_id IS NULL OR preset_id=''").all();
+      if (oldTpls.length) {
+        const dataDir = getConfig().dataDir || './data';
+        let genN = 0, fileN = 0;
+        const delGen = _db.prepare('DELETE FROM dna_generations WHERE template_id=?');
+        const delTpl = _db.prepare('DELETE FROM style_dna_templates WHERE id=?');
+        const txn = _db.transaction((tpls) => {
+          for (const t of tpls) {
+            const gens = _db.prepare('SELECT image_path, thumb_path FROM dna_generations WHERE template_id=?').all(t.id);
+            for (const g of gens) {
+              for (const p of [g.image_path, g.thumb_path, t.source_image_path]) {
+                if (!p) continue;
+                try {
+                  const abs = path.join(dataDir, p);
+                  if (fs.existsSync(abs)) { fs.unlinkSync(abs); fileN++; }
+                } catch {}
+              }
+              genN++;
+            }
+            delGen.run(t.id);
+            delTpl.run(t.id);
+          }
+        });
+        txn(oldTpls);
+        console.log(`[db] P5 清理旧模板：${oldTpls.length} 个模板，${genN} 条生成记录，${fileN} 个文件`);
+      }
+    } catch (e) { console.warn('[db] P5 旧模板清理失败:', e.message); }
     // 积分系统：users 加列（老库自动补）
     const userCols = _db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
     if (!userCols.includes('points_balance')) _db.exec('ALTER TABLE users ADD COLUMN points_balance INTEGER DEFAULT 0');
