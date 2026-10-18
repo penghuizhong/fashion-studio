@@ -4,6 +4,8 @@ server/data/
 client/dist/
 .DS_Store
 *.log
-# v1.16.0: 头像 PNG 由 client/avatar-src/*.b64 解码生成（构建产物，不进仓库）
+# v0.2.2: 头像 WebP 以 base64 文本存于 client/avatar-src/*.b64（插件传不了二进制），
+# 构建时由 scripts/decode-avatars.sh 还原到 public/avatars/；PNG 已废弃，构建时清理
 client/public/avatars/*.png
+client/public/avatars/*.webp
 !client/public/avatars/.gitkeep

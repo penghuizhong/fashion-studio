@@ -2134,12 +2134,25 @@ export function createApp() {
   }));
 
   // ---------- 静态前端（存在才挂） ----------
+  // 缓存策略：/avatars 与 /assets（vite hash 产物）可长期 immutable 缓存；
+  // index.html（含 SPA fallback）必须 no-cache，保证发版后用户拿到最新入口
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const distDir = path.resolve(__dirname, '../../client/dist');
   if (fs.existsSync(distDir)) {
-    app.use(express.static(distDir));
+    app.use(express.static(distDir, {
+      setHeaders(res, filePath) {
+        if (filePath.includes(`${path.sep}avatars${path.sep}`) || filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else if (filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+      },
+    }));
     // SPA fallback：非 /api 请求返回 index.html
-    app.get(/^\/(?!api).*/, (req, res) => res.sendFile(path.join(distDir, 'index.html')));
+    app.get(/^\/(?!api).*/, (req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
+      res.sendFile(path.join(distDir, 'index.html'));
+    });
   }
 
   // 集中错误处理（必须在所有路由之后）

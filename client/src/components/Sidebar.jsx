@@ -278,7 +278,7 @@ export default function Sidebar({
                 onClick={() => toggleExpand(c.id)}
               >
                 <span className={`triangle ${isOpen ? 'open' : ''}`}>▸</span>
-                <Avatar src={c.avatar} size={36} className="char-avatar" />
+                <Avatar src={c.avatar} size={36} className="char-avatar" eager />
                 <span className="char-name">{c.name}</span>
                 <span className="conv-badge" title="对话数">
                   {c.conversation_count || 0}

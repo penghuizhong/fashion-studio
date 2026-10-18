@@ -690,7 +690,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
           {isGroup ? (
             <span className="chat-avatar"><Icon name="users" size={20} /></span>
           ) : (
-            <Avatar src={headerAvatarSrc} size={32} className="chat-avatar" />
+            <Avatar src={headerAvatarSrc} size={32} className="chat-avatar" eager />
           )}
           <span className="chat-char-name">{headerName}</span>
           <span className="chat-divider">·</span>
@@ -741,7 +741,7 @@ export default function ChatView({ characterId, conversationId, isGroup, onConve
         {!loading && messages.length === 0 && !sending && (
           <div className="chat-empty">
             <div className="chat-empty-avatar">
-              {isGroup ? <Icon name="users" size={32} /> : <Avatar src={headerAvatarSrc} size={64} />}
+              {isGroup ? <Icon name="users" size={32} /> : <Avatar src={headerAvatarSrc} size={64} eager />}
             </div>
             <p>
               {isGroup ? (
