@@ -9,7 +9,6 @@ import { llmCreds } from './auth.js';
 import { extractDna } from './llm.js';
 import {
   renderDnaPrompt, renderDnaPromptWithOverrides, generateImage, saveStudioImage,
-  listImageModels, upsertImageModel,
 } from './image.js';
 import { calcPoints, deductPoints } from './points.js';
 
@@ -293,29 +292,5 @@ export function mountStudioRoutes(app) {  const db = getDb();
       n++;
     }
     res.json({ ok: true, deleted: n });
-  }));
-
-  // ---------- 管理员：图片模型上架 ----------
-  app.get('/api/admin/image-models', ah(async (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    res.json({ ok: true, models: listImageModels(false) });
-  }));
-  app.post('/api/admin/image-models', ah(async (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    try {
-      const m = upsertImageModel(req.body || {});
-      res.json({ ok: true, model: m });
-    } catch (e) {
-      res.status(400).json({ error: e.message || '保存失败' });
-    }
-  }));
-  app.put('/api/admin/image-models/:id', ah(async (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    try {
-      const m = upsertImageModel({ ...(req.body || {}), id: req.params.id });
-      res.json({ ok: true, model: m });
-    } catch (e) {
-      res.status(400).json({ error: e.message || '保存失败' });
-    }
   }));
 }

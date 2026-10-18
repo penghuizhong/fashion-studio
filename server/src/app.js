@@ -56,6 +56,7 @@ import {
   recordByokUsage,
   getBalance,
 } from './points.js';
+import { listModels } from './registry.js';
 
 // file 参数/changed 数组用的短键 ↔ 字段名映射
 const FILE_FIELDS = { soul: 'soul_md', user: 'user_md', memory: 'memory_md' };
@@ -77,7 +78,7 @@ export function getFilterFallbackModels() {
 export function pickFilterFallbackModel(currentModel) {
   let rows = [];
   try {
-    rows = getDb().prepare('SELECT model_id FROM points_models WHERE is_active=1').all().map((r) => r.model_id);
+    rows = listModels({ kind: 'chat', activeOnly: true }).map((r) => r.model_id);
   } catch {}
   for (const m of getFilterFallbackModels()) {
     if (m !== currentModel && rows.includes(m)) return m;
@@ -332,7 +333,7 @@ export function createApp() {
       // 积分系统：多用户模式可用；platform_ready 表示站长已配置平台 Key
       points_enabled: !!cfg.multiUser,
       platform_ready: !!cfg.apiKey,
-      points_models: cfg.multiUser ? listPointsModels(true) : [],
+      chat_models: cfg.multiUser ? listPointsModels(true) : [],
     });
   });
 

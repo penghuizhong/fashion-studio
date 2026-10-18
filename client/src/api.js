@@ -325,11 +325,21 @@ export const api = {
   // v1.18.1: 管理员直接设用户余额
   adminSetPoints: (username, balance) => post('/api/admin/points/set', { username, balance }),
   adminListUsers: (q = '') => get(`/api/admin/users?q=${encodeURIComponent(q)}`),
-  // 积分可用模型管理（管理员）
-  adminPointsModels: () => get('/api/admin/points/models'),
-  adminAddPointsModel: (data) => post('/api/admin/points/models', data),
-  adminUpdatePointsModel: (id, data) => put(`/api/admin/points/models/${id}`, data),
-  adminDeletePointsModel: (id) => del(`/api/admin/points/models/${id}`),
+  // v0.2.0: 统一模型注册表管理（管理员）：供应商 → 模型
+  adminProviders: {
+    list: () => get('/api/admin/providers'),
+    create: (data) => post('/api/admin/providers', data),
+    update: (id, data) => put(`/api/admin/providers/${id}`, data),
+    remove: (id) => del(`/api/admin/providers/${id}`),
+    setDefault: (id) => post(`/api/admin/providers/${id}/default`, {}),
+    test: (id, data) => post(`/api/admin/providers/${id}/test`, data || {}),
+  },
+  adminModels: {
+    list: (kind) => get(`/api/admin/models${kind ? `?kind=${kind}` : ''}`),
+    create: (data) => post('/api/admin/models', data),
+    update: (id, data) => put(`/api/admin/models/${id}`, data),
+    remove: (id) => del(`/api/admin/models/${id}`),
+  },
   // v1.12 模型配置（管理员）：后台模型 / 聊天默认模型
   adminGetSettings: () => get('/api/admin/settings'),
   adminUpdateSettings: (data) => put('/api/admin/settings', data),
@@ -389,10 +399,5 @@ export const api = {
       return get(`/api/studio/assets${s ? `?${s}` : ''}`);
     },
     bulkDelete: (ids) => post('/api/studio/assets/bulk-delete', { ids }),
-  },
-  adminImageModels: {
-    list: () => get('/api/admin/image-models'),
-    create: (data) => post('/api/admin/image-models', data),
-    update: (id, data) => put(`/api/admin/image-models/${id}`, data),
   },
 };

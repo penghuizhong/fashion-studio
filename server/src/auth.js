@@ -3,10 +3,11 @@ import crypto from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { getDb, getSetting, setSetting } from './db.js';
+import { listProviders, getProviderCreds, createProvider, updateProvider, deleteProvider, setDefaultProvider, listModels, createModel, updateModel, deleteModel } from './registry.js';
 import { getRoleplayTemplate } from './memory.js';
 import { jailbreakPresetAdminList, JAILBREAK_PRESETS } from './jailbreakPresets.js';
 import { getConfig } from './config.js';
-import { assertPublicHttpsUrl, llmFetch } from './llm.js';
+import { assertPublicHttpsUrl, llmFetch, testUpstream } from './llm.js';
 import { API_PROVIDERS, getProvider, detectProvider } from './providers.js';
 import { ah } from './asyncHandler.js';
 import {
@@ -120,30 +121,9 @@ export function destroySession(req, res) {
   clearSessionCookie(req, res);
 }
 
-// ---------- AES-256-GCM 用户 Key 托管 ----------
-// 存储格式：ivBase64:tagBase64:cipherBase64；空值存 NULL，解密空值返回 ''
-export function encryptSecret(masterKeyHex, plaintext) {
-  if (!plaintext) return null;
-  const key = Buffer.from(masterKeyHex, 'hex');
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const enc = Buffer.concat([c.update(String(plaintext), 'utf8'), c.final()]);
-  return `${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
-}
-
-export function decryptSecret(masterKeyHex, stored) {
-  if (!stored) return '';
-  const parts = String(stored).split(':');
-  if (parts.length !== 3) return '';
-  try {
-    const key = Buffer.from(masterKeyHex, 'hex');
-    const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(parts[0], 'base64'));
-    d.setAuthTag(Buffer.from(parts[1], 'base64'));
-    return Buffer.concat([d.update(Buffer.from(parts[2], 'base64')), d.final()]).toString('utf8');
-  } catch {
-    return '';
-  }
-}
+// ---------- AES-256-GCM 用户 Key 托管（v0.2.0: 实现移至 secrets.js，此处 re-export 保持兼容） ----------
+import { encryptSecret, decryptSecret } from './secrets.js';
+export { encryptSecret, decryptSecret };
 
 // 解密后的用户 API 配置：{ key, baseUrl, chatModel, workerModel, provider }（无配置时全 ''，provider 默认 custom）
 // v1.20.0: provider 决定协议参数（关思考/模型 ID 格式），与地址解耦
@@ -492,75 +472,78 @@ export function mountAuthRoutes(app, authLimiter) {
     res.json({ ok: true, username: target.username, balance: after });
   });
 
-  // ---------- 积分可用模型管理（管理员） ----------
-  // GET /api/admin/points/models：全部模型（含未启用）
-  app.get('/api/admin/points/models', needMulti, needLogin, needAdmin, (req, res) => {
-    res.json(listPointsModelRows());
+  // ---------- v0.2.0: 统一模型注册表管理（供应商 → 模型两层） ----------
+  // 密钥只写不读：列表/详情一律掩码；连通测试走服务端代理
+  app.get('/api/admin/providers', needMulti, needLogin, needAdmin, (req, res) => {
+    res.json({ ok: true, providers: listProviders(false) });
   });
-
-  // POST /api/admin/points/models：新增 { model_id, name, description?, input_per_1m, output_per_1m }
-  app.post('/api/admin/points/models', needMulti, needLogin, needAdmin, (req, res) => {
-    const b = req.body || {};
-    const model_id = String(b.model_id || '').trim();
-    const name = String(b.name || '').trim() || model_id;
-    const description = String(b.description || '').trim();
-    const input_per_1m = Math.floor(Number(b.input_per_1m));
-    const output_per_1m = Math.floor(Number(b.output_per_1m));
-    if (!model_id) return res.status(400).json({ error: '模型 ID 不能为空' });
-    if (!input_per_1m || input_per_1m <= 0 || !output_per_1m || output_per_1m <= 0)
-      return res.status(400).json({ error: '输入/输出单价必须是大于 0 的整数（积分/1M tokens）' });
+  app.post('/api/admin/providers', needMulti, needLogin, needAdmin, (req, res) => {
     try {
-      const r = getDb()
-        .prepare(
-          'INSERT INTO points_models(model_id, name, description, input_per_1m, output_per_1m, is_active, sort_order, created_at) VALUES(?,?,?,?,?,?,?,?)'
-        )
-        .run(model_id, name, description, input_per_1m, output_per_1m, 1, 999, new Date().toISOString());
-      res.json({ ok: true, id: Number(r.lastInsertRowid) });
+      res.json({ ok: true, provider: createProvider(req.body || {}) });
     } catch (e) {
-      if (String(e.message || '').includes('UNIQUE'))
-        return res.status(409).json({ error: '该模型 ID 已存在' });
-      throw e;
+      res.status(400).json({ error: e.message || '保存失败' });
+    }
+  });
+  app.put('/api/admin/providers/:id', needMulti, needLogin, needAdmin, (req, res) => {
+    try {
+      res.json({ ok: true, provider: updateProvider(req.params.id, req.body || {}) });
+    } catch (e) {
+      res.status(400).json({ error: e.message || '保存失败' });
+    }
+  });
+  app.delete('/api/admin/providers/:id', needMulti, needLogin, needAdmin, (req, res) => {
+    try {
+      res.json(deleteProvider(req.params.id));
+    } catch (e) {
+      res.status(400).json({ error: e.message || '删除失败' });
+    }
+  });
+  app.post('/api/admin/providers/:id/default', needMulti, needLogin, needAdmin, (req, res) => {
+    try {
+      setDefaultProvider(req.params.id);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(400).json({ error: e.message || '设置失败' });
+    }
+  });
+  // 连通测试：用供应商凭证发一次最小聊天请求（image 专用供应商请用一次生图验证）
+  app.post('/api/admin/providers/:id/test', needMulti, needLogin, needAdmin, async (req, res) => {
+    const c = getProviderCreds(req.params.id);
+    if (!c) return res.status(404).json({ error: '供应商不存在' });
+    if (!c.apiKey) return res.status(400).json({ error: '该供应商未配置 Key' });
+    const t0 = Date.now();
+    try {
+      await testUpstream({ provider: c.preset, baseUrl: c.baseUrl, apiKey: c.apiKey, model: (req.body || {}).model || 'test' });
+      res.json({ ok: true, latency: Date.now() - t0 });
+    } catch (e) {
+      res.json({ ok: false, latency: Date.now() - t0, error: String((e && e.message) || e).slice(0, 200) });
     }
   });
 
-  // PUT /api/admin/points/models/:id：改名/改价/启用/排序（字段缺省=保持）
-  app.put('/api/admin/points/models/:id', needMulti, needLogin, needAdmin, (req, res) => {
-    const id = Number(req.params.id);
-    const b = req.body || {};
-    const row = getDb().prepare('SELECT * FROM points_models WHERE id = ?').get(id);
-    if (!row) return res.status(404).json({ error: '模型不存在' });
-    const patch = {};
-    if (b.name !== undefined) patch.name = String(b.name).trim() || row.name;
-    if (b.description !== undefined) patch.description = String(b.description).trim();
-    if (b.input_per_1m !== undefined) {
-      const v = Math.floor(Number(b.input_per_1m));
-      if (!v || v <= 0) return res.status(400).json({ error: '输入单价必须是大于 0 的整数' });
-      patch.input_per_1m = v;
-    }
-    if (b.output_per_1m !== undefined) {
-      const v = Math.floor(Number(b.output_per_1m));
-      if (!v || v <= 0) return res.status(400).json({ error: '输出单价必须是大于 0 的整数' });
-      patch.output_per_1m = v;
-    }
-    if (b.is_active !== undefined) patch.is_active = b.is_active ? 1 : 0;
-    if (b.sort_order !== undefined) patch.sort_order = Math.floor(Number(b.sort_order)) || 0;
-    const keys = Object.keys(patch);
-    if (keys.length) {
-      getDb()
-        .prepare(`UPDATE points_models SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
-        .run(...keys.map((k) => patch[k]), id);
-    }
-    res.json({ ok: true });
+  app.get('/api/admin/models', needMulti, needLogin, needAdmin, (req, res) => {
+    res.json({ ok: true, models: listModels({ kind: req.query.kind, activeOnly: false }) });
   });
-
-  // DELETE /api/admin/points/models/:id：删除
-  app.delete('/api/admin/points/models/:id', needMulti, needLogin, needAdmin, (req, res) => {
-    const id = Number(req.params.id);
-    const r = getDb().prepare('DELETE FROM points_models WHERE id = ?').run(id);
-    if (!r.changes) return res.status(404).json({ error: '模型不存在' });
-    res.json({ ok: true });
+  app.post('/api/admin/models', needMulti, needLogin, needAdmin, (req, res) => {
+    try {
+      res.json({ ok: true, model: createModel(req.body || {}) });
+    } catch (e) {
+      res.status(400).json({ error: e.message || '保存失败' });
+    }
   });
-
+  app.put('/api/admin/models/:id', needMulti, needLogin, needAdmin, (req, res) => {
+    try {
+      res.json({ ok: true, model: updateModel(req.params.id, req.body || {}) });
+    } catch (e) {
+      res.status(400).json({ error: e.message || '保存失败' });
+    }
+  });
+  app.delete('/api/admin/models/:id', needMulti, needLogin, needAdmin, (req, res) => {
+    try {
+      res.json(deleteModel(req.params.id));
+    } catch (e) {
+      res.status(400).json({ error: e.message || '删除失败' });
+    }
+  });
   // v1.12 模型配置：GET /api/admin/settings → { worker_model, chat_default_model, filter_fallback_models }
   // worker_model：后台模型（群聊导演/记忆/摘要共用），'' = 自动选最便宜
   // chat_default_model：聊天默认模型，'' = 自动选最便宜

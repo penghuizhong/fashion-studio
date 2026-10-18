@@ -428,25 +428,54 @@ export async function runMulti() {
     );
   }
 
-  // M25. 管理员模型 CRUD：查 → 增 → 改价 → 下架（公开列表消失）→ 删除；非管理员 403
+  // M25. v0.2.0: 统一注册表——供应商 CRUD + 密钥掩码；非管理员 403
   {
     const jarAdmin = jarAdminM;
-    const list0 = await req('GET', '/api/admin/points/models', undefined, { jar: jarAdmin });
-    const n0 = Array.isArray(list0.json) ? list0.json.length : -1;
-    const add = await req('POST', '/api/admin/points/models', { model_id: 'test/model-x', name: '测试模型', input_per_1m: 100, output_per_1m: 200 }, { jar: jarAdmin });
-    const newId = add.json && add.json.id;
-    const upd = await req('PUT', `/api/admin/points/models/${newId}`, { input_per_1m: 111 }, { jar: jarAdmin });
-    const off = await req('PUT', `/api/admin/points/models/${newId}`, { is_active: 0 }, { jar: jarAdmin });
+    const addP = await req('POST', '/api/admin/providers', { name: '测试供应商', preset: 'custom', kind: 'both', base_url: 'https://example.com/v1', api_key: 'sk-test-123' }, { jar: jarAdmin });
+    const pid = addP.json && addP.json.provider && addP.json.provider.id;
+    const hasKey = addP.json && addP.json.provider && addP.json.provider.has_key === true;
+    const noLeak = addP.json && !('api_key_encrypted' in (addP.json.provider || {})) && !('apiKey' in (addP.json.provider || {}));
+    const listP = await req('GET', '/api/admin/providers', undefined, { jar: jarAdmin });
+    const listed = ((listP.json && listP.json.providers) || []).some((x) => x.id === pid && x.api_key_mask === '••••••••');
+    const updP = await req('PUT', `/api/admin/providers/${pid}`, { name: '测试供应商改名' }, { jar: jarAdmin });
+    // 连通测试：假 key 应返回 ok:false（非 500）
+    const tst = await req('POST', `/api/admin/providers/${pid}/test`, {}, { jar: jarAdmin });
+    const def = await req('POST', `/api/admin/providers/${pid}/default`, {}, { jar: jarAdmin });
+    const delP = await req('DELETE', `/api/admin/providers/${pid}`, undefined, { jar: jarAdmin });
+    const forbidden = await req('POST', '/api/admin/providers', { name: 'x' }, { jar: jarC });
+    ok(
+      'M25. 供应商 CRUD：新增 200+掩码 → 列表掩码 → 改名 200 → 连通测试不 500 → 设默认 200 → 删除 200；非管理员 403',
+      addP.status === 200 && pid && hasKey && noLeak &&
+        listP.status === 200 && listed && updP.status === 200 &&
+        tst.status === 200 && tst.json && tst.json.ok === false &&
+        def.status === 200 && delP.status === 200 && forbidden.status === 403,
+      `add=${addP.status} list=${listP.status} upd=${updP.status} test=${tst.status} def=${def.status} del=${delP.status} forbidden=${forbidden.status}`
+    );
+  }
+
+  // M25b. v0.2.0: 统一注册表——模型 CRUD：增 → 改价 → 下架（公开列表消失）→ 删除；非管理员 403
+  {
+    const jarAdmin = jarAdminM;
+    const pr = await req('POST', '/api/admin/providers', { name: '模型测试供应商', preset: 'custom', kind: 'both', base_url: 'https://example.com/v1', api_key: 'sk-x' }, { jar: jarAdmin });
+    const pid = pr.json && pr.json.provider && pr.json.provider.id;
+    const add = await req('POST', '/api/admin/models', { provider_id: pid, kind: 'chat', model_id: 'test/model-x', name: '测试模型', pricing: { input_per_1m: 100, output_per_1m: 200 } }, { jar: jarAdmin });
+    const newId = add.json && add.json.model && add.json.model.id;
+    const priceOk = add.json && add.json.model && add.json.model.pricing && add.json.model.pricing.input_per_1m === 100;
+    const upd = await req('PUT', `/api/admin/models/${newId}`, { pricing: { input_per_1m: 111, output_per_1m: 200 } }, { jar: jarAdmin });
+    const updOk = upd.json && upd.json.model && upd.json.model.pricing && upd.json.model.pricing.input_per_1m === 111;
+    const off = await req('PUT', `/api/admin/models/${newId}`, { is_active: 0 }, { jar: jarAdmin });
     const pub = await req('GET', '/api/points', undefined, { jar: jarAdmin });
     const pubIds = ((pub.json && pub.json.models) || []).map((m) => m.id);
-    const del = await req('DELETE', `/api/admin/points/models/${newId}`, undefined, { jar: jarAdmin });
-    const forbidden = await req('POST', '/api/admin/points/models', { model_id: 'x/y', name: 'x' }, { jar: jarC });
+    const badKind = await req('POST', '/api/admin/models', { provider_id: pid, kind: 'chat', model_id: '', name: '空' }, { jar: jarAdmin });
+    const del = await req('DELETE', `/api/admin/models/${newId}`, undefined, { jar: jarAdmin });
+    const delP = await req('DELETE', `/api/admin/providers/${pid}`, undefined, { jar: jarAdmin });
+    const forbidden = await req('POST', '/api/admin/models', { provider_id: pid, kind: 'chat', model_id: 'x/y', name: 'x' }, { jar: jarC });
     ok(
-      'M25. 模型 CRUD：列表 200 → 新增 200 → 改价 200 → 下架后公开列表无 → 删除 200；非管理员 403',
-      list0.status === 200 && n0 >= 3 && add.status === 200 && newId &&
-        upd.status === 200 && off.status === 200 && !pubIds.includes('test/model-x') &&
-        del.status === 200 && forbidden.status === 403,
-      `n0=${n0} add=${add.status} upd=${upd.status} off=${off.status} del=${del.status} forbidden=${forbidden.status}`
+      'M25b. 模型 CRUD：新增 200 → 改价 200 → 下架后公开列表无 → 空模型ID 400 → 删除 200；非管理员 403',
+      pr.status === 200 && add.status === 200 && newId && priceOk &&
+        upd.status === 200 && updOk && off.status === 200 && !pubIds.includes('test/model-x') &&
+        badKind.status === 400 && del.status === 200 && delP.status === 200 && forbidden.status === 403,
+      `add=${add.status} upd=${upd.status} off=${off.status} bad=${badKind.status} del=${del.status} forbidden=${forbidden.status}`
     );
   }
 
@@ -674,7 +703,7 @@ export async function runMulti() {
     await req('PUT', '/api/admin/settings', { worker_model: '', chat_default_model: '' }, { jar: jarA37 });
     // v1.15.1 诊断：CI 偶发 set=400 时打出表内容（含不可见字符）
     const { getDb: getDb37 } = await import('../src/db.js');
-    const models37 = getDb37().prepare('SELECT model_id, is_active FROM points_models').all();
+    const models37 = getDb37().prepare("SELECT model_id, is_active FROM models WHERE kind='chat'").all();
     const modelsStr = JSON.stringify(models37.map((r) => [r.model_id, r.is_active]));
     ok(
       'M37. 管理员读写模型配置；非法模型 → 400；非管理员 → 403；getWorkerModel 生效',

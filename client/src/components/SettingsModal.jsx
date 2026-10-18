@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { api, fetchModels, DEFAULT_BASE_URL } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
-import ImageModelsTab from './ImageModelsTab.jsx';
+import ModelsTab from './ModelsTab.jsx';
 
 // 自研模型下拉（iOS Safari 不支持原生 datalist）
 function ModelPicker({ value, onChange, models, placeholder, openSignal }) {
@@ -224,48 +224,16 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   // 密码重置码
   const [recoveryCode, setRecoveryCode] = useState('');
   const [regenBusy, setRegenBusy] = useState(false);
-  // 积分模型管理
-  const [pmModels, setPmModels] = useState([]);
-  const [pmForm, setPmForm] = useState({ model_id: '', name: '', description: '', input_per_1m: '', output_per_1m: '' });
-  // v1.26.2: 拉取可用模型（带实时报价）+ 连通测试
-  const [orModels, setOrModels] = useState([]);
-  const [orLoading, setOrLoading] = useState(false);
-  const [testResult, setTestResult] = useState(null);
-  const [testing, setTesting] = useState(false);
-  // v1.26.2: 语音模型清单 + 测试
-  const [pmAdding, setPmAdding] = useState(false);
-  const [pmEditing, setPmEditing] = useState(null); // 正在编辑的行 id
-  const [pmEditForm, setPmEditForm] = useState({});
-  // v1.12 模型配置（管理员）：后台模型 / 聊天默认模型
-  const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null, });
-  const [modelCfgSaving, setModelCfgSaving] = useState(false);
-  const loadModelCfg = async () => {
+  // v1.18.1: 注册送积分（管理员可配）——随积分 tab 懒加载
+  const loadSignupBonus = async () => {
     try {
       const s = await api.adminGetSettings();
-      setModelCfg({
-        worker_model: (s && s.worker_model) || '',
-        chat_default_model: (s && s.chat_default_model) || '',
-        filter_fallback_models: (s && Array.isArray(s.filter_fallback_models)) ? s.filter_fallback_models : null,
-      });
-      // v1.18.1: 注册送积分（管理员可配）
       if (s && typeof s.signup_bonus === 'number') setSignupBonus(String(s.signup_bonus));
     } catch {
       /* 非管理员或加载失败就保持默认 */
     }
   };
-  const saveModelCfg = async () => {
-    setModelCfgSaving(true);
-    try {
-      const body = { ...modelCfg };
-      if (body.filter_fallback_models == null) delete body.filter_fallback_models;
-      await api.adminUpdateSettings(body);
-      showToast('模型配置已保存');
-    } catch (e) {
-      showToast((e && e.message) || '保存失败');
-    } finally {
-      setModelCfgSaving(false);
-    }
-  };
+
   // 系统提示词模板（管理员）
   const [promptCfg, setPromptCfg] = useState(null);
   const [promptLoading, setPromptLoading] = useState(false);
@@ -334,7 +302,6 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   if (isAdmin) TABS.push({ id: 'models', icon: 'cpu', label: '模型管理' });
   if (isAdmin) TABS.push({ id: 'prompts', icon: 'chat', label: '提示词' });
   if (isAdmin) TABS.push({ id: 'review', icon: 'shield', label: '审核' });
-  if (isAdmin) TABS.push({ id: 'image-models', icon: 'sparkles', label: '图片模型' });
 
   useEffect(() => {
     if (tab === 'review' && isAdmin) loadReview(reviewStatus);
@@ -432,7 +399,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
         // v1.19.0: 自带 Key 模型分布（失败不影响主统计）
         const am = await api.adminStatsApiModels().catch(() => []);
         if (!cancelled) setStats({ ov, da: da || [], mo: mo || [], tu: tu || [], am: am || [] });
-        if (!cancelled) await loadModelCfg();
+        if (!cancelled) await loadSignupBonus();
       } catch (e) {
         showToast((e && e.message) || '读取统计失败', 2600);
       } finally {
@@ -444,6 +411,13 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab ]);
+
+  // 积分 tab 懒加载：注册送积分
+  useEffect(() => {
+    if (tab !== 'points' || !isAdmin || signupBonus !== '') return;
+    loadSignupBonus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   // 切换 tab 时滚动到可见
   const selectTab = (id, el) => {
@@ -641,161 +615,6 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
       showToast(link, 4000);
     }
   };
-
-  // v1.26.1: 模型管理 tab 懒加载
-  useEffect(() => {
-    if (tab !== 'models' || !isAdmin) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const pm = await api.adminPointsModels().catch(() => []);
-        if (!cancelled) setPmModels(Array.isArray(pm) ? pm : []);
-        if (!cancelled) await loadModelCfg();
-      } catch (e) {
-        showToast((e && e.message) || '读取模型列表失败', 2200);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [tab, isAdmin]);
-
-  // ---- 积分模型管理 ----
-  const refreshPmModels = async () => {
-    try {
-      const pm = await api.adminPointsModels();
-      setPmModels(Array.isArray(pm) ? pm : []);
-    } catch (e) {
-      showToast((e && e.message) || '读取模型列表失败', 2200);
-    }
-  };
-
-  const pmAdd = async () => {
-    const f = pmForm;
-    if (!f.model_id.trim()) {
-      showToast('请填写模型 ID', 2000);
-      return;
-    }
-    setPmAdding(true);
-    try {
-      await api.adminAddPointsModel({
-        model_id: f.model_id.trim(),
-        name: f.name.trim() || f.model_id.trim(),
-        description: f.description.trim(),
-        input_per_1m: Math.floor(Number(f.input_per_1m)),
-        output_per_1m: Math.floor(Number(f.output_per_1m)),
-      });
-      setPmForm({ model_id: '', name: '', description: '', input_per_1m: '', output_per_1m: '' });
-      setTestResult(null);
-      await refreshPmModels();
-      await refreshPoints();
-      showToast('已上架', 2000);
-    } catch (e) {
-      showToast((e && e.message) || '添加失败', 2600);
-    } finally {
-      setPmAdding(false);
-    }
-  };
-
-  // v1.26.2: 拉取 OpenRouter 可用模型（带实时报价）
-  const fetchOrModels = async () => {
-    setOrLoading(true);
-    setTestResult(null);
-    try {
-      const models = await fetchModels();
-      // 按输入价格排序
-      models.sort((a, b) => (a.pricing?.prompt ?? 999) - (b.pricing?.prompt ?? 999));
-      setOrModels(models);
-      showToast(`拉取到 ${models.length} 个模型`, 2000);
-    } catch (e) {
-      showToast((e && e.message) || '拉取失败', 2600);
-    } finally {
-      setOrLoading(false);
-    }
-  };
-
-  // v1.26.2: 选中模型自动填表单（含实时报价）
-  const pickOrModel = (m) => {
-    const p = m.pricing || {};
-    // USD/1M tokens → 积分/1M tokens（按 1元=100积分，汇率7.2估算）
-    const toPoints = (usd) => (usd == null ? '' : String(Math.round(usd * 7.2 * 100)));
-    setPmForm((f) => ({
-      ...f,
-      model_id: m.id,
-      name: m.name || m.id,
-      input_per_1m: toPoints(p.prompt),
-      output_per_1m: toPoints(p.completion),
-    }));
-    showToast(`已填入 ${m.id}`, 2000);
-  };
-
-  // v1.26.2: 连通测试
-  const testModel = async () => {
-    const mid = pmForm.model_id.trim();
-    if (!mid) {
-      showToast('请先填写模型 ID', 2000);
-      return;
-    }
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const r = await api.testChatModel(mid);
-      setTestResult(r);
-    } catch (e) {
-      setTestResult({ ok: false, error: (e && e.message) || '测试失败' });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const pmToggle = async (m) => {
-    try {
-      await api.adminUpdatePointsModel(m.id, { is_active: !m.is_active });
-      await refreshPmModels();
-      await refreshPoints();
-      showToast(m.is_active ? '已下架' : '已上架', 1800);
-    } catch (e) {
-      showToast((e && e.message) || '操作失败', 2200);
-    }
-  };
-
-  const pmStartEdit = (m) => {
-    setPmEditing(m.id);
-    setPmEditForm({
-      name: m.name || '',
-      description: m.description || '',
-      input_per_1m: String(m.input_per_1m || ''),
-      output_per_1m: String(m.output_per_1m || ''),
-    });
-  };
-
-  const pmSaveEdit = async (id) => {
-    try {
-      await api.adminUpdatePointsModel(id, {
-        name: pmEditForm.name.trim(),
-        description: pmEditForm.description.trim(),
-        input_per_1m: Math.floor(Number(pmEditForm.input_per_1m)),
-        output_per_1m: Math.floor(Number(pmEditForm.output_per_1m)),
-      });
-      setPmEditing(null);
-      await refreshPmModels();
-      await refreshPoints();
-      showToast('已保存', 1800);
-    } catch (e) {
-      showToast((e && e.message) || '保存失败', 2600);
-    }
-  };
-
-  const pmDelete = async (m) => {
-    if (!window.confirm(`确定删除模型「${m.name}」(${m.model_id})吗？`)) return;
-    try {
-      await api.adminDeletePointsModel(m.id);
-      await refreshPmModels();
-      await refreshPoints();
-      showToast('已删除', 1800);
-    } catch (e) {
-      showToast((e && e.message) || '删除失败', 2200);
-    }
-  };
-
   const inPointsMode = billingMode === 'points';
   const wlModels = ((pointsInfo && pointsInfo.models) || []).map((m) => ({ id: m.id, name: `${m.name} · ${m.desc}` }));
   // v1.18.3: 模型分布按模型+用途聚合（后端按 model,reason 分组）
@@ -1094,180 +913,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
             </>
           )}
           {tab === 'models' && isAdmin && (
-            <>
-                  <div className="card-title" style={{ marginTop: 4 }}>积分可用模型</div>
-                  <p className="key-desc small">上架后用户可在「积分」tab 选用；单价单位：积分 / 1M tokens；后台任务用的模型在下方「模型配置」里指定（不选则自动用最便宜的）。</p>
-                  <div className="pm-list">
-                      {pmModels.map((m) => (
-                        <div key={m.id} className={`pm-row${m.is_active ? '' : ' off'}`}>
-                          {pmEditing === m.id ? (
-                            <div className="pm-edit">
-                              <div className="key-input-row">
-                                <input value={pmEditForm.name} onChange={(e) => setPmEditForm((f) => ({ ...f, name: e.target.value }))} placeholder="显示名" />
-                              </div>
-                              <div className="key-input-row" style={{ marginTop: 8 }}>
-                                <input value={pmEditForm.description} onChange={(e) => setPmEditForm((f) => ({ ...f, description: e.target.value }))} placeholder="描述（可选）" />
-                              </div>
-                              <div className="key-input-row" style={{ marginTop: 8 }}>
-                                <input value={pmEditForm.input_per_1m} onChange={(e) => setPmEditForm((f) => ({ ...f, input_per_1m: e.target.value }))} placeholder="输入单价" inputMode="numeric" />
-                                <input value={pmEditForm.output_per_1m} onChange={(e) => setPmEditForm((f) => ({ ...f, output_per_1m: e.target.value }))} placeholder="输出单价" inputMode="numeric" />
-                              </div>
-                              <div className="key-input-row" style={{ marginTop: 8 }}>
-                                <button className="btn primary small" onClick={() => pmSaveEdit(m.id)}>保存</button>
-                                <button className="btn secondary small" onClick={() => setPmEditing(null)}>取消</button>
-                              </div>
-                            </div>
-                          ) : (
-                            <>
-                              <div className="pm-info">
-                                <div className="pm-name">{m.name}{!m.is_active && <span className="pm-off-tag">已下架</span>}</div>
-                                <div className="pm-id">{m.model_id}</div>
-                                <div className="pm-price">输入 {m.input_per_1m} / 输出 {m.output_per_1m}</div>
-                              </div>
-                              <div className="pm-actions">
-                                <button className="btn secondary small" onClick={() => pmToggle(m)}>{m.is_active ? '下架' : '上架'}</button>
-                                <button className="btn secondary small" onClick={() => pmStartEdit(m)}>改价</button>
-                                <button className="btn danger small" onClick={() => pmDelete(m)}>删除</button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ))}
-                      {pmModels.length === 0 && <p className="key-desc small">暂无模型，请添加。</p>}
-                    </div>
-                  <div className="card-title" style={{ marginTop: 4 }}>模型配置</div>
-                  <p className="key-desc small">后台模型负责群聊导演调度、记忆提取、对话摘要（共用一个）；聊天默认模型用于新用户默认和异常回退。不选 = 自动用最便宜的启用模型。</p>
-                  <label>
-                    后台模型
-                    <select
-                      value={modelCfg.worker_model}
-                      onChange={(e) => setModelCfg((f) => ({ ...f, worker_model: e.target.value }))}
-                    >
-                      <option value="">自动（最便宜）</option>
-                      {pmModels.filter((m) => m.is_active).map((m) => (
-                        <option key={m.model_id} value={m.model_id}>{m.name}（{m.model_id}）</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    聊天默认模型
-                    <select
-                      value={modelCfg.chat_default_model}
-                      onChange={(e) => setModelCfg((f) => ({ ...f, chat_default_model: e.target.value }))}
-                    >
-                      <option value="">自动（最便宜）</option>
-                      {pmModels.filter((m) => m.is_active).map((m) => (
-                        <option key={m.model_id} value={m.model_id}>{m.name}（{m.model_id}）</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    过滤回退模型 1（优先）
-                    <select
-                      value={(modelCfg.filter_fallback_models && modelCfg.filter_fallback_models[0]) || ''}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setModelCfg((f) => {
-                          const arr = [...(f.filter_fallback_models || [])];
-                          if (v) arr[0] = v; else arr.splice(0, 1);
-                          return { ...f, filter_fallback_models: arr.filter(Boolean) };
-                        });
-                      }}
-                    >
-                      <option value="">不设置</option>
-                      {pmModels.filter((m) => m.is_active).map((m) => (
-                        <option key={m.model_id} value={m.model_id}>{m.name}（{m.model_id}）</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    过滤回退模型 2
-                    <select
-                      value={(modelCfg.filter_fallback_models && modelCfg.filter_fallback_models[1]) || ''}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setModelCfg((f) => {
-                          const arr = [...(f.filter_fallback_models || [])];
-                          if (v) arr[1] = v; else arr.splice(1, 1);
-                          return { ...f, filter_fallback_models: arr.filter(Boolean) };
-                        });
-                      }}
-                    >
-                      <option value="">不设置</option>
-                      {pmModels.filter((m) => m.is_active).map((m) => (
-                        <option key={m.model_id} value={m.model_id}>{m.name}（{m.model_id}）</option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="key-desc small">上游内容过滤拦截时，按顺序自动换模型重试一次；两个都选「不设置」并保存 = 关闭回退；不碰这里 = 用系统默认回退链。</p>
-                  <div className="key-input-row" style={{ marginTop: 8 }}>
-                    <button className="btn primary" onClick={saveModelCfg} disabled={modelCfgSaving}>
-                      {modelCfgSaving ? '保存中…' : '保存模型配置'}
-                    </button>
-                  </div>
-                  <div className="card-title" style={{ marginTop: 4 }}>上架新模型</div>
-                  {/* v1.26.3: 模型 ID 输入框右置拉取按钮，可下拉选择；下方显示真实报价 */}
-                  <label>
-                    模型 ID（须与 OpenRouter 一致）
-                    <div className="key-input-row">
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <ModelPicker
-                          value={pmForm.model_id}
-                          onChange={(v) => {
-                            setPmForm((f) => ({ ...f, model_id: v }));
-                            // 选中后自动填报价
-                            const m = orModels.find((x) => x.id === v);
-                            if (m) pickOrModel(m);
-                          }}
-                          models={orModels}
-                          placeholder="如 openai/gpt-7-mini"
-                          openSignal={orModels.length}
-                        />
-                      </div>
-                      <button className="btn secondary" onClick={fetchOrModels} disabled={orLoading} style={{ whiteSpace: 'nowrap' }}>
-                        {orLoading ? '拉取中…' : '拉取可用模型'}
-                      </button>
-                    </div>
-                  </label>
-                  {/* 真实报价展示 */}
-                  {(() => {
-                    const m = orModels.find((x) => x.id === pmForm.model_id.trim());
-                    if (!m || !m.pricing) return null;
-                    const p = m.pricing;
-                    return (
-                      <p className="key-desc small" style={{ margin: '4px 0 8px' }}>
-                        实时报价：输入 {p.prompt != null ? `$${p.prompt.toFixed(2)}` : '?'} / 输出 {p.completion != null ? `$${p.completion.toFixed(2)}` : '?'}（USD/1M tokens）
-                        {m.context_length ? ` · 上下文 ${Math.round(m.context_length / 1000)}K` : ''}
-                      </p>
-                    );
-                  })()}
-                  <label>
-                    显示名
-                    <input value={pmForm.name} onChange={(e) => setPmForm((f) => ({ ...f, name: e.target.value }))} placeholder="留空则用模型 ID" spellCheck={false} autoComplete="off" />
-                  </label>
-                  <label>
-                    描述（可选）
-                    <input value={pmForm.description} onChange={(e) => setPmForm((f) => ({ ...f, description: e.target.value }))} placeholder="如：快速便宜，日常聊天首选" spellCheck={false} autoComplete="off" />
-                  </label>
-                  <div className="key-input-row">
-                    <input value={pmForm.input_per_1m} onChange={(e) => setPmForm((f) => ({ ...f, input_per_1m: e.target.value }))} placeholder="输入单价 /1M" inputMode="numeric" autoComplete="off" />
-                    <input value={pmForm.output_per_1m} onChange={(e) => setPmForm((f) => ({ ...f, output_per_1m: e.target.value }))} placeholder="输出单价 /1M" inputMode="numeric" autoComplete="off" />
-                    <button className="btn secondary" onClick={testModel} disabled={testing}>
-                      {testing ? '测试中…' : '连通测试'}
-                    </button>
-                    <button className="btn primary" onClick={pmAdd} disabled={pmAdding}>{pmAdding ? '上架中…' : '上架'}</button>
-                  </div>
-                  {/* v1.26.2: 连通测试结果 */}
-                  {testResult && (
-                    <div className={`test-result${testResult.ok ? ' ok' : ' fail'}`}>
-                      {testResult.ok ? (
-                        <>✓ 连通正常（{testResult.latency}ms）{testResult.reply && ` · 回复: ${testResult.reply}`}</>
-                      ) : (
-                        <>✗ {testResult.error || '连接失败'}{testResult.latency != null && `（${testResult.latency}ms）`}</>
-                      )}
-                    </div>
-                  )}
-            </>
+            <ModelsTab showToast={showToast} />
           )}
           {tab === 'prompts' && isAdmin && (
             <>
@@ -1381,9 +1027,6 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                 </div>
               )}
             </>
-          )}
-          {tab === 'image-models' && isAdmin && (
-            <ImageModelsTab showToast={showToast} />
           )}
         </div>
         {version && <div className="settings-foot">Fashion Studio v{version}</div>}

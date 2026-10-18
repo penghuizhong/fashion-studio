@@ -2,6 +2,7 @@
 // 汇率：1 元 = 100 积分（POINTS_PER_YUAN）
 // 单价单位：积分 / 1M tokens。以下为默认值，请对照 OpenRouter 账单定期核对调整。
 import { getDb, getSetting } from './db.js';
+import { listChatModelsCompat } from './registry.js';
 
 export const POINTS_PER_YUAN = 100;
 export const SIGNUP_BONUS = 500; // 兼容保留：实际以后台配置为准（见 getSignupBonus）
@@ -43,23 +44,20 @@ function rowToModel(r) {
 }
 
 // 列出可用模型（activeOnly=true 只返回启用中的，供用户端/计费校验）
+// v0.2.0: 改读统一注册表 models(kind=chat)
 export function listPointsModels(activeOnly = true) {
-  const db = getDb();
-  const rows = activeOnly
-    ? db.prepare('SELECT * FROM points_models WHERE is_active = 1 ORDER BY sort_order ASC, id ASC').all()
-    : db.prepare('SELECT * FROM points_models ORDER BY sort_order ASC, id ASC').all();
-  return rows.map(rowToModel);
+  return listChatModelsCompat(activeOnly).map(rowToModel);
 }
 
 // 管理员视角：原始行（含 id/is_active/sort_order）
 export function listPointsModelRows() {
-  return getDb().prepare('SELECT * FROM points_models ORDER BY sort_order ASC, id ASC').all();
+  return listChatModelsCompat(false);
 }
 
 // 白名单校验：服务端强制，只认启用中的模型
 export function getPointsModel(id) {
   if (!id) return null;
-  const r = getDb().prepare('SELECT * FROM points_models WHERE model_id = ? AND is_active = 1').get(id);
+  const r = listChatModelsCompat(true).find((x) => x.model_id === id);
   return r ? rowToModel(r) : null;
 }
 
@@ -70,10 +68,9 @@ export function getWorkerModel() {
     const m = getPointsModel(configured);
     if (m) return m.id;
   }
-  const r = getDb()
-    .prepare('SELECT * FROM points_models WHERE is_active = 1 ORDER BY (input_per_1m + output_per_1m) ASC, id ASC LIMIT 1')
-    .get();
-  return r ? r.model_id : null;
+  const rows = listChatModelsCompat(true)
+    .sort((a, b) => (a.input_per_1m + a.output_per_1m) - (b.input_per_1m + b.output_per_1m));
+  return rows.length ? rows[0].model_id : null;
 }
 
 // v1.12 聊天默认模型（管理员配置；未配置时回退到最便宜的启用模型）
@@ -83,10 +80,9 @@ export function getChatDefaultModel() {
     const m = getPointsModel(configured);
     if (m) return m.id;
   }
-  const r = getDb()
-    .prepare('SELECT * FROM points_models WHERE is_active = 1 ORDER BY (input_per_1m + output_per_1m) ASC, id ASC LIMIT 1')
-    .get();
-  return r ? r.model_id : null;
+  const rows = listChatModelsCompat(true)
+    .sort((a, b) => (a.input_per_1m + a.output_per_1m) - (b.input_per_1m + b.output_per_1m));
+  return rows.length ? rows[0].model_id : null;
 }
 
 // 按真实用量算积分（至少 1 积分；usage 为空如 mock 模式则返回 0）

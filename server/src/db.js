@@ -1,8 +1,10 @@
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { getConfig } from './config.js';
+import { encryptSecret } from './secrets.js';
+import { detectProvider } from './providers.js';
 
 // 安全随机码：crypto 强随机（邀请码 8 位公开分享，重置码 12 位绝不公开）
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -120,18 +122,7 @@ CREATE TABLE IF NOT EXISTS api_usage(
 );
 CREATE INDEX IF NOT EXISTS idx_api_usage_day ON api_usage(created_at);
 CREATE INDEX IF NOT EXISTS idx_api_usage_user ON api_usage(user_id);
--- ---- 积分可用模型（管理员动态管理） ----
-CREATE TABLE IF NOT EXISTS points_models(
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  model_id TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL,
-  description TEXT DEFAULT '',
-  input_per_1m INTEGER NOT NULL,
-  output_per_1m INTEGER NOT NULL,
-  is_active INTEGER DEFAULT 1,
-  sort_order INTEGER DEFAULT 0,
-  created_at TEXT
-);
+-- v0.2.0: points_models 已并入统一注册表 models(kind='chat')，老库由 migrateToUnifiedRegistry() 迁移后 DROP --
 -- ---- 邀请系统 ----
 -- users.invite_code / users.invited_by 在迁移块中按需添加（老库兼容）
 -- ---- 角色广场 UGC ----
@@ -263,25 +254,131 @@ CREATE TABLE IF NOT EXISTS dna_generations(
 );
 CREATE INDEX IF NOT EXISTS idx_dna_generations_tpl ON dna_generations(template_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dna_generations_user ON dna_generations(user_id, created_at DESC);
--- ---- 设计台：图片模型（按次计费，管理员上架） ----
-CREATE TABLE IF NOT EXISTS image_models(
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  model_id TEXT NOT NULL UNIQUE,
+-- ---- v0.2.0: 统一模型注册表（供应商 → 模型两层；替代 points_models / image_models / env 直读） ----
+CREATE TABLE IF NOT EXISTS providers(
+  id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  provider TEXT NOT NULL DEFAULT 'openai_compatible',
+  preset TEXT NOT NULL DEFAULT 'custom',
+  kind TEXT NOT NULL DEFAULT 'both',
   base_url TEXT DEFAULT '',
   api_key_encrypted TEXT DEFAULT '',
-  price_per_call INTEGER NOT NULL DEFAULT 0,
-  sizes_json TEXT NOT NULL DEFAULT '[]',
+  is_default INTEGER DEFAULT 0,
   is_active INTEGER DEFAULT 1,
   sort_order INTEGER DEFAULT 0,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS models(
+  id TEXT PRIMARY KEY,
+  provider_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  name TEXT DEFAULT '',
+  pricing_json TEXT DEFAULT '{}',
+  extra_json TEXT DEFAULT '{}',
+  is_active INTEGER DEFAULT 1,
+  sort_order INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_models_kind ON models(kind, is_active);
 `;
 
 let _db = null;
 
 // 懒初始化：check.js 可先设 process.env.DATA_DIR 再调用
+
+// v0.2.0: 统一模型注册表迁移（image_models / points_models / env → providers + models），幂等
+function migrateToUnifiedRegistry(db) {
+  const hasTable = (t) => {
+    try { return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t); }
+    catch { return false; }
+  };
+  const t = new Date().toISOString();
+  const cfg = getConfig();
+  const mk = cfg.masterKey || '';
+  const nid = (p) => p + '_' + randomUUID().replace(/-/g, '').slice(0, 12);
+  const normBase = (u) => String(u || '').trim().replace(/\/+$/, '');
+
+  // env → 默认供应商（幂等：同 base_url+preset 已存在则复用）
+  const ensureEnvProvider = () => {
+    const base = normBase(process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1');
+    const preset = detectProvider(base);
+    const ex = db.prepare('SELECT id FROM providers WHERE base_url=? AND preset=?').get(base, preset);
+    if (ex) return ex.id;
+    const key = (process.env.OPENROUTER_API_KEY || '').trim();
+    const presetName = { openrouter: 'OpenRouter', dashscope: 'DashScope', deepseek: 'DeepSeek', zhipu: '智谱' }[preset] || '自定义';
+    const id = nid('prov');
+    db.prepare('INSERT INTO providers(id,name,preset,kind,base_url,api_key_encrypted,is_default,is_active,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+      .run(id, `${presetName}（env 迁移）`, preset, 'both', base, key ? encryptSecret(mk, key) : null, 1, 1, 0, t);
+    return id;
+  };
+
+  // 1) image_models → providers(kind=image) + models(kind=image)
+  if (hasTable('image_models')) {
+    const rows = db.prepare('SELECT * FROM image_models').all();
+    const pcache = new Map();
+    for (const r of rows) {
+      const preset = r.provider === 'dashscope' ? 'dashscope' : 'custom';
+      const base = normBase(r.base_url);
+      const ck = preset + '|' + base;
+      let pid = pcache.get(ck);
+      if (!pid) {
+        const ex = db.prepare('SELECT id FROM providers WHERE preset=? AND base_url=?').get(preset, base);
+        if (ex) pid = ex.id;
+        else {
+          pid = nid('prov');
+          const pname = preset === 'dashscope' ? 'DashScope（迁移）'
+            : (base ? base.replace(/^https?:\/\//, '').split('/')[0] + '（迁移）' : '图片供应商（迁移）');
+          db.prepare('INSERT INTO providers(id,name,preset,kind,base_url,api_key_encrypted,is_default,is_active,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+            .run(pid, pname, preset, 'image', base, r.api_key_encrypted || null, 0, 1, 0, t);
+        }
+        pcache.set(ck, pid);
+      }
+      let sizes = [];
+      try { const v = JSON.parse(r.sizes_json || '[]'); if (Array.isArray(v)) sizes = v; } catch {}
+      db.prepare('INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+        .run(nid('model'), pid, 'image', r.model_id, r.name || r.model_id,
+          JSON.stringify({ per_call: Math.floor(Number(r.price_per_call)) || 0 }),
+          JSON.stringify({ sizes }), r.is_active ? 1 : 0, Math.floor(Number(r.sort_order)) || 0, r.created_at || t);
+    }
+    db.exec('DROP TABLE image_models');
+    console.log(`[db] 迁移 image_models → 统一注册表：${rows.length} 个图片模型`);
+  }
+
+  // 2) points_models → models(kind=chat)，挂到 env 供应商下
+  if (hasTable('points_models')) {
+    const pid = ensureEnvProvider();
+    const rows = db.prepare('SELECT * FROM points_models').all();
+    for (const r of rows) {
+      db.prepare('INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+        .run(nid('model'), pid, 'chat', r.model_id, r.name || r.model_id,
+          JSON.stringify({ input_per_1m: Math.floor(Number(r.input_per_1m)) || 0, output_per_1m: Math.floor(Number(r.output_per_1m)) || 0 }),
+          '{}', r.is_active ? 1 : 0, Math.floor(Number(r.sort_order)) || 0, r.created_at || t);
+    }
+    db.exec('DROP TABLE points_models');
+    console.log(`[db] 迁移 points_models → 统一注册表：${rows.length} 个聊天模型`);
+  }
+
+  // 3) 建默认供应商（即使 env 无 key 也建，管理员可在面板里填 key）
+  const defaultPid = ensureEnvProvider();
+  // 4) 空库预置 3 个聊天模型（与老 points_models seed 一致；老库迁移后 models 非空则跳过）
+  if (!db.prepare('SELECT 1 FROM models LIMIT 1').get()) {
+    const seed = [
+      ['qwen/qwen3.8-flash', 'Qwen3.8 Flash', 200, 600, 0],
+      ['google/gemini-3.8-flash', 'Gemini 3.8 Flash', 200, 600, 1],
+      ['openai/gpt-6-luna', 'GPT-6 Luna', 2500, 10000, 2],
+    ];
+    const ins = db.prepare(
+      'INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)');
+    const tx = db.transaction(() => {
+      for (const [mid, name, ip, op, so] of seed)
+        ins.run(nid('model'), defaultPid, 'chat', mid, name,
+          JSON.stringify({ input_per_1m: ip, output_per_1m: op }), '{}', 1, so, t);
+    });
+    tx();
+    console.log('[db] 统一注册表：已预置默认聊天模型');
+  }
+}
+
 export function getDb() {
   if (_db) return _db;
   const { dataDir } = getConfig();
@@ -289,6 +386,7 @@ export function getDb() {
   _db = new Database(path.join(dataDir, 'fashion-studio.db'));
   _db.pragma('journal_mode = WAL');
   _db.exec(SCHEMA);
+  migrateToUnifiedRegistry(_db);
   // ---- 轻量迁移：老库自动加列（新库不受影响） ----
   try {
     const convCols = _db.prepare('PRAGMA table_info(conversations)').all().map((c) => c.name);
@@ -336,23 +434,6 @@ export function getDb() {
     if (!ledgerCols.includes('tokens_input')) _db.exec('ALTER TABLE points_ledger ADD COLUMN tokens_input INTEGER');
     if (!ledgerCols.includes('tokens_output')) _db.exec('ALTER TABLE points_ledger ADD COLUMN tokens_output INTEGER');
     if (!ledgerCols.includes('model')) _db.exec('ALTER TABLE points_ledger ADD COLUMN model TEXT');
-    // 积分可用模型：表为空时写入初始默认数据（仅一次）
-    const modelCount = _db.prepare('SELECT COUNT(*) AS n FROM points_models').get().n;
-    if (modelCount === 0) {
-      const now = new Date().toISOString();
-      const seed = [
-        ['qwen/qwen3.8-flash', 'Qwen3.8 Flash', '快速便宜，日常聊天首选', 200, 600, 0],
-        ['google/gemini-3.8-flash', 'Gemini 3.8 Flash', '快速便宜，日常聊天首选', 200, 600, 1],
-        ['openai/gpt-6-luna', 'GPT-6 Luna', '旗舰模型，效果最强，消耗较高', 2500, 10000, 2],
-      ];
-      const ins = _db.prepare(
-        'INSERT INTO points_models(model_id, name, description, input_per_1m, output_per_1m, is_active, sort_order, created_at) VALUES(?,?,?,?,?,?,?,?)'
-      );
-      const tx = _db.transaction(() => {
-        for (const [mid, name, desc, ip, op, so] of seed) ins.run(mid, name, desc, ip, op, 1, so, now);
-      });
-      tx();
-    }
     // v1.26.3: 移除硬编码模型种子——所有可用模型必须由管理员经模型管理 tab 上架，不再预置
     // 首个注册用户自动成为管理员（只执行一次）
     const firstUser = _db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();

@@ -157,7 +157,7 @@ export default function DiscoverView({
     }
   };
 
-  const models = (config && config.points_models) || [];
+  const models = (config && (config.chat_models || config.points_models)) || [];
 
   const deleteSaved = async (id) => {
     if (!window.confirm('确定删除这张收藏的角色卡吗？')) return;

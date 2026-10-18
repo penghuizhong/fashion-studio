@@ -1,56 +1,19 @@
 // v0.1.0: 生图统一入口。provider: dashscope | openai_compatible
 // 按次扣积分；prompt 由 DNA 确定性渲染，不经过 LLM 自由发挥。
-import { getDb } from './db.js';
 import { getConfig } from './config.js';
-import { encryptSecret, decryptSecret } from './auth.js';
+import { getProviderCreds, listImageModelsCompat } from './registry.js';
 import { deductPoints, getBalance } from './points.js';
 import sharp from 'sharp';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// ---------- 图片模型管理 ----------
-function stripKey(row) {
-  if (!row) return null;
-  const { api_key_encrypted, ...rest } = row;
-  return rest;
-}
-
+// ---------- 图片模型管理（v0.2.0: 改读统一注册表；增删改走 /api/admin/models） ----------
 export function listImageModels(activeOnly = true) {
-  const db = getDb();
-  const rows = activeOnly
-    ? db.prepare('SELECT * FROM image_models WHERE is_active=1 ORDER BY sort_order, id').all()
-    : db.prepare('SELECT * FROM image_models ORDER BY sort_order, id').all();
-  return rows.map(stripKey);
+  return listImageModelsCompat(activeOnly);
 }
 
 export function getImageModel(id) {
-  const db = getDb();
-  return stripKey(db.prepare('SELECT * FROM image_models WHERE id=? OR model_id=?').get(id, id));
-}
-
-export function upsertImageModel({ id, model_id, name, provider, base_url, api_key, price_per_call, sizes_json, is_active, sort_order }) {
-  const db = getDb();
-  const cfg = getConfig();
-  const now = new Date().toISOString();
-  const cleanSizes = sizes_json || '[]';
-  if (id) {
-    const cur = db.prepare('SELECT * FROM image_models WHERE id=?').get(id);
-    if (!cur) throw new Error('图片模型不存在');
-    const enc = api_key ? encryptSecret(cfg.masterKey, api_key) : cur.api_key_encrypted;
-    db.prepare(`UPDATE image_models SET model_id=?, name=?, provider=?, base_url=?, api_key_encrypted=?,
-      price_per_call=?, sizes_json=?, is_active=?, sort_order=? WHERE id=?`)
-      .run(model_id, name, provider || 'openai_compatible', base_url || '', enc,
-        price_per_call | 0, cleanSizes, is_active == null ? 1 : (is_active ? 1 : 0), sort_order | 0, id);
-    return stripKey(db.prepare('SELECT * FROM image_models WHERE id=?').get(id));
-  }
-  if (!model_id || !name) throw new Error('model_id 与 name 必填');
-  const enc = api_key ? encryptSecret(cfg.masterKey, api_key) : '';
-  const r = db.prepare(`INSERT INTO image_models(model_id, name, provider, base_url, api_key_encrypted,
-    price_per_call, sizes_json, is_active, sort_order, created_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?)`)
-    .run(model_id, name, provider || 'openai_compatible', base_url || '', enc,
-      price_per_call | 0, cleanSizes, is_active == null ? 1 : (is_active ? 1 : 0), sort_order | 0, now);
-  return stripKey(db.prepare('SELECT * FROM image_models WHERE id=?').get(r.lastInsertRowid));
+  return listImageModelsCompat(false).find((x) => x.id === id || x.model_id === id) || null;
 }
 
 // ---------- DNA → prompt 确定性渲染 ----------
@@ -182,36 +145,35 @@ async function downloadToBase64(url) {
 // ---------- 统一入口 ----------
 // 先验余额 → 生图 → 成功后按次扣积分；失败不扣
 export async function generateImage({ userId, modelId, prompt, size, seed, sourceImageBase64 = null }) {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM image_models WHERE (id=? OR model_id=?) AND is_active=1').get(modelId, modelId);
-  if (!row) throw new Error('图片模型不存在或已停用');
-  const cfg = getConfig();
-  const apiKey = decryptSecret(cfg.masterKey, row.api_key_encrypted || '');
+  const m = listImageModelsCompat(true).find((x) => x.id === modelId || x.model_id === modelId);
+  if (!m) throw new Error('图片模型不存在或已停用');
+  const creds = getProviderCreds(m.provider_id);
+  const apiKey = creds && creds.apiKey;
   if (!apiKey) throw new Error('该图片模型未配置 Key');
-  const baseUrl = String(row.base_url || '').replace(/\/+$/, '');
+  const baseUrl = String((creds && creds.baseUrl) || '').replace(/\/+$/, '');
   if (!baseUrl) throw new Error('该图片模型未配置 Base URL');
-  const price = row.price_per_call | 0;
+  const price = m.price_per_call | 0;
   if (price > 0 && userId) {
     const bal = getBalance(userId);
     if (bal < price) throw new Error('积分不足，请充值或切换模型');
   }
   const useSeed = seed != null ? seed : Math.floor(Math.random() * 2147483647);
   let result;
-  if (row.provider === 'dashscope') {
+  if (m.provider === 'dashscope') {
     if (sourceImageBase64) throw new Error('DashScope 适配器暂不支持图生图，请选用 openai_compatible 供应商');
-    result = await dashscopeText2Image({ baseUrl, apiKey, model: row.model_id, prompt, size, seed: useSeed });
+    result = await dashscopeText2Image({ baseUrl, apiKey, model: m.model_id, prompt, size, seed: useSeed });
     result.imageBase64 = await downloadToBase64(result.imageUrl);
     delete result.imageUrl;
   } else {
     result = sourceImageBase64
-      ? await openaiEditImage({ baseUrl, apiKey, model: row.model_id, prompt, size, imageBase64: sourceImageBase64 })
-      : await openaiText2Image({ baseUrl, apiKey, model: row.model_id, prompt, size, seed: useSeed });
+      ? await openaiEditImage({ baseUrl, apiKey, model: m.model_id, prompt, size, imageBase64: sourceImageBase64 })
+      : await openaiText2Image({ baseUrl, apiKey, model: m.model_id, prompt, size, seed: useSeed });
     result.seed = useSeed;
   }
   if (price > 0 && userId) {
-    deductPoints(userId, price, 'studio_image', 'image_models', row.id, { model: row.model_id, size });
+    deductPoints(userId, price, 'studio_image', 'models', m.id, { model: m.model_id, size });
   }
-  return { imageBase64: result.imageBase64, seed: result.seed != null ? result.seed : useSeed, model: row.model_id, size, price };
+  return { imageBase64: result.imageBase64, seed: result.seed != null ? result.seed : useSeed, model: m.model_id, size, price };
 }
 
 // ---------- 落盘：原图 + sharp 缩略图，返回相对路径 ----------

@@ -1,4 +1,5 @@
 import { getConfig} from './config.js';
+import { getDefaultProvider } from './registry.js';
 import { oneLineDesc } from './memory.js';
 import { ProxyAgent } from 'undici';
 import { isIP } from 'node:net';
@@ -117,14 +118,22 @@ const EXTRACT_SYSTEM = `你是记忆整理助手。根据当前 user.md、memory
 5. 没有新信息时原样返回`;
 
 // 无可用 Key 时的统一提示（app.js 做上游 401 拦截时复用）
-export const NO_KEY_MESSAGE = '未配置 API Key：请在侧边栏底部「API 设置」中填写你的 Key（或由管理员在服务器 .env 中配置 OPENROUTER_API_KEY）';
+export const NO_KEY_MESSAGE = '未配置 API Key：请在侧边栏底部「API 设置」中填写你的 Key（或由管理员在「设置 → 模型管理」中配置供应商）';
 
 async function postCompletions({ model, messages, temperature, stream, onToken, apiKey, baseUrl, signal, provider, maxTokens }) {
 const cfg = getConfig();
-// BYOK：优先用调用方传入的个人 Key（请求头 X-OpenRouter-Key），否则用服务器 .env
-const key = (apiKey || '').trim() || cfg.apiKey;
-// API 地址：用户自定（请求头 X-Api-Base-Url）> 服务器 .env
-const base = (baseUrl || '').trim().replace(/\/+$/, '') || cfg.baseUrl;
+// v0.2.0: 平台默认 key/address 改读统一注册表（默认供应商）；env 做最终保底（老部署不断）
+// 优先级：调用方个人 Key（BYOK）> 默认供应商 > 服务器 .env
+let platformKey = cfg.apiKey, platformBase = cfg.baseUrl;
+try {
+  const dp = getDefaultProvider();
+  if (dp) {
+    if (dp.apiKey) platformKey = dp.apiKey;
+    if (dp.baseUrl) platformBase = dp.baseUrl;
+  }
+} catch {}
+const key = (apiKey || '').trim() || platformKey;
+const base = (baseUrl || '').trim().replace(/\/+$/, '') || platformBase;
 if (!key && !cfg.mockLlm) throw new Error(NO_KEY_MESSAGE);
 // 上游请求最多 120s；调用方传了 signal（客户端断开）时一起联动取消
 const timeoutSignal = AbortSignal.timeout(120000);
