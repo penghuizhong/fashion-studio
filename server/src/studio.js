@@ -29,7 +29,7 @@ import {
   renderDnaPrompt, renderDnaPromptWithOverrides, generateImage, saveStudioImage,
 } from './image.js';
 import { calcPoints, deductPoints } from './points.js';
-import { listModels } from './registry.js';
+import { listModels, listImageModelsCompat } from './registry.js';
 
 // v0.2.0: 记忆遗忘——归档 90 天前的变体；每模板只保留最新 50 条未归档
 export function runArchive() {
@@ -210,9 +210,18 @@ export function mountStudioRoutes(app) {  const db = getDb();
     const dna = JSON.parse(template.dna_json || '{}');
     const prompt = changes ? renderDnaPromptWithOverrides(dna, changes) : renderDnaPrompt(dna);
     const genParams = JSON.parse(template.gen_params_json || '{}');
-    const useModel = modelId || genParams.model_id;
+    // 模型优先级：请求指定 > 模板绑定 > 第一个可用图片模型
+    let useModel = modelId || genParams.model_id;
+    if (!useModel) {
+      const avail = listImageModelsCompat(true);
+      if (!avail.length) {
+        const e = new Error('暂无可用的图片模型，请先在模型管理里上架图片模型');
+        e.statusCode = 400;
+        throw e;
+      }
+      useModel = avail[0].id;
+    }
     const useSize = size || genParams.size || '1024x1024';
-    if (!useModel) throw new Error('未选择图片模型（模板未绑定且未指定）');
     const result = await generateImage({ userId: uid, modelId: useModel, prompt, size: useSize, seed, sourceImageBase64 });
     const files = await saveStudioImage(result.imageBase64, `t${template.id}_${Date.now()}.jpg`);
     const now = new Date().toISOString();
