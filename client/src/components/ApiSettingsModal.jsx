@@ -538,7 +538,7 @@ export default function ApiSettingsModal({ onClose, showToast }) {
           </div>
         )}
 
-        {version && <p className="key-desc small version-line">SoulChat v{version}</p>}
+        {version && <p className="key-desc small version-line">Fashion Studio v{version}</p>}
         <div className="modal-actions">
           {multiUser ? (
             !inPointsMode && (

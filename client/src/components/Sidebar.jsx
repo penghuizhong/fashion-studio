@@ -23,6 +23,7 @@ export default function Sidebar({
   onConversationsChanged,
   onOpenSettingsModal,
   onOpenDiscover,
+  onOpenStudio,
   onLogin,
   onToggleSidebar,
   onGoHome,
@@ -206,7 +207,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
-        <span className="brand" onClick={onGoHome} style={{ cursor: 'pointer' }}>SoulChat</span>
+        <span className="brand" onClick={onGoHome} style={{ cursor: 'pointer' }}>Fashion Studio</span>
         <button className="collapse-btn" title="收起侧边栏" onClick={onToggleSidebar}>
           ‹
         </button>
@@ -227,6 +228,12 @@ export default function Sidebar({
         onClick={onOpenDiscover}
       >
         <Icon name="compass" size={18} /> 发现角色
+      </button>
+      <button
+        className={`nav-row${view.type === 'studio' ? ' active' : ''}`}
+        onClick={onOpenStudio}
+      >
+        <Icon name="sparkles" size={18} /> 设计台
       </button>
 
       {guest ? (

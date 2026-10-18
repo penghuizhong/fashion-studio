@@ -1,4 +1,4 @@
-/* SoulChat — Apple 风格手写 CSS */
+/* Fashion Studio — Apple 风格手写 CSS */
 
 :root {
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
@@ -4381,3 +4381,80 @@ textarea {
   background: #ffebee;
   color: #c62828;
 }
+
+/* ============ 设计台 v0.1.0 ============ */
+.studio-view { padding: 24px 28px; max-width: 1200px; margin: 0 auto; }
+.studio-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.studio-head h2 { margin: 0; font-size: 20px; }
+.studio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.studio-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; cursor: pointer; background: var(--bg); transition: transform .15s var(--ease), box-shadow .15s var(--ease); }
+.studio-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.studio-card-cover { position: relative; aspect-ratio: 3/4; background: var(--bg-secondary); }
+.studio-card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.studio-card-nocover { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); }
+.status-badge { position: absolute; top: 8px; right: 8px; font-style: normal; font-size: 11px; padding: 3px 8px; border-radius: 20px; background: var(--toast-bg); color: var(--toast-text); }
+.status-badge.final { background: #1a7f37; }
+.modal-head .status-badge { position: static; margin-left: 8px; }
+.studio-card-body { padding: 10px 12px; }
+.studio-card-name { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+.studio-card-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 12px; background: var(--badge-bg); color: var(--text-secondary); }
+.tag.dim { opacity: .75; }
+.studio-empty { text-align: center; padding: 80px 20px; color: var(--text-secondary); }
+.studio-empty p { margin: 8px 0; }
+.studio-empty .dim { color: var(--text-secondary); opacity: .8; font-size: 13px; }
+.studio-empty .btn { margin-top: 16px; }
+.studio-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: var(--text-secondary); }
+.spinner { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 克隆弹窗 */
+.studio-modal { width: min(880px, 94vw); max-height: 90vh; overflow-y: auto; }
+.studio-drop { border: 2px dashed var(--border); border-radius: 12px; min-height: 280px; display: flex; align-items: center; justify-content: center; cursor: pointer; margin: 16px 0; }
+.studio-drop:hover { border-color: var(--accent); }
+.studio-drop-hint { text-align: center; color: var(--text-secondary); }
+.studio-drop-hint p { margin: 12px 0 0; }
+.studio-preview { max-width: 100%; max-height: 420px; border-radius: 8px; }
+.studio-review { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+.studio-review-img img { width: 100%; border-radius: 8px; }
+.studio-save-row { display: flex; gap: 8px; margin-top: 12px; }
+.studio-save-row .text-input:first-child { flex: 1; }
+.text-input { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 14px; color: var(--text); font-family: var(--font); }
+.text-input:focus { outline: none; border-color: var(--accent); }
+select.text-input { cursor: pointer; }
+
+/* DNA 字段 */
+.dna-fields { display: flex; flex-direction: column; gap: 6px; max-height: 420px; overflow-y: auto; }
+.dna-field { display: grid; grid-template-columns: 76px 1fr 40px; gap: 8px; align-items: center; font-size: 13px; }
+.dna-label { color: var(--text-secondary); }
+.dna-label i { font-style: normal; color: var(--warning); font-weight: 700; margin-left: 4px; }
+.dna-field.low .dna-input { border-color: var(--warning); }
+.dna-input { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; color: var(--text); width: 100%; font-family: var(--font); }
+.dna-input:focus { outline: none; border-color: var(--accent); }
+.dna-value { font-size: 13px; }
+.dna-conf { font-size: 11px; color: var(--text-secondary); text-align: right; }
+
+/* 抽屉 */
+.drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 60; display: flex; justify-content: flex-end; }
+.drawer { width: min(480px, 94vw); height: 100%; background: var(--bg); box-shadow: var(--shadow-lg); overflow-y: auto; padding: 0 20px 32px; animation: slideIn .2s var(--ease); }
+@keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+.drawer-sec { margin-top: 20px; }
+.drawer-sec-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
+.studio-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.quick-edit-row { display: flex; gap: 8px; margin-top: 10px; }
+.quick-edit-row .text-input { flex: 1; }
+.studio-history { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.history-item { position: relative; flex: 0 0 96px; width: 96px; height: 128px; border-radius: 8px; overflow: hidden; background: var(--bg-secondary); }
+.history-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.history-deleted { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-secondary); }
+.history-hover { position: absolute; inset: auto 0 0 0; display: flex; justify-content: center; gap: 4px; padding: 4px; background: rgba(0,0,0,.55); opacity: 0; transition: opacity .15s; }
+.history-item:hover .history-hover { opacity: 1; }
+.history-hover button { background: none; border: none; color: #fff; cursor: pointer; padding: 4px; border-radius: 4px; }
+.history-hover button:hover { background: rgba(255,255,255,.2); }
+.rated.liked { position: absolute; top: 4px; left: 6px; color: #e5484d; font-size: 14px; }
+
+/* 并排验证 */
+.studio-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+.studio-compare-pane { position: relative; }
+.studio-compare-pane img { width: 100%; border-radius: 8px; }
+.pane-tag { position: absolute; top: 8px; left: 8px; font-size: 11px; padding: 3px 8px; border-radius: 12px; background: var(--toast-bg); color: var(--toast-text); }

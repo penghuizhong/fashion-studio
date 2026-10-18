@@ -247,6 +247,52 @@ CREATE TABLE IF NOT EXISTS saved_cards(
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_saved_cards_user ON saved_cards(user_id, created_at DESC);
+-- ---- 设计台：款式 DNA 模板（v0.1.0） ----
+CREATE TABLE IF NOT EXISTS style_dna_templates(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  source_image_path TEXT DEFAULT '',
+  category TEXT DEFAULT '',
+  dna_json TEXT NOT NULL DEFAULT '{}',
+  gen_params_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'draft',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dna_templates_user ON style_dna_templates(user_id, updated_at DESC);
+CREATE TABLE IF NOT EXISTS dna_generations(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id INTEGER NOT NULL,
+  user_id TEXT NOT NULL,
+  image_path TEXT NOT NULL,
+  thumb_path TEXT DEFAULT '',
+  prompt_snapshot TEXT DEFAULT '',
+  seed INTEGER,
+  model_id TEXT DEFAULT '',
+  size TEXT DEFAULT '',
+  op TEXT NOT NULL DEFAULT 'create',
+  user_rating TEXT DEFAULT '',
+  rated_at TEXT DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dna_generations_tpl ON dna_generations(template_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dna_generations_user ON dna_generations(user_id, created_at DESC);
+-- ---- 设计台：图片模型（按次计费，管理员上架） ----
+CREATE TABLE IF NOT EXISTS image_models(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  model_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'openai_compatible',
+  base_url TEXT DEFAULT '',
+  api_key_encrypted TEXT DEFAULT '',
+  price_per_call INTEGER NOT NULL DEFAULT 0,
+  sizes_json TEXT NOT NULL DEFAULT '[]',
+  is_active INTEGER DEFAULT 1,
+  sort_order INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 `;
 
 let _db = null;
@@ -256,7 +302,7 @@ export function getDb() {
   if (_db) return _db;
   const { dataDir } = getConfig();
   fs.mkdirSync(dataDir, { recursive: true });
-  _db = new Database(path.join(dataDir, 'soulchat.db'));
+  _db = new Database(path.join(dataDir, 'fashion-studio.db'));
   _db.pragma('journal_mode = WAL');
   _db.exec(SCHEMA);
   // ---- 轻量迁移：老库自动加列（新库不受影响） ----

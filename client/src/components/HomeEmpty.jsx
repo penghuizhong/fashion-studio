@@ -105,7 +105,7 @@ export default function HomeEmpty({
         <button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}>
           <Icon name="menu" size={22} />
         </button>
-        <span className="home-logo">SoulChat</span>
+        <span className="home-logo">Fashion Studio</span>
       </header>
 
       <div className="home-body wall-body">
@@ -115,7 +115,7 @@ export default function HomeEmpty({
         {wallCards.length > 0 && (
           <div className="circle-wall">
             <div className="circle-center">
-              <img src="/favicon.png" alt="SoulChat" />
+              <img src="/favicon.png" alt="Fashion Studio" />
             </div>
             {wallCards.map((c, i) => {
               const angle = (i / wallCards.length) * 360 - 90;

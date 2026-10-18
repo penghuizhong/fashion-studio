@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { api, fetchModels, DEFAULT_BASE_URL } from '../api.js';
 import Icon from './icons.jsx';
 import Avatar from './Avatar.jsx';
+import ImageModelsTab from './ImageModelsTab.jsx';
 
 // 自研模型下拉（iOS Safari 不支持原生 datalist）
 function ModelPicker({ value, onChange, models, placeholder, openSignal }) {
@@ -348,6 +349,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
   if (isAdmin) TABS.push({ id: 'models', icon: 'cpu', label: '模型管理' });
   if (isAdmin) TABS.push({ id: 'prompts', icon: 'chat', label: '提示词' });
   if (isAdmin) TABS.push({ id: 'review', icon: 'shield', label: '审核' });
+  if (isAdmin) TABS.push({ id: 'image-models', icon: 'sparkles', label: '图片模型' });
 
   useEffect(() => {
     if (tab === 'review' && isAdmin) loadReview(reviewStatus);
@@ -1713,8 +1715,11 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
               )}
             </>
           )}
+          {tab === 'image-models' && isAdmin && (
+            <ImageModelsTab showToast={showToast} />
+          )}
         </div>
-        {version && <div className="settings-foot">SoulChat v{version}</div>}
+        {version && <div className="settings-foot">Fashion Studio v{version}</div>}
         {/* v1.18.1: 按用户调整积分 */}
         {adjustUser && (
           <div className="conv-menu-backdrop" onClick={() => setAdjustUser(null)}>

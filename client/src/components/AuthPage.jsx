@@ -161,7 +161,7 @@ export default function AuthPage({ theme, onToggleTheme }) {
             className="btn primary auth-submit"
             onClick={() => setJustRegistered(null)}
           >
-            进入 SoulChat
+            进入 Fashion Studio
           </button>
         </div>
       </div>
@@ -181,7 +181,7 @@ export default function AuthPage({ theme, onToggleTheme }) {
       </button>
       <div className="auth-card">
         <div className="auth-logo"><Icon name="chat" size={40} /></div>
-        <h1 className="auth-title">SoulChat</h1>
+        <h1 className="auth-title">Fashion Studio</h1>
         <p className="auth-sub">
           {mode === 'login' ? '欢迎回来' : mode === 'register' ? '创建你的账号，开始聊天' : '凭重置码自助找回密码'}
         </p>

@@ -36,6 +36,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   getDb(); // 初始化数据库
   const app = createApp();
   app.listen(cfg.port, () => {
-    console.log(`SoulChat server listening on :${cfg.port}`);
+    console.log(`Fashion Studio server listening on :${cfg.port}`);
   });
 }

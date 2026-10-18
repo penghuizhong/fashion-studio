@@ -529,7 +529,7 @@ export default function AccountView({ onOpenSidebar, showToast }) {
           </section>
         )}
 
-        {version && <p className="key-desc small version-line">SoulChat v{version}</p>}
+        {version && <p className="key-desc small version-line">Fashion Studio v{version}</p>}
       </div>
     </div>
   );

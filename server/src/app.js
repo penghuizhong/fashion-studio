@@ -26,6 +26,7 @@ import {
   mountAuthRoutes,
   canUseJailbreak,
 } from './auth.js';
+import { mountStudioRoutes } from './studio.js';
 import {
   estimateTokens,
   DEFAULT_SOUL,
@@ -180,6 +181,7 @@ export function createApp() {
   });
 
   mountAuthRoutes(app, authLimiter);
+  mountStudioRoutes(app);
 
   // user_id 隔离 helper：单用户模式（req.userId 为 null）时不加任何条件，原样查询
   const uidOf = (req) => (req && req.userId) || null;

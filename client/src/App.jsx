@@ -3,13 +3,14 @@ import Sidebar from './components/Sidebar.jsx';
 import ChatView from './components/ChatView.jsx';
 import DiscoverView from './components/DiscoverView.jsx';
 import HomeEmpty from './components/HomeEmpty.jsx';
+import StudioView from './components/StudioView.jsx';
 import CharacterSettingsModal from './components/CharacterSettingsModal.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import AuthPage from './components/AuthPage.jsx';
 import { useAuth } from './auth.jsx';
 import { api } from './api.js';
 
-// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'discover' }
+// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'discover' } | { type: 'studio' }
 
 export default function App() {
   const { multiUser, user, authReady, logout } = useAuth();
@@ -154,6 +155,10 @@ export default function App() {
 
   const handleOpenDiscover = useCallback(() => {
     setView({ type: 'discover' });
+    if (window.innerWidth <= 768) setSidebarOpen(false);
+  }, []);
+  const handleOpenStudio = useCallback(() => {
+    setView({ type: 'studio' });
     if (window.innerWidth <= 768) setSidebarOpen(false);
   }, []);
 
@@ -318,6 +323,7 @@ export default function App() {
         onConversationDeleted={handleConversationDeleted}
         onConversationsChanged={bumpConversations}
         onOpenDiscover={handleOpenDiscover}
+        onOpenStudio={handleOpenStudio}
         onLogin={() => {}}
         onToggleSidebar={toggleSidebar}
         onGoHome={() => setView({ type: 'empty' })}
@@ -364,6 +370,12 @@ export default function App() {
             onExit={() => setView({ type: 'empty' })}
             onOpenSidebar={() => setSidebarOpen(true)}
             showToast={showToast}
+          />
+        )}
+        {view.type === 'studio' && (
+          <StudioView
+            showToast={showToast}
+            onOpenSidebar={() => setSidebarOpen(true)}
           />
         )}
         {view.type === 'empty' && (

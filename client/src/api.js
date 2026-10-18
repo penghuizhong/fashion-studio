@@ -1,4 +1,4 @@
-// SoulChat 前端 API 层：全部走相对路径 /api（开发走 vite proxy，生产由后端同源托管）
+// Fashion Studio 前端 API 层：全部走相对路径 /api（开发走 vite proxy，生产由后端同源托管）
 // 用户级 API 配置（API 地址 / Key / 聊天模型 / 后台模型）：
 // - 单用户模式：只存本浏览器 localStorage，每次请求经请求头透传
 //   （X-Api-Base-Url / X-OpenRouter-Key / X-Chat-Model / X-Worker-Model），后端不存储、不记日志。
@@ -386,4 +386,24 @@ export const api = {
   batchCloneVoices: (data) => post('/api/admin/voice/batch-clone', data),
   batchCloneStatus: (jobId) => get(`/api/admin/voice/batch-clone/${jobId}`),
   clearBuiltinVoices: () => del('/api/admin/voice/builtin'),
+
+  // v0.1.0: 设计台
+  studio: {
+    extractDna: (data) => post('/api/studio/dna/extract', data),
+    listTemplates: () => get('/api/studio/templates'),
+    getTemplate: (id) => get(`/api/studio/templates/${id}`),
+    createTemplate: (data) => post('/api/studio/templates', data),
+    updateTemplate: (id, data) => put(`/api/studio/templates/${id}`, data),
+    finalize: (id) => post(`/api/studio/templates/${id}/finalize`, {}),
+    unfinalize: (id) => post(`/api/studio/templates/${id}/unfinalize`, {}),
+    generate: (id, data) => post(`/api/studio/templates/${id}/generate`, data),
+    variant: (id, data) => post(`/api/studio/templates/${id}/variant`, data),
+    history: (id) => get(`/api/studio/templates/${id}/history`),
+    rate: (genId, rating) => post(`/api/studio/generations/${genId}/rate`, { rating }),
+  },
+  adminImageModels: {
+    list: () => get('/api/admin/image-models'),
+    create: (data) => post('/api/admin/image-models', data),
+    update: (id, data) => put(`/api/admin/image-models/${id}`, data),
+  },
 };

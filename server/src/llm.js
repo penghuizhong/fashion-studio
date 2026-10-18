@@ -136,7 +136,7 @@ headers: {
 Authorization: `Bearer ${key}`,
 'Content-Type': 'application/json',
 'HTTP-Referer': 'https://soulchat.local',
-'X-Title': 'SoulChat MVP',
+'X-Title': 'Fashion Studio',
 },
 body: JSON.stringify({
   model,
@@ -519,6 +519,64 @@ const text = (json.choices && json.choices[0] && json.choices[0].message && json
 try {
 const parsed = JSON.parse(stripFences(text));
 if (typeof parsed.user_md === 'string' && typeof parsed.memory_md === 'string') return parsed;
+return null;
+} catch {
+return null;
+}
+}
+
+// v0.1.0: 多模态（图+文）调用——款式 DNA 提取用。复用 postCompletions 的 provider 协议处理。
+export async function llmVision({ model, imageBase64, mimeType, prompt, temperature, apiKey, baseUrl, provider, onUsage, signal, maxTokens }) {
+const mime = mimeType || 'image/jpeg';
+const { json } = await postJson({
+model,
+temperature: temperature == null ? 0.2 : temperature,
+apiKey,
+baseUrl,
+provider,
+signal,
+onUsage,
+maxTokens,
+messages: [
+{
+role: 'user',
+content: [
+{ type: 'text', text: prompt },
+{ type: 'image_url', image_url: { url: 'data:' + mime + ';base64,' + imageBase64 } },
+],
+},
+],
+});
+return json;
+}
+
+const DNA_SYSTEM = `你是服装款式分析师。仔细看图，提取款式 DNA，只返回 JSON，不要输出其他任何文字。
+每个字段都是 {"value": 识别值, "confidence": 0~1 置信度}；看不清/不确定的字段 value 填 null 并给低置信度；面料成分看不出来时 fabric 只填大类。
+Schema（value 建议值）：
+{"category":{"value":"evening_dress|mens_suit|...","confidence":0},"silhouette":{"value":"mermaid|A_line|slim|...","confidence":0},"collar":{"value":"sweetheart|...","confidence":0},"sleeve":{"value":"spaghetti_strap|...","confidence":0},"skirt":{"value":"floor_length|...","confidence":0},"fabric":{"value":"satin|chiffon|...","confidence":0},"primary_color":{"value":"颜色名","confidence":0},"secondary_color":{"value":"颜色名或null","confidence":0},"style":{"value":"minimalist|...","confidence":0},"details":{"value":["beading",...],"confidence":0},"scene":{"value":"white_bg|street_snap|...","confidence":0}}`;
+
+// v0.1.0: 趋势图 → 款式 DNA JSON（含置信度）；失败返回 null（调用方标人工填写）
+export async function extractDna({ imageBase64, mimeType, model, apiKey, baseUrl, provider, onUsage, signal }) {
+const cfg = getConfig();
+if (cfg.mockLlm) {
+return { category: { value: 'evening_dress', confidence: 0.99 }, silhouette: { value: 'mermaid', confidence: 0.9 }, collar: { value: null, confidence: 0.3 }, sleeve: { value: 'spaghetti_strap', confidence: 0.85 }, skirt: { value: 'floor_length', confidence: 0.9 }, fabric: { value: 'satin', confidence: 0.6 }, primary_color: { value: 'champagne', confidence: 0.88 }, secondary_color: { value: null, confidence: 0.5 }, style: { value: 'minimalist', confidence: 0.7 }, details: { value: [], confidence: 0.5 }, scene: { value: 'street_snap', confidence: 0.8 } };
+}
+const json = await llmVision({
+model,
+imageBase64,
+mimeType,
+prompt: DNA_SYSTEM,
+apiKey,
+baseUrl,
+provider,
+onUsage,
+signal,
+});
+const ch = json && json.choices && json.choices[0] && json.choices[0].message;
+const text = (ch && ch.content) || '';
+try {
+const parsed = JSON.parse(stripFences(text));
+if (parsed && typeof parsed === 'object' && parsed.category) return parsed;
 return null;
 } catch {
 return null;

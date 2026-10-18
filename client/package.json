@@ -7,7 +7,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^5.4.11"
   },
-  "name": "soulchat-client",
+  "name": "fashion-studio-client",
   "private": true,
   "scripts": {
     "build": "vite build",
@@ -16,5 +16,5 @@
     "prebuild": "sh ../scripts/decode-avatars.sh"
   },
   "type": "module",
-  "version": "1.29.19"
+  "version": "0.1.0"
 }
