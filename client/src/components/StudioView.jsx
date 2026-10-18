@@ -96,6 +96,11 @@ function CloneModal({ onClose, onSaved, showToast }) {
   const [uploadProgress, setUploadProgress] = useState(0); // P6: 上传进度 0-100
   const [visionModels, setVisionModels] = useState([]);
   const [visionModel, setVisionModel] = useState('');
+  // 生图设置：模型 / 尺寸 / 质量
+  const [imgModels, setImgModels] = useState([]);
+  const [genModelId, setGenModelId] = useState('');
+  const [genSize, setGenSize] = useState('1024x1024');
+  const [genQuality, setGenQuality] = useState('std'); // std=标准 hd=高清(2x分辨率)
   // P5: 类目预设
   const [presets, setPresets] = useState([]);
   const [presetId, setPresetId] = useState('');
@@ -107,6 +112,15 @@ function CloneModal({ onClose, onSaved, showToast }) {
       const ms = r.models || [];
       setVisionModels(ms);
       if (ms.length) setVisionModel(ms[0].model_id);
+    }).catch(() => {});
+    api.studio.imageModels().then((r) => {
+      const ms = r.models || [];
+      setImgModels(ms);
+      if (ms.length) {
+        setGenModelId(ms[0].model_id);
+        const ss = ms[0].sizes;
+        if (Array.isArray(ss) && ss.length) setGenSize(String(ss[0]).replace('*', 'x'));
+      }
     }).catch(() => {});
     api.studio.dnaPresets().then((r) => {
       const ps = r.presets || [];
@@ -123,6 +137,29 @@ function CloneModal({ onClose, onSaved, showToast }) {
     const p = presets.find((x) => x.id === id);
     setPresetFields((p && p.fields) || []);
   };
+
+  // 当前选中图片模型的尺寸档
+  const curImgModel = imgModels.find((m) => m.model_id === genModelId) || imgModels[0];
+  const sizeOptions = (() => {
+    const ss = curImgModel && curImgModel.sizes;
+    if (Array.isArray(ss) && ss.length) return ss.map((s) => String(s).replace('*', 'x'));
+    return ['1024x1024', '1024x1536', '1536x1024'];
+  })();
+  const onImgModelChange = (mid) => {
+    setGenModelId(mid);
+    const m = imgModels.find((x) => x.model_id === mid);
+    const ss = m && m.sizes;
+    if (Array.isArray(ss) && ss.length) setGenSize(String(ss[0]).replace('*', 'x'));
+  };
+  // 质量=高清时分辨率翻倍（单边上限 2048，qwen-image 上限）
+  const finalGenSize = (() => {
+    if (genQuality !== 'hd') return genSize;
+    const m = String(genSize).match(/(\d+)\s*[x*×]\s*(\d+)/);
+    if (!m) return genSize;
+    const w = Math.min(2048, parseInt(m[1], 10) * 2);
+    const h = Math.min(2048, parseInt(m[2], 10) * 2);
+    return `${w}x${h}`;
+  })();
 
   const handleFiles = useCallback(async (files) => {
     const f = files && files[0];
@@ -363,10 +400,11 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
     setBusy(true);
     setBusyOp(op);
     try {
-      const body = { op, changes, seed_mode: seedMode };
+      const genOpts = { model_id: genModelId || undefined, size: finalGenSize };
+      const body = { op, changes, seed_mode: seedMode, ...genOpts };
       if (sourceId) body.source_generation_id = sourceId;
       const r = op === 'create'
-        ? await api.studio.generate(t.id, {})
+        ? await api.studio.generate(t.id, genOpts)
         : await api.studio.variant(t.id, body);
       return r.generation;
     } catch (e) {
@@ -376,7 +414,7 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
       setBusy(false);
       setBusyOp('');
     }
-  }, [busy, t, showToast]);
+  }, [busy, t, showToast, genModelId, finalGenSize]);
 
   // 生成后走并排验证
   const genAndCompare = useCallback(async (op, changes, sourceId, seedMode) => {
@@ -394,7 +432,7 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
     if (busy || !t) return;
     setBusy(true);
     try {
-      const r = await api.studio.generate(t.id, { seed: gen.seed });
+      const r = await api.studio.generate(t.id, { seed: gen.seed, model_id: genModelId || undefined, size: finalGenSize });
       await refresh();
       onCompare({
         before: gen.image_path,
@@ -407,7 +445,7 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
     } finally {
       setBusy(false);
     }
-  }, [busy, t, showToast, refresh, onCompare]);
+  }, [busy, t, showToast, refresh, onCompare, genModelId, finalGenSize]);
 
   const saveDna = useCallback(async () => {
     if (busy) return;
@@ -518,6 +556,58 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
           {!isFinal && (
             <button className="btn secondary small" disabled={busy} onClick={saveDna}>保存 DNA</button>
           )}
+        </div>
+
+        <div className="drawer-sec">
+          <div className="drawer-sec-title">生成设置</div>
+          <div className="gen-settings">
+            <label>
+              <span className="field-label">模型</span>
+              <select
+                className="text-input"
+                value={genModelId}
+                onChange={(e) => onImgModelChange(e.target.value)}
+                disabled={busy || !imgModels.length}
+              >
+                {!imgModels.length && <option value="">暂无可用图片模型</option>}
+                {imgModels.map((m) => (
+                  <option key={m.model_id} value={m.model_id}>
+                    {m.name || m.model_id}{m.price_per_call ? `（${m.price_per_call}积分/次）` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="gen-settings-row">
+              <label>
+                <span className="field-label">尺寸</span>
+                <select
+                  className="text-input"
+                  value={genSize}
+                  onChange={(e) => setGenSize(e.target.value)}
+                  disabled={busy}
+                >
+                  {sizeOptions.map((s) => (
+                    <option key={s} value={s}>{s.replace('x', ' × ')}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="field-label">质量</span>
+                <select
+                  className="text-input"
+                  value={genQuality}
+                  onChange={(e) => setGenQuality(e.target.value)}
+                  disabled={busy}
+                >
+                  <option value="std">标准</option>
+                  <option value="hd">高清（2x 分辨率）</option>
+                </select>
+              </label>
+            </div>
+            {genQuality === 'hd' && (
+              <div className="sidebar-hint">高清将按 {finalGenSize.replace('x', ' × ')} 生成，耗时与费用可能更高</div>
+            )}
+          </div>
         </div>
 
         <div className="drawer-sec">

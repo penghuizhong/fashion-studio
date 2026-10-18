@@ -70,43 +70,33 @@ export function renderDnaPromptWithOverrides(dna, overrides) {
   return renderDnaPrompt(merged);
 }
 
-// ---------- adapter：dashscope（文生图，task 异步轮询） ----------
+// ---------- adapter：dashscope（qwen-image 系列，新 multimodal-generation 同步接口） ----------
+// 官方文档：POST {baseUrl}/api/v1/services/aigc/multimodal-generation/generation
+// qwen-image-3.0 / 2.1-pro 均支持同步调用；旧 text2image/image-synthesis 仅适用 wan2.x
 async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size, seed, promptExtend = true }) {
   const dsSize = String(size || '1024*1024').replace('x', '*');
-  const submitRes = await fetch(`${baseUrl}/api/v1/services/aigc/text2image/image-synthesis`, {
+  const params = { size: dsSize, n: 1, prompt_extend: !!promptExtend, watermark: false };
+  if (seed != null) params.seed = seed;
+  const res = await fetch(`${baseUrl}/api/v1/services/aigc/multimodal-generation/generation`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model,
-      input: { prompt },
-      parameters: { size: dsSize, n: 1, seed, prompt_extend: !!promptExtend, watermark: false },
+      input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
+      parameters: params,
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(180000),
   });
-  const submitJson = await submitRes.json().catch(() => null);
-  if (!submitRes.ok) throw new Error(`DashScope 提交失败 HTTP ${submitRes.status}`);
-  const taskId = submitJson && submitJson.output && submitJson.output.task_id;
-  if (!taskId) throw new Error('DashScope 未返回 task_id');
-  const deadline = Date.now() + 180000;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3000));
-    const stRes = await fetch(`${baseUrl}/api/v1/tasks/${taskId}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(15000),
-    });
-    const stJson = await stRes.json().catch(() => null);
-    const out = stJson && stJson.output;
-    const status = out && out.task_status;
-    if (status === 'SUCCEEDED') {
-      const url = out.results && out.results[0] && out.results[0].url;
-      if (!url) throw new Error('DashScope 任务成功但无图片 URL');
-      return { imageUrl: url, seed };
-    }
-    if (status === 'FAILED' || status === 'CANCELED') {
-      throw new Error(`DashScope 生图失败: ${status}`);
-    }
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json || json.status_code !== 200) {
+    const msg = (json && (json.message || json.code)) || `HTTP ${res.status}`;
+    throw new Error(`DashScope 生图失败: ${msg}`);
   }
-  throw new Error('DashScope 生图超时（180s）');
+  const content = json.output && json.output.choices && json.output.choices[0] &&
+    json.output.choices[0].message && json.output.choices[0].message.content;
+  const url = Array.isArray(content) && content[0] && content[0].image;
+  if (!url) throw new Error('DashScope 未返回图片 URL');
+  return { imageUrl: url, seed };
 }
 
 // ---------- adapter：openai_compatible ----------
