@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './icons.jsx';
+import ModelPicker from './ModelPicker.jsx';
 
 const PRESETS = [
   { id: 'openrouter', name: 'OpenRouter' },
@@ -334,13 +335,18 @@ export default function ModelsTab({ showToast }) {
                 <option key={p.id} value={p.id}>{p.name}（{KIND_LABEL[p.kind] || p.kind}）</option>
               ))}
             </select>
-            <input value={mForm.model_id} onChange={setM('model_id')} placeholder="模型 ID，如：openai/gpt-4o-mini" disabled={mEditing !== 'new'} spellCheck={false} list="ms-model-datalist" />
-            <datalist id="ms-model-datalist">
-              {pulledModels.map((m) => (<option key={m.id} value={m.id}>{m.name && m.name !== m.id ? m.name : ''}</option>))}
-            </datalist>
-            {mEditing === 'new' && (
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <ModelPicker
+              value={mForm.model_id}
+              onChange={(v) => setMForm((f) => ({ ...f, model_id: v }))}
+              models={pulledModels}
+              placeholder="模型 ID：输入筛选 400+ 可用模型，或手动输入"
+              disabled={mEditing !== 'new'}
+            />
+            {mEditing === 'new' && !pulledModels.length && (
               <div className="small" style={{ marginTop: 4, opacity: 0.65 }}>
-                {pulledModels.length ? `已缓存该供应商 ${pulledModels.length} 个可用模型，输入时自动补全` : '该供应商尚未拉取模型列表，可先点「拉取模型」'}
+                该供应商尚未拉取模型列表，可先点「拉取模型」
               </div>
             )}
           </div>

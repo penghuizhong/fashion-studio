@@ -4,6 +4,20 @@ export async function runSingle() {
   let charId = null;
   let convId = null;
 
+  // 0. v0.2.1 版本号同步锁：/api/config.version 必须等于 server/package.json（设置面板直接读它）
+  {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8'));
+    const r = await req('GET', '/api/config');
+    ok(
+      '0. 版本号同步：/api/config.version 与 server/package.json 一致',
+      r.status === 200 && r.json && r.json.version === pkg.version,
+      `config version=${r.json && r.json.version} pkg=${pkg.version}`
+    );
+  }
+
   // 1. GET /api/config
   {
     const r = await req('GET', '/api/config');

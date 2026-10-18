@@ -1428,6 +1428,15 @@ textarea {
   cursor: default;
 }
 
+.model-count {
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: default;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+
 /* ---- 积分系统 ---- */
 .billing-toggle {
   display: flex;
