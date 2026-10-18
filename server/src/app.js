@@ -2141,6 +2141,21 @@ export function createApp() {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const distDir = path.resolve(__dirname, '../../client/dist');
   if (fs.existsSync(distDir)) {
+    // 头像 PNG→WebP 兼容：01ef5e0 删除了 26 张 .png，历史数据/旧链接里仍可能引用旧路径；
+    // 同名 .webp 存在时直接 serving webp，避免 404 回落到 index.html 导致头像裂图
+    app.get(/^\/avatars\/(.+)\.png$/i, (req, res, next) => {
+      try {
+        const name = path.basename(req.params[0] || '');
+        if (!name || name.includes('/') || name.includes('\\')) return next();
+        const webp = path.join(distDir, 'avatars', `${name}.webp`);
+        if (fs.existsSync(webp)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          res.type('webp');
+          return res.sendFile(webp);
+        }
+      } catch { /* fallthrough */ }
+      next();
+    });
     app.use(express.static(distDir, {
       setHeaders(res, filePath) {
         if (filePath.includes(`${path.sep}avatars${path.sep}`) || filePath.includes(`${path.sep}assets${path.sep}`)) {
