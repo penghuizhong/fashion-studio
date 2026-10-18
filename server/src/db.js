@@ -407,6 +407,44 @@ function migrateToUnifiedRegistry(db) {
   }
 }
 
+// v0.2.2: 头像 PNG→WebP 迁移（01ef5e0 把 26 张头像换成 .webp 并删了 .png，
+// 但历史数据里仍存着旧的 /avatars/xxx.png 路径，幂等）
+// 只处理 26 个已知预设头像文件名，不碰用户上传/外部链接
+function migrateAvatarPngToWebp(db) {
+  const AVATAR_NAMES = [
+    'avatar-gen-1', 'avatar-gen-2', 'avatar-gen-3', 'avatar-gen-4',
+    'avatar-gen-5', 'avatar-gen-6', 'avatar-gen-7', 'avatar-gen-8',
+    'preset-luchen', 'preset-linyi', 'preset-suxiao', 'preset-guye',
+    'preset-chenmo', 'preset-anuan', 'preset-chenshu', 'preset-mimi',
+    'preset-baiting', 'preset-maojianke', 'preset-jijia', 'preset-yongzhe',
+    'preset-shentinglan', 'preset-taoyao', 'preset-luli', 'preset-linghao',
+    'preset-laopi', 'preset-sudongpo',
+  ];
+  try {
+    let fixed = 0;
+    const updChar = db.prepare('UPDATE characters SET avatar=? WHERE avatar=?');
+    const updShared = db.prepare(
+      "UPDATE shared_cards SET card_json=REPLACE(card_json,?,?) WHERE card_json LIKE '%'||?||'%' ESCAPE '\\'"
+    );
+    const updSaved = db.prepare(
+      "UPDATE saved_cards SET card_json=REPLACE(card_json,?,?) WHERE card_json LIKE '%'||?||'%' ESCAPE '\\'"
+    );
+    const tx = db.transaction(() => {
+      for (const name of AVATAR_NAMES) {
+        const oldP = `/avatars/${name}.png`;
+        const newP = `/avatars/${name}.webp`;
+        fixed += updChar.run(newP, oldP).changes;
+        fixed += updShared.run(oldP, newP, oldP).changes;
+        fixed += updSaved.run(oldP, newP, oldP).changes;
+      }
+    });
+    tx();
+    if (fixed) console.log(`[db] 头像 PNG→WebP 迁移：修复 ${fixed} 条历史记录`);
+  } catch (e) {
+    console.warn('[db] 头像 PNG→WebP 迁移失败:', e.message);
+  }
+}
+
 export function getDb() {
   if (_db) return _db;
   const { dataDir } = getConfig();
@@ -415,6 +453,7 @@ export function getDb() {
   _db.pragma('journal_mode = WAL');
   _db.exec(SCHEMA);
   migrateToUnifiedRegistry(_db);
+  migrateAvatarPngToWebp(_db);
   // ---- 轻量迁移：老库自动加列（新库不受影响） ----
   try {
     const convCols = _db.prepare('PRAGMA table_info(conversations)').all().map((c) => c.name);
