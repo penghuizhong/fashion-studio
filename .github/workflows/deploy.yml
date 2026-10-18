@@ -42,11 +42,14 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /opt/soulchat-app
+            if [ ! -d /opt/fashion-studio/.git ]; then
+              git clone https://github.com/penghuizhong/fashion-studio.git /opt/fashion-studio
+            fi
+            cd /opt/fashion-studio
             git fetch origin main
             git reset --hard origin/main
             cd server && npm ci --omit=dev
             cd ../client && npm ci && npm run build
-            systemctl restart soulchat
+            systemctl restart fashion-studio
             sleep 3
-            curl -sf http://127.0.0.1:3001/api/config | head -c 200
+            curl -sf http://127.0.0.1:3100/api/config | head -c 200
