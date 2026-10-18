@@ -140,16 +140,18 @@ export function mountStudioRoutes(app) {  const db = getDb();
     if (!name || !String(name).trim()) return res.status(400).json({ error: '模板名称必填' });
     if (!dna_json || typeof dna_json !== 'object') return res.status(400).json({ error: 'dna_json 必填' });
     let srcPath = source_image_path || '';
+    let srcThumb = '';
     if (source_image_base64 && typeof source_image_base64 === 'string') {
       try {
         const files = await saveStudioImage(source_image_base64, `src_${Date.now()}.jpg`);
         srcPath = files.image_path;
+        srcThumb = files.thumb_path; // P7: 来源图缩略图，卡片预览用
       } catch { /* 来源图落盘失败不阻塞建模板 */ }
     }
     const now = new Date().toISOString();
-    const r = db.prepare(`INSERT INTO style_dna_templates(user_id,name,source_image_path,category,preset_id,dna_json,gen_params_json,status,version,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?, 'draft',1,?,?)`).run(
-      uid, String(name).trim(), srcPath, category || '', preset_id || '',
+    const r = db.prepare(`INSERT INTO style_dna_templates(user_id,name,source_image_path,source_thumb_path,category,preset_id,dna_json,gen_params_json,status,version,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?, 'draft',1,?,?)`).run(
+      uid, String(name).trim(), srcPath, srcThumb, category || '', preset_id || '',
       JSON.stringify(dna_json), JSON.stringify(gen_params_json || {}), now, now);
     res.json({ ok: true, id: r.lastInsertRowid });
   }));

@@ -885,4 +885,31 @@ export async function runSingle() {
       rBig.base64.length < bigB64.length,
       `small=${rSmall.base64 === smallB64} big=${bigMeta.width}x${bigMeta.height} mime=${rBig.mimeType}`);
   }
+  // P7. 模板保存时来源图缩略图落盘且入库
+  {
+    const sharp7 = (await import('sharp')).default;
+    const tinyJpg = await sharp7({ create: { width: 800, height: 600, channels: 3, background: { r: 10, g: 20, b: 30 } } }).jpeg().toBuffer();
+    const tp7 = await req('POST', '/api/studio/templates', {
+      name: 'P7缩略图测试', preset_id: 'shirt',
+      dna_json: { silhouette: { value: '常规', confidence: 0.9 } },
+      source_image_base64: tinyJpg.toString('base64'),
+    });
+    const tid7 = tp7.json && tp7.json.id;
+    const { getDb: getDbP7 } = await import('../src/db.js');
+    const row7 = tid7 && getDbP7().prepare('SELECT source_image_path, source_thumb_path FROM style_dna_templates WHERE id=?').get(tid7);
+    const fsP7 = await import('node:fs');
+    const pathP7 = await import('node:path');
+    const thumbExists = row7 && row7.source_thumb_path && fsP7.existsSync(pathP7.join(process.env.DATA_DIR, row7.source_thumb_path));
+    ok('P7. 来源图缩略图入库且文件存在',
+      tp7.status === 200 && !!row7.source_thumb_path && thumbExists,
+      `create=${tp7.status} thumb=${row7 && row7.source_thumb_path} exists=${thumbExists}`);
+    if (tid7) {
+      const dbP7 = getDbP7();
+      const r7 = dbP7.prepare('SELECT source_image_path, source_thumb_path FROM style_dna_templates WHERE id=?').get(tid7);
+      for (const fp of [r7.source_image_path, r7.source_thumb_path]) {
+        try { const a = pathP7.join(process.env.DATA_DIR, fp); if (fp && fsP7.existsSync(a)) fsP7.unlinkSync(a); } catch {}
+      }
+      dbP7.prepare('DELETE FROM style_dna_templates WHERE id=?').run(tid7);
+    }
+  }
 }

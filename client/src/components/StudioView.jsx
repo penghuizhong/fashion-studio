@@ -655,11 +655,11 @@ export default function StudioView({ showToast, onOpenSidebar }) {
         </div>
         <div className="studio-head-actions">
           <button className="btn secondary small" onClick={() => setExploreOpen(true)}>
-            <Icon name="sparkles" size={14} /> 发散创建
+            <Icon name="sparkles" size={14} /> 创意衍生
           </button>
           {templates.length > 0 && (
             <button className="btn secondary small" onClick={() => setCloneOpen(true)}>
-              <Icon name="plus" size={14} /> 克隆第一款
+              <Icon name="plus" size={14} /> 解析款式
             </button>
           )}
         </div>
@@ -672,7 +672,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
           <p>还没有款式卡</p>
           <p className="dim">传一张趋势图，AI 提取款式 DNA，一键开始生产</p>
           <button className="btn secondary" onClick={() => setCloneOpen(true)}>
-            <Icon name="plus" size={16} /> 克隆第一款
+            <Icon name="plus" size={16} /> 解析款式
           </button>
         </div>
       ) : (
@@ -681,7 +681,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
             <div key={t.id} className="studio-card" onClick={() => setDrawerId(t.id)}>
               <div className="studio-card-cover">
                 {(t.last_thumb || t.source_image_path) ? (
-                  <img src={imgUrl(t.last_thumb || t.source_image_path)} alt={t.name} />
+                  <img src={imgUrl(t.last_thumb || t.source_thumb_path || t.source_image_path)} alt={t.name} loading="lazy" />
                 ) : (
                   <div className="studio-card-nocover"><Icon name="sparkles" size={28} /></div>
                 )}

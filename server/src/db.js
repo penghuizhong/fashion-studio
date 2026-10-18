@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS style_dna_templates(
   user_id TEXT NOT NULL,
   name TEXT NOT NULL,
   source_image_path TEXT DEFAULT '',
+  source_thumb_path TEXT DEFAULT '',
   category TEXT DEFAULT '',
   dna_json TEXT NOT NULL DEFAULT '{}',
   gen_params_json TEXT NOT NULL DEFAULT '{}',
@@ -487,6 +488,12 @@ export function getDb() {
     for (const t of ['style_dna_templates', 'exploration_batches']) {
       const cols = _db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
       if (!cols.includes('preset_id')) _db.exec(`ALTER TABLE ${t} ADD COLUMN preset_id TEXT DEFAULT ''`);
+    }
+    // P7: 模板来源图缩略图（卡片预览用，原图只在抽屉大图时加载）
+    // 存量回填在 index.js 启动后异步执行（sharp 异步，getDb 同步）
+    {
+      const cols = _db.prepare('PRAGMA table_info(style_dna_templates)').all().map((c) => c.name);
+      if (!cols.includes('source_thumb_path')) _db.exec("ALTER TABLE style_dna_templates ADD COLUMN source_thumb_path TEXT DEFAULT ''");
     }
     // P5: DNA 类目预设 seed（9 个类目；INSERT OR IGNORE，已有不覆盖用户改过的）
     try {

@@ -203,7 +203,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box studio-modal explore-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <span>发散创建</span>
+          <span>创意衍生</span>
           <div className="explore-tabs">
             <button className={tab === 'new' ? 'active' : ''} onClick={() => setTab('new')}>新发散</button>
             <button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>历史批次</button>
