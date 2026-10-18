@@ -18,7 +18,7 @@ const KIND_LABEL = { llm: '仅聊天', image: '仅图片', both: '聊天+图片'
 const emptyPForm = { name: '', preset: 'custom', kind: 'both', base_url: '', api_key: '', is_active: true };
 const emptyMForm = {
   provider_id: '', kind: 'chat', model_id: '', name: '',
-  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true,
+  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true, vision: false,
 };
 
 export default function ModelsTab({ showToast }) {
@@ -170,6 +170,7 @@ export default function ModelsTab({ showToast }) {
       per_call: m.pricing.per_call || '',
       sizes: (m.extra.sizes || []).join(','),
       prompt_extend: m.extra.prompt_extend !== false,
+      vision: !!m.extra.vision,
     });
     setSizeFamily(guessFamily(m.model_id));
     setMEditing(m.id);
@@ -183,6 +184,7 @@ export default function ModelsTab({ showToast }) {
       const ip = Math.floor(Number(mForm.input_per_1m)), op = Math.floor(Number(mForm.output_per_1m));
       if (!ip || ip <= 0 || !op || op <= 0) { showToast('输入/输出单价必须是大于 0 的整数'); return; }
       pricing.input_per_1m = ip; pricing.output_per_1m = op;
+      extra.vision = !!mForm.vision;
     } else {
       const pc = Math.floor(Number(mForm.per_call));
       if (pc == null || pc < 0 || Number.isNaN(pc)) { showToast('按次单价必须是非负整数'); return; }
@@ -253,7 +255,7 @@ export default function ModelsTab({ showToast }) {
         <div><b>{m.name || m.model_id}</b> <span className="key-desc small">{m.model_id} · {m.provider_name || ''}</span></div>
         <div className="key-desc small">
           {m.kind === 'chat'
-            ? `${m.pricing.input_per_1m | 0}/${m.pricing.output_per_1m | 0} 积分/1M tokens`
+            ? `${m.pricing.input_per_1m | 0}/${m.pricing.output_per_1m | 0} 积分/1M tokens${m.extra && m.extra.vision ? ' · 支持视觉' : ''}`
             : `${m.pricing.per_call | 0} 积分/次`}
           {m.is_active ? '' : '（已停用）'}
         </div>
@@ -385,6 +387,10 @@ export default function ModelsTab({ showToast }) {
               <div className="key-input-row" style={{ marginTop: 8 }}>
                 <input type="number" min="1" value={mForm.output_per_1m} onChange={setM('output_per_1m')} placeholder="输出单价 /1M tokens" />
               </div>
+              <label className="key-desc small" style={{ display: 'block', marginTop: 8 }}>
+                <input type="checkbox" checked={!!mForm.vision} onChange={setM('vision')} />
+                支持视觉识图（克隆款式提取 DNA 时可用）
+              </label>
             </>
           ) : (
             <>

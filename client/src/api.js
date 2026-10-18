@@ -401,6 +401,7 @@ export const api = {
     exploreRender: (id, confirm) => post(`/api/studio/explore/${id}/render`, { confirm: !!confirm }),
     exploreAdopt: (id, indexes) => post(`/api/studio/explore/${id}/adopt`, { indexes }),
     imageModels: () => get('/api/studio/image-models'),
+    visionModels: () => get('/api/studio/vision-models'),
     assets: (params = {}) => {
       const q = new URLSearchParams();
       for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, v);

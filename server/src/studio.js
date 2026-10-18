@@ -11,6 +11,7 @@ import {
   renderDnaPrompt, renderDnaPromptWithOverrides, generateImage, saveStudioImage,
 } from './image.js';
 import { calcPoints, deductPoints } from './points.js';
+import { listModels } from './registry.js';
 
 // v0.2.0: 记忆遗忘——归档 90 天前的变体；每模板只保留最新 50 条未归档
 export function runArchive() {
@@ -66,6 +67,13 @@ export function mountStudioRoutes(app) {  const db = getDb();
   app.use('/uploads/studio', express.static(studioDir));
 
   // ---------- DNA 提取 ----------
+  // GET /api/studio/vision-models → 启用且支持视觉的聊天模型（公开信息，无密钥）
+  app.get('/api/studio/vision-models', ah(async (req, res) => {
+    const ms = listModels({ kind: 'chat' })
+      .filter((m) => m.extra && m.extra.vision)
+      .map((m) => ({ id: m.id, model_id: m.model_id, name: m.name, provider_name: m.provider_name }));
+    res.json({ ok: true, models: ms });
+  }));
   // POST /api/studio/dna/extract { imageBase64, mimeType?, model? } → { dna }
   app.post('/api/studio/dna/extract', ah(async (req, res) => {
     const uid = uidOf(req);
@@ -73,8 +81,12 @@ export function mountStudioRoutes(app) {  const db = getDb();
     if (!imageBase64 || typeof imageBase64 !== 'string') return res.status(400).json({ error: '缺少图片数据' });
     if (imageBase64.length > 20 * 1024 * 1024) return res.status(400).json({ error: '图片过大（base64 限 20MB）' });
     const creds = llmCreds(req, cfg, requestApiKey);
-    const useModel = String(model || '').trim() || creds.workerModel;
-    if (!useModel) return res.status(400).json({ error: '未配置提取模型' });
+    let useModel = String(model || '').trim();
+    if (!useModel) {
+      const vm = listModels({ kind: 'chat' }).find((m) => m.extra && m.extra.vision);
+      useModel = vm ? vm.model_id : '';
+    }
+    if (!useModel) return res.status(400).json({ error: '请先在模型管理里上架支持视觉的聊天模型，并勾选「支持视觉识图」' });
     const dna = await extractDna({
       imageBase64, mimeType: mimeType || 'image/jpeg',
       model: useModel, apiKey: creds.apiKey, baseUrl: creds.baseUrl, provider: creds.provider,

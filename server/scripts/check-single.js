@@ -767,4 +767,43 @@ export async function runSingle() {
     db.prepare('DELETE FROM models WHERE id=?').run('model_exptest');
     db.prepare('DELETE FROM providers WHERE id=?').run('prov_exptest');
   }
+
+  // V1-V3. 识图模型走注册表（克隆款式修复）
+  {
+    const db = getDb();
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO providers(id,name,preset,kind,base_url,api_key_encrypted,is_default,is_active,sort_order,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run('prov_vtest', '视觉测试供应商', 'custom', 'llm', 'https://example.com/v1', '', 0, 1, 0, now);
+    db.prepare(`INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,sort_order,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run('model_vtest', 'prov_vtest', 'chat', 'test/vision-model', '视觉测试模型',
+      '{"input_per_1m":10,"output_per_1m":20}', '{"vision":true}', 1, 0, now);
+    // 再建一个不支持视觉的，确保被过滤
+    db.prepare(`INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,sort_order,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`).run('model_vtest2', 'prov_vtest', 'chat', 'test/text-model', '纯文本模型',
+      '{"input_per_1m":10,"output_per_1m":20}', '{}', 1, 1, now);
+
+    // V1. vision-models 只返回支持视觉的
+    const v1 = await req('GET', '/api/studio/vision-models');
+    const vmodels = (v1.json && v1.json.models) || [];
+    ok('V1. vision-models 只列出勾选视觉的模型',
+      v1.status === 200 && vmodels.length === 1 && vmodels[0].model_id === 'test/vision-model',
+      `status=${v1.status} count=${vmodels.length}`);
+
+    // V2. 不传 model 时自动用视觉模型（mock 下返回 mock DNA）
+    const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const v2 = await req('POST', '/api/studio/dna/extract', { imageBase64: tinyPng, mimeType: 'image/png' });
+    ok('V2. 不传模型 → 自动用视觉模型提取成功',
+      v2.status === 200 && v2.json && v2.json.dna && v2.json.dna.category,
+      `status=${v2.status}`);
+
+    // V3. 删掉视觉模型后 → 400 友好提示
+    db.prepare('DELETE FROM models WHERE id=?').run('model_vtest');
+    const v3 = await req('POST', '/api/studio/dna/extract', { imageBase64: tinyPng, mimeType: 'image/png' });
+    ok('V3. 无视觉模型 → 400 提示去上架',
+      v3.status === 400 && /视觉/.test(v3.json && v3.json.error || ''),
+      `status=${v3.status} err=${v3.json && v3.json.error}`);
+
+    db.prepare('DELETE FROM models WHERE id=?').run('model_vtest2');
+    db.prepare('DELETE FROM providers WHERE id=?').run('prov_vtest');
+  }
 }

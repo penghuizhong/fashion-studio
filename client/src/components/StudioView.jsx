@@ -67,7 +67,17 @@ function CloneModal({ onClose, onSaved, showToast }) {
   const [name, setName] = useState('');
   const [size, setSize] = useState('1024x1024');
   const [busy, setBusy] = useState(false);
+  const [visionModels, setVisionModels] = useState([]);
+  const [visionModel, setVisionModel] = useState('');
   const fileRef = useRef(null);
+
+  useEffect(() => {
+    api.studio.visionModels().then((r) => {
+      const ms = r.models || [];
+      setVisionModels(ms);
+      if (ms.length) setVisionModel(ms[0].model_id);
+    }).catch(() => {});
+  }, []);
 
   const handleFiles = useCallback((files) => {
     const f = files && files[0];
@@ -86,7 +96,7 @@ function CloneModal({ onClose, onSaved, showToast }) {
     setBusy(true);
     setStep('extracting');
     try {
-      const r = await api.studio.extractDna({ imageBase64: imgData.base64, mimeType: imgData.mime });
+      const r = await api.studio.extractDna({ imageBase64: imgData.base64, mimeType: imgData.mime, model: visionModel || undefined });
       setDna(r.dna);
       setStep('review');
     } catch (e) {
@@ -154,7 +164,16 @@ function CloneModal({ onClose, onSaved, showToast }) {
           </div>
         )}
         {step === 'upload' && imgData && (
-          <div className="modal-foot">
+          <div className="modal-foot" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+            {visionModels.length > 0 ? (
+              <select className="text-input" value={visionModel} onChange={(e) => setVisionModel(e.target.value)}>
+                {visionModels.map((m) => (
+                  <option key={m.id} value={m.model_id}>{m.name || m.model_id}（视觉）</option>
+                ))}
+              </select>
+            ) : (
+              <div className="small dim">未上架视觉模型：去模型管理上架聊天模型并勾选「支持视觉识图」</div>
+            )}
             <button className="btn primary" disabled={busy} onClick={startExtract}>
               <Icon name="sparkles" size={16} /> 提取 DNA
             </button>
