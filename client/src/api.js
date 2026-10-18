@@ -145,6 +145,36 @@ const post = (path, body) => request('POST', path, body);
 const put = (path, body) => request('PUT', path, body);
 const del = (path) => request('DELETE', path);
 
+// P6: 带上传进度的 POST（fetch 不支持上传进度，用 XHR）；onProgress(0-100)
+export function postWithProgress(path, body, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', path, true);
+    xhr.withCredentials = true;
+    const headers = authHeaders();
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+    }
+    xhr.onload = async () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(xhr.responseText ? JSON.parse(xhr.responseText) : null); }
+        catch { resolve(null); }
+      } else {
+        try {
+          const data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+          reject(new Error((data && data.error) || `请求失败 (${xhr.status})`));
+        } catch { reject(new Error(`请求失败 (${xhr.status})`)); }
+      }
+    };
+    xhr.onerror = () => reject(new Error('网络错误，请检查连接'));
+    xhr.send(JSON.stringify(body));
+  });
+}
+
 // 密码重置（无需登录）
 const resetPassword = (data) => post('/api/auth/reset-password', data);
 // 查看 / 重生自己的密码重置码（需登录）
@@ -383,6 +413,8 @@ export const api = {
   // v0.1.0: 设计台
   studio: {
     extractDna: (data) => post('/api/studio/dna/extract', data),
+    // P6: 带上传进度的识图（onProgress 0-100）
+    extractDnaWithProgress: (data, onProgress) => postWithProgress('/api/studio/dna/extract', data, onProgress),
     listTemplates: () => get('/api/studio/templates'),
     getTemplate: (id) => get(`/api/studio/templates/${id}`),
     createTemplate: (data) => post('/api/studio/templates', data),

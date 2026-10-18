@@ -8,6 +8,23 @@ import { ah } from './asyncHandler.js';
 import { llmCreds } from './auth.js';
 import { extractDna } from './llm.js';
 import { getPreset, listPresets, buildExtractPrompt, mapCnToEn } from './dnaPresets.js';
+import sharp from 'sharp';
+
+// P6: 服务端兜底压缩——base64 超过约 2MB 时压到最长边 1024px / JPEG 82（防直接调 API 传大图）
+export async function shrinkImageIfLarge(base64, mimeType) {
+  const approxBytes = Math.floor(base64.length * 0.75);
+  if (approxBytes <= 2 * 1024 * 1024) return { base64, mimeType };
+  try {
+    const buf = Buffer.from(base64, 'base64');
+    const out = await sharp(buf)
+      .resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 82 })
+      .toBuffer();
+    return { base64: out.toString('base64'), mimeType: 'image/jpeg' };
+  } catch {
+    return { base64, mimeType }; // 压缩失败就用原图，不阻塞
+  }
+}
 import {
   renderDnaPrompt, renderDnaPromptWithOverrides, generateImage, saveStudioImage,
 } from './image.js';
@@ -97,8 +114,10 @@ export function mountStudioRoutes(app) {  const db = getDb();
     }
     if (!useModel) return res.status(400).json({ error: '请先在模型管理里上架支持视觉的聊天模型，并勾选「支持视觉识图」' });
     const systemPrompt = buildExtractPrompt(preset);
+    // P6: 大图服务端兜底压缩（前端已压过，这里只处理直接调 API 的情况）
+    const shrunk = await shrinkImageIfLarge(imageBase64, mimeType || 'image/jpeg');
     const raw = await extractDna({
-      imageBase64, mimeType: mimeType || 'image/jpeg',
+      imageBase64: shrunk.base64, mimeType: shrunk.mimeType,
       model: useModel, apiKey: creds.apiKey, baseUrl: creds.baseUrl, provider: creds.provider,
       systemPrompt,
       onUsage: (usage) => {

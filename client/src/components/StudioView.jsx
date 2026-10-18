@@ -61,6 +61,30 @@ function DnaFields({ dna, setDna, readOnly, fields }) {
 }
 
 // ---------- 克隆流程：传图 → 提取 → 核对 → 保存 ----------
+// P6: 识图加速——前端 canvas 压缩（最长边 1024px / JPEG 0.85），上传体积降到 1/10~1/20
+async function compressImage(file, maxDim = 1024, quality = 0.85) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  if (bitmap.close) bitmap.close();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+  return blob;
+}
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 function CloneModal({ onClose, onSaved, showToast }) {
   const [step, setStep] = useState('upload');
   const [imgData, setImgData] = useState(null); // { base64, mime, preview }
@@ -68,6 +92,8 @@ function CloneModal({ onClose, onSaved, showToast }) {
   const [name, setName] = useState('');
   const [size, setSize] = useState('1024x1024');
   const [busy, setBusy] = useState(false);
+  const [compressing, setCompressing] = useState(false); // P6: 压缩中
+  const [uploadProgress, setUploadProgress] = useState(0); // P6: 上传进度 0-100
   const [visionModels, setVisionModels] = useState([]);
   const [visionModel, setVisionModel] = useState('');
   // P5: 类目预设
@@ -98,25 +124,35 @@ function CloneModal({ onClose, onSaved, showToast }) {
     setPresetFields((p && p.fields) || []);
   };
 
-  const handleFiles = useCallback((files) => {
+  const handleFiles = useCallback(async (files) => {
     const f = files && files[0];
     if (!f) return;
     if (!f.type.startsWith('image/')) { showToast('请选择图片文件'); return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result;
-      setImgData({ base64: String(dataUrl).split(',')[1], mime: f.type, preview: dataUrl });
-    };
-    reader.readAsDataURL(f);
+    // P6: 先压缩再上传（手机原图几 MB → 100-300KB）
+    setCompressing(true);
+    try {
+      const blob = await compressImage(f);
+      const dataUrl = await blobToDataUrl(blob);
+      setImgData({ base64: String(dataUrl).split(',')[1], mime: 'image/jpeg', preview: dataUrl });
+    } catch (e) {
+      showToast('图片处理失败，请换一张试试');
+    } finally {
+      setCompressing(false);
+    }
   }, [showToast]);
 
   const startExtract = useCallback(async () => {
     if (!imgData || busy) return;
     if (!presetId) { showToast('请先选择服装类目'); return; }
     setBusy(true);
+    setUploadProgress(0);
     setStep('extracting');
     try {
-      const r = await api.studio.extractDna({ imageBase64: imgData.base64, mimeType: imgData.mime, model: visionModel || undefined, preset_id: presetId });
+      // P6: 带上传进度；进度到 100 后进入 AI 分析等待
+      const r = await api.studio.extractDnaWithProgress(
+        { imageBase64: imgData.base64, mimeType: imgData.mime, model: visionModel || undefined, preset_id: presetId },
+        (p) => setUploadProgress(p),
+      );
       setDna(r.dna);
       if (Array.isArray(r.fields) && r.fields.length) setPresetFields(r.fields);
       setStep('review');
@@ -125,6 +161,7 @@ function CloneModal({ onClose, onSaved, showToast }) {
       setStep('upload');
     } finally {
       setBusy(false);
+      setUploadProgress(0);
     }
   }, [imgData, busy, showToast, presetId, visionModel]);
 
@@ -175,7 +212,12 @@ function CloneModal({ onClose, onSaved, showToast }) {
             onClick={() => fileRef.current && fileRef.current.click()}
           >
             <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => handleFiles(e.target.files)} />
-            {imgData ? (
+            {compressing ? (
+              <div className="studio-loading">
+                <div className="spinner" />
+                <p>图片压缩中…</p>
+              </div>
+            ) : imgData ? (
               <img src={imgData.preview} alt="趋势图" className="studio-preview" />
             ) : (
               <div className="studio-drop-hint">
@@ -210,7 +252,16 @@ function CloneModal({ onClose, onSaved, showToast }) {
         {step === 'extracting' && (
           <div className="studio-loading">
             <div className="spinner" />
-            <p>AI 正在分析款式 DNA…</p>
+            {uploadProgress > 0 && uploadProgress < 100 ? (
+              <>
+                <p>上传中 {uploadProgress}%…</p>
+                <div style={{ width: '80%', height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ width: `${uploadProgress}%`, height: '100%', background: 'var(--accent)', transition: 'width .2s' }} />
+                </div>
+              </>
+            ) : (
+              <p>AI 正在分析款式 DNA…</p>
+            )}
           </div>
         )}
         {step === 'review' && dna && (

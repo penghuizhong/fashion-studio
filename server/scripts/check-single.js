@@ -865,4 +865,24 @@ export async function runSingle() {
       dbP3b.prepare('DELETE FROM providers WHERE id=?').run('prov_p3test');
     }
   }
+
+  // P6. 服务端兜底压缩：小图原样返回，大图压到 1024px 内
+  {
+    const { shrinkImageIfLarge } = await import('../src/studio.js');
+    const sharp = (await import('sharp')).default;
+    // 造一张 2000x2000 的随机噪声大图（base64 必超 2MB）
+    const { randomBytes } = await import('node:crypto');
+    const noise = randomBytes(2000 * 2000 * 3);
+    const bigBuf = await sharp(noise, { raw: { width: 2000, height: 2000, channels: 3 } }).png().toBuffer();
+    const bigB64 = bigBuf.toString('base64');
+    const smallB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const rSmall = await shrinkImageIfLarge(smallB64, 'image/png');
+    const rBig = await shrinkImageIfLarge(bigB64, 'image/png');
+    const bigMeta = await sharp(Buffer.from(rBig.base64, 'base64')).metadata();
+    ok('P6. 小图原样返回；大图压到最长边≤1024 且转 JPEG',
+      rSmall.base64 === smallB64 && rSmall.mimeType === 'image/png' &&
+      rBig.mimeType === 'image/jpeg' && Math.max(bigMeta.width, bigMeta.height) <= 1024 &&
+      rBig.base64.length < bigB64.length,
+      `small=${rSmall.base64 === smallB64} big=${bigMeta.width}x${bigMeta.height} mime=${rBig.mimeType}`);
+  }
 }
