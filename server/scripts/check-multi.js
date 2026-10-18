@@ -438,18 +438,20 @@ export async function runMulti() {
     const listP = await req('GET', '/api/admin/providers', undefined, { jar: jarAdmin });
     const listed = ((listP.json && listP.json.providers) || []).some((x) => x.id === pid && x.api_key_mask === '••••••••');
     const updP = await req('PUT', `/api/admin/providers/${pid}`, { name: '测试供应商改名' }, { jar: jarAdmin });
-    // 连通测试：假 key 应返回 ok:false（非 500）
+    // 连通测试 v0.2.1：拉 /models，假 key 应返回 ok:false（非 500）；缓存接口返回空列表
     const tst = await req('POST', `/api/admin/providers/${pid}/test`, {}, { jar: jarAdmin });
+    const mc = await req('GET', `/api/admin/providers/${pid}/models`, undefined, { jar: jarAdmin });
+    const mcOk = mc.status === 200 && mc.json && mc.json.ok === true && Array.isArray(mc.json.models);
     const def = await req('POST', `/api/admin/providers/${pid}/default`, {}, { jar: jarAdmin });
     const delP = await req('DELETE', `/api/admin/providers/${pid}`, undefined, { jar: jarAdmin });
     const forbidden = await req('POST', '/api/admin/providers', { name: 'x' }, { jar: jarC });
     ok(
-      'M25. 供应商 CRUD：新增 200+掩码 → 列表掩码 → 改名 200 → 连通测试不 500 → 设默认 200 → 删除 200；非管理员 403',
+      'M25. 供应商 CRUD：新增 200+掩码 → 列表掩码 → 改名 200 → 拉模型测试不 500 → 缓存接口 200 → 设默认 200 → 删除 200；非管理员 403',
       addP.status === 200 && pid && hasKey && noLeak &&
         listP.status === 200 && listed && updP.status === 200 &&
-        tst.status === 200 && tst.json && tst.json.ok === false &&
+        tst.status === 200 && tst.json && tst.json.ok === false && mcOk &&
         def.status === 200 && delP.status === 200 && forbidden.status === 403,
-      `add=${addP.status} list=${listP.status} upd=${updP.status} test=${tst.status} def=${def.status} del=${delP.status} forbidden=${forbidden.status}`
+      `add=${addP.status} list=${listP.status} upd=${updP.status} test=${tst.status} mcache=${mc.status} def=${def.status} del=${delP.status} forbidden=${forbidden.status}`
     );
   }
 

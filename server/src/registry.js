@@ -13,8 +13,62 @@ const now = () => new Date().toISOString();
 
 function stripProvider(r) {
   if (!r) return null;
-  const { api_key_encrypted, ...rest } = r;
-  return { ...rest, has_key: !!api_key_encrypted, api_key_mask: maskSecret(api_key_encrypted) };
+  const { api_key_encrypted, models_cache_json, ...rest } = r;
+  let models_count = 0;
+  try { const arr = JSON.parse(models_cache_json || '[]'); models_count = Array.isArray(arr) ? arr.length : 0; } catch {}
+  return { ...rest, has_key: !!api_key_encrypted, api_key_mask: maskSecret(api_key_encrypted), models_count };
+}
+
+// v0.2.1: 拉取上游可用模型列表（OpenAI 兼容 GET /models），成功即证明 key+地址正确
+export async function fetchUpstreamModels({ baseUrl, apiKey, timeoutMs = 20000 }) {
+  const url = String(baseUrl || '').replace(/\/+$/, '') + '/models';
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+      signal: ctrl.signal,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      let msg = text.slice(0, 160);
+      try { const j = JSON.parse(text); msg = (j.error && (j.error.message || j.error.code)) || msg; } catch {}
+      const e = new Error(`拉取模型列表失败 HTTP ${res.status}: ${msg}`);
+      e.status = res.status;
+      throw e;
+    }
+    const j = JSON.parse(text);
+    const arr = Array.isArray(j.data) ? j.data : (Array.isArray(j.models) ? j.models : []);
+    return arr
+      .map((m) => ({ id: String(m.id || m.name || ''), name: String(m.name || m.id || '') }))
+      .filter((m) => m.id)
+      .slice(0, 500);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// v0.2.1: 拉取并缓存某供应商的模型列表
+export async function refreshProviderModels(id) {
+  const c = getProviderCreds(id);
+  if (!c) { const e = new Error('供应商不存在'); e.status = 404; throw e; }
+  if (!c.apiKey) { const e = new Error('该供应商未配置 Key'); e.status = 400; throw e; }
+  if (!c.baseUrl) { const e = new Error('该供应商未配置地址'); e.status = 400; throw e; }
+  const t0 = Date.now();
+  const models = await fetchUpstreamModels({ baseUrl: c.baseUrl, apiKey: c.apiKey });
+  getDb().prepare('UPDATE providers SET models_cache_json=?, models_cached_at=? WHERE id=?')
+    .run(JSON.stringify(models), Date.now(), id);
+  return { count: models.length, latency: Date.now() - t0 };
+}
+
+// v0.2.1: 读缓存的模型列表（给前端上架模型时自动补全）
+export function getCachedModels(id) {
+  const r = getDb().prepare('SELECT models_cache_json, models_cached_at FROM providers WHERE id=?').get(id);
+  if (!r) return null;
+  let models = [];
+  try { const arr = JSON.parse(r.models_cache_json || '[]'); models = Array.isArray(arr) ? arr : []; } catch {}
+  return { models, cached_at: r.models_cached_at || 0 };
 }
 
 export function listProviders(activeOnly = true) {

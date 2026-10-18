@@ -332,7 +332,8 @@ export const api = {
     update: (id, data) => put(`/api/admin/providers/${id}`, data),
     remove: (id) => del(`/api/admin/providers/${id}`),
     setDefault: (id) => post(`/api/admin/providers/${id}/default`, {}),
-    test: (id, data) => post(`/api/admin/providers/${id}/test`, data || {}),
+    test: (id) => post(`/api/admin/providers/${id}/test`, {}),
+    models: (id) => get(`/api/admin/providers/${id}/models`),
   },
   adminModels: {
     list: (kind) => get(`/api/admin/models${kind ? `?kind=${kind}` : ''}`),

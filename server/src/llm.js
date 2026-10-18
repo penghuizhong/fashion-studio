@@ -171,22 +171,6 @@ throw err;
 return res;
 }
 
-// v1.20.0: 连通性测试——最小请求验证 Key+地址+模型（保存前调用，不通不让切 BYOK）
-export async function testUpstream({ provider, baseUrl, apiKey, model }) {
-  const { json } = await postJson({
-    provider: provider || detectProvider(baseUrl),
-    model,
-    messages: [{ role: 'user', content: 'hi' }],
-    temperature: 0.7,
-    apiKey,
-    baseUrl,
-    maxTokens: 1,
-  });
-  const ch = json && json.choices && json.choices[0];
-  if (!ch) throw new Error('上游无有效返回');
-  return true;
-}
-
 // v1.17.2: 上游错误转用户友好文案，不把原始 JSON 甩给用户看
 export function friendlyLlmError(e) {
 const status = e && (e.status || e.statusCode);

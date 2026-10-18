@@ -109,13 +109,28 @@ export default function ModelsTab({ showToast }) {
   const pTest = async (p) => {
     setPTesting(p.id);
     try {
-      const r = await api.adminProviders.test(p.id, {});
-      showToast(r.ok ? `连通正常（${r.latency}ms）` : `连通失败：${r.error || '未知错误'}`);
+      const r = await api.adminProviders.test(p.id);
+      if (r.ok) {
+        showToast(`连通正常，已拉取 ${r.count} 个可用模型（${r.latency}ms）`);
+        await load();
+        if (mForm.provider_id === p.id) await loadPulledModels(p.id);
+      } else {
+        showToast(`连通失败：${r.error || '未知错误'}`);
+      }
     } catch (e) {
       showToast(e.message || '测试失败');
     } finally {
       setPTesting('');
     }
+  };
+  // v0.2.1: 上架模型时，模型 ID 输入框用该供应商缓存的可用模型列表自动补全
+  const [pulledModels, setPulledModels] = useState([]);
+  const loadPulledModels = async (providerId) => {
+    if (!providerId) { setPulledModels([]); return; }
+    try {
+      const r = await api.adminProviders.models(providerId);
+      setPulledModels(r.models || []);
+    } catch { setPulledModels([]); }
   };
 
   // ---- 模型 ----
@@ -124,6 +139,7 @@ export default function ModelsTab({ showToast }) {
   const mStartNew = (kind) => {
     const firstProv = providers.find((p) => p.is_active && (p.kind === 'both' || p.kind === (kind === 'chat' ? 'llm' : 'image')));
     setMForm({ ...emptyMForm, kind, provider_id: firstProv ? firstProv.id : '' });
+    loadPulledModels(firstProv ? firstProv.id : '');
     setMEditing('new');
   };
   const mStartEdit = (m) => {
@@ -245,7 +261,7 @@ export default function ModelsTab({ showToast }) {
                 <button className="btn secondary small" onClick={() => pSetDefault(p)}>设为默认</button>
               )}
               <button className="btn secondary small" disabled={pTesting === p.id} onClick={() => pTest(p)}>
-                {pTesting === p.id ? '测试中…' : '连通测试'}
+                {pTesting === p.id ? '拉取中…' : '拉取模型'}
               </button>
               <button className="btn secondary small" onClick={() => pStartEdit(p)}>编辑</button>
               <button className="btn secondary small" onClick={() => pDel(p)}>删除</button>
@@ -312,13 +328,21 @@ export default function ModelsTab({ showToast }) {
       {mEditing && (
         <div className="pm-edit" style={{ marginTop: 12 }}>
           <div className="key-input-row">
-            <select value={mForm.provider_id} onChange={setM('provider_id')}>
+            <select value={mForm.provider_id} onChange={(e) => { setM('provider_id')(e); loadPulledModels(e.target.value); }}>
               <option value="">选择供应商…</option>
               {providers.filter((p) => p.is_active).map((p) => (
                 <option key={p.id} value={p.id}>{p.name}（{KIND_LABEL[p.kind] || p.kind}）</option>
               ))}
             </select>
-            <input value={mForm.model_id} onChange={setM('model_id')} placeholder="模型 ID，如：openai/gpt-4o-mini" disabled={mEditing !== 'new'} spellCheck={false} />
+            <input value={mForm.model_id} onChange={setM('model_id')} placeholder="模型 ID，如：openai/gpt-4o-mini" disabled={mEditing !== 'new'} spellCheck={false} list="ms-model-datalist" />
+            <datalist id="ms-model-datalist">
+              {pulledModels.map((m) => (<option key={m.id} value={m.id}>{m.name && m.name !== m.id ? m.name : ''}</option>))}
+            </datalist>
+            {mEditing === 'new' && (
+              <div className="small" style={{ marginTop: 4, opacity: 0.65 }}>
+                {pulledModels.length ? `已缓存该供应商 ${pulledModels.length} 个可用模型，输入时自动补全` : '该供应商尚未拉取模型列表，可先点「拉取模型」'}
+              </div>
+            )}
           </div>
           <div className="key-input-row" style={{ marginTop: 8 }}>
             <input value={mForm.name} onChange={setM('name')} placeholder="显示名（留空则用模型 ID）" />

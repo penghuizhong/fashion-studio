@@ -265,7 +265,9 @@ CREATE TABLE IF NOT EXISTS providers(
   is_default INTEGER DEFAULT 0,
   is_active INTEGER DEFAULT 1,
   sort_order INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  models_cache_json TEXT,
+  models_cached_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS models(
   id TEXT PRIMARY KEY,
@@ -288,6 +290,12 @@ let _db = null;
 
 // v0.2.0: 统一模型注册表迁移（image_models / points_models / env → providers + models），幂等
 function migrateToUnifiedRegistry(db) {
+  // v0.2.1: 供应商模型列表缓存（连通测试拉取 /models 后存这里），老库幂等补字段
+  try {
+    const pcols = db.prepare("PRAGMA table_info(providers)").all().map((c) => c.name);
+    if (pcols.length && !pcols.includes('models_cache_json')) db.exec('ALTER TABLE providers ADD COLUMN models_cache_json TEXT');
+    if (pcols.length && !pcols.includes('models_cached_at')) db.exec('ALTER TABLE providers ADD COLUMN models_cached_at INTEGER');
+  } catch (e) { console.warn('[db] providers 模型缓存字段迁移失败:', e.message); }
   const hasTable = (t) => {
     try { return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t); }
     catch { return false; }

@@ -7,7 +7,8 @@ import { listProviders, getProviderCreds, createProvider, updateProvider, delete
 import { getRoleplayTemplate } from './memory.js';
 import { jailbreakPresetAdminList, JAILBREAK_PRESETS } from './jailbreakPresets.js';
 import { getConfig } from './config.js';
-import { assertPublicHttpsUrl, llmFetch, testUpstream } from './llm.js';
+import { assertPublicHttpsUrl, llmFetch } from './llm.js';
+import { fetchUpstreamModels, refreshProviderModels, getCachedModels } from './registry.js';
 import { API_PROVIDERS, getProvider, detectProvider } from './providers.js';
 import { ah } from './asyncHandler.js';
 import {
@@ -354,8 +355,8 @@ export function mountAuthRoutes(app, authLimiter) {
     res.json(API_PROVIDERS);
   });
 
-  // v1.20.0: POST /api/user/api-key/test——保存前连通性测试（最小请求验证 Key+地址+模型）
-  // body: { provider, baseUrl, key, model }；key 缺席时用已存储的
+  // v0.2.1: POST /api/user/api-key/test——保存前连通性测试（拉取上游模型列表验证 Key+地址）
+  // body: { provider, baseUrl, key }；key 缺席时用已存储的
   app.post(
     '/api/user/api-key/test',
     needMulti,
@@ -366,11 +367,9 @@ export function mountAuthRoutes(app, authLimiter) {
       const stored = getUserApiKeys(uid);
       const key = (typeof b.key === 'string' && b.key.trim()) || stored.key;
       const baseUrl = (typeof b.baseUrl === 'string' && b.baseUrl.trim()) || stored.baseUrl;
-      const model = (typeof b.model === 'string' && b.model.trim()) || stored.chatModel;
       const provider = getProvider(b.provider || stored.provider || detectProvider(baseUrl)).id;
       if (!key) return res.json({ ok: false, error: '请填写 API Key' });
       if (!baseUrl) return res.json({ ok: false, error: '请填写 API 地址' });
-      if (!model) return res.json({ ok: false, error: '请填写模型 ID' });
       let url;
       try {
         url = assertPublicHttpsUrl(baseUrl);
@@ -378,12 +377,10 @@ export function mountAuthRoutes(app, authLimiter) {
         return res.json({ ok: false, error: e.message });
       }
       try {
-        const { testUpstream } = await import('./llm.js');
-        await testUpstream({ provider, baseUrl: url, apiKey: key, model });
-        res.json({ ok: true, provider });
+        const models = await fetchUpstreamModels({ baseUrl: url, apiKey: key });
+        res.json({ ok: true, provider, count: models.length });
       } catch (e) {
-        const { friendlyLlmError } = await import('./llm.js');
-        res.json({ ok: false, error: friendlyLlmError(e) });
+        res.json({ ok: false, error: String((e && e.message) || e).slice(0, 200) });
       }
     })
   );
@@ -506,18 +503,23 @@ export function mountAuthRoutes(app, authLimiter) {
       res.status(400).json({ error: e.message || '设置失败' });
     }
   });
-  // 连通测试：用供应商凭证发一次最小聊天请求（image 专用供应商请用一次生图验证）
+  // v0.2.1 连通测试 = 拉取上游模型列表（GET /models）：成功即证明 key+地址正确，结果缓存到 providers.models_cache_json
   app.post('/api/admin/providers/:id/test', needMulti, needLogin, needAdmin, async (req, res) => {
-    const c = getProviderCreds(req.params.id);
-    if (!c) return res.status(404).json({ error: '供应商不存在' });
-    if (!c.apiKey) return res.status(400).json({ error: '该供应商未配置 Key' });
     const t0 = Date.now();
     try {
-      await testUpstream({ provider: c.preset, baseUrl: c.baseUrl, apiKey: c.apiKey, model: (req.body || {}).model || 'test' });
-      res.json({ ok: true, latency: Date.now() - t0 });
+      const r = await refreshProviderModels(req.params.id);
+      res.json({ ok: true, latency: Date.now() - t0, count: r.count });
     } catch (e) {
+      // 只有“供应商不存在”走 404；上游 401/404 等都是连通失败，走 200 + ok:false（错误信息里带上游状态）
+      if (e && e.message === '供应商不存在') return res.status(404).json({ ok: false, error: e.message });
       res.json({ ok: false, latency: Date.now() - t0, error: String((e && e.message) || e).slice(0, 200) });
     }
+  });
+  // v0.2.1 读缓存的模型列表（上架模型时自动补全模型 ID）
+  app.get('/api/admin/providers/:id/models', needMulti, needLogin, needAdmin, async (req, res) => {
+    const r = getCachedModels(req.params.id);
+    if (!r) return res.status(404).json({ error: '供应商不存在' });
+    res.json({ ok: true, models: r.models, cached_at: r.cached_at });
   });
 
   app.get('/api/admin/models', needMulti, needLogin, needAdmin, (req, res) => {
