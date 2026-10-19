@@ -710,15 +710,18 @@ export async function runSingle() {
 
     // E4. 渲染确认门 + mock 渲染
     const e4a = await req('POST', `/api/studio/explore/${bid}/render`, {});
-    const e4b = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true });
+    const e4missing = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true });
+    const e4invalid = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true, indexes: [99] });
+    const e4b = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true, indexes: [0, 2] });
+    const e4repeat = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true, indexes: [0, 2] });
     const renders = (e4b.json && e4b.json.renders) || [];
     const fs = await import('node:fs');
     const path = await import('node:path');
     const filesOk = renders.length === 2 && renders.every((r) => r.image_path && fs.existsSync(path.join(process.env.DATA_DIR, r.image_path)));
     ok('E4. 无 confirm → 400 带预估；confirm → 200，2 张渲染图落盘',
       e4a.status === 400 && e4a.json && e4a.json.cost_estimate === 20 &&
-      e4b.status === 200 && filesOk,
-      `a=${e4a.status} b=${e4b.status} filesOk=${filesOk}`);
+      e4missing.status === 400 && e4invalid.status === 400 && e4b.status === 200 && filesOk &&\n       e4repeat.status === 200 && e4repeat.json.reused === true && JSON.stringify(e4repeat.json.renders) === JSON.stringify(renders),
+      `a=${e4a.status} missing=${e4missing.status} invalid=${e4invalid.status} b=${e4b.status} repeat=${e4repeat.status} filesOk=${filesOk}`);
 
     // E5. 收卡：模板 draft + 首图进 history
     const e5 = await req('POST', `/api/studio/explore/${bid}/adopt`, { indexes: [0] });
@@ -726,7 +729,7 @@ export async function runSingle() {
     const tpl = tid && db.prepare('SELECT * FROM style_dna_templates WHERE id=?').get(tid);
     const gen = tid && db.prepare("SELECT * FROM dna_generations WHERE template_id=? AND op='explore'").get(tid);
     ok('E5. 收卡：模板 draft、命名发散灵感、history 有 explore 记录',
-      e5.status === 200 && tpl && tpl.status === 'draft' && String(tpl.name).startsWith('发散灵感') && !!gen,
+      e5.status === 200 && tpl && tpl.status === 'draft' && String(tpl.name).startsWith('发散灵感') && !!gen && !!gen.prompt_snapshot,
       `status=${e5.status} tpl=${tpl && tpl.status} gen=${!!gen}`);
 
     // E6. 归档：100 天前的批次被 runExploreArchive 归档
