@@ -1043,9 +1043,11 @@ export function mountExploreRoutes(app) {
       const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
       const rows = db
         .prepare(
-          `SELECT id,user_id,intent_text,axes_json,count,selected_json,render_model_id,cost_estimate,cost_actual,status,archived,created_at,updated_at,
-      json_array_length(proposals_json) AS proposal_count, json_array_length(renders_json) AS render_count
-      FROM exploration_batches ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`
+          `SELECT id,user_id,intent_text,preset_id,axes_json,count,selected_json,render_model_id,cost_estimate,cost_actual,status,archived,created_at,updated_at,
+      json_array_length(proposals_json) AS proposal_count, json_array_length(renders_json) AS render_count,
+      (SELECT count(*) FROM json_each(renders_json) WHERE json_extract(value,'$.image_path') IS NOT NULL AND json_extract(value,'$.error') IS NULL) AS success_count,
+      (SELECT json_extract(value,'$.thumb_path') FROM json_each(renders_json) WHERE json_extract(value,'$.image_path') IS NOT NULL LIMIT 1) AS thumb_path
+      FROM exploration_batches ${where} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`
         )
         .all(...args, limit, offset);
       res.json({ ok: true, batches: rows });

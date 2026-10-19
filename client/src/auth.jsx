@@ -100,6 +100,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => {
+    try { Object.keys(sessionStorage).filter(k => k.startsWith('explore-draft-')).forEach(k => sessionStorage.removeItem(k)); } catch {}
     try {
       await authPost('/api/auth/logout');
     } catch {
