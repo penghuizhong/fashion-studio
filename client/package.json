@@ -4,6 +4,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^5.4.11"
   },
@@ -13,8 +14,9 @@
     "build": "vite build",
     "dev": "vite",
     "preview": "vite preview",
-    "prebuild": "sh ../scripts/decode-avatars.sh"
+    "prebuild": "sh ../scripts/decode-avatars.sh",
+    "test:e2e": "npm run build && playwright test"
   },
   "type": "module",
-  "version": "0.3.2"
+  "version": "0.4.0"
 }

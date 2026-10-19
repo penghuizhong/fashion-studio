@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './icons.jsx';
 
-const emptyForm = { id: '', name: '', fields: [], prompt: '', sort_order: 0, is_active: true };
+const emptyForm = { id: '', name: '', fields: [], prompt: '', expand_prompt: '', sort_order: 0, is_active: true };
 const emptyField = { key: '', label: '', hint: '' };
 
 export default function DnaPresetsTab({ showToast }) {
@@ -27,7 +27,7 @@ export default function DnaPresetsTab({ showToast }) {
     setForm({
       id: p.id, name: p.name,
       fields: (p.fields || []).map((f) => ({ key: f.key, label: f.label, hint: f.hint || '' })),
-      prompt: p.prompt || '', sort_order: p.sort_order || 0, is_active: !!p.is_active,
+      prompt: p.prompt || '', expand_prompt: p.expand_prompt || '', sort_order: p.sort_order || 0, is_active: !!p.is_active,
     });
     setEditing(p.id);
   };
@@ -61,7 +61,7 @@ export default function DnaPresetsTab({ showToast }) {
     if (!fields.length) { showToast('至少需要一个字段'); return; }
     setBusy(true);
     try {
-      const body = { name: form.name.trim(), fields, prompt: form.prompt, sort_order: Number(form.sort_order) || 0, is_active: form.is_active };
+      const body = { name: form.name.trim(), fields, prompt: form.prompt, expand_prompt: form.expand_prompt, sort_order: Number(form.sort_order) || 0, is_active: form.is_active };
       if (editing === 'new') {
         body.id = String(form.id).trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
         await api.studio.adminDnaPresetCreate(body);
@@ -170,6 +170,9 @@ export default function DnaPresetsTab({ showToast }) {
                 placeholder="指引正文（不含 Schema，后端自动拼接）"
                 onChange={(e) => setF('prompt', e.target.value)} style={{ width: '100%' }} />
 
+              <div className="card-title" style={{ marginTop: 16 }}>创意发散补充规则</div>
+              <textarea className="text-input" rows={5} value={form.expand_prompt}
+                placeholder="用于文字方案发散；识图提示词保持独立" onChange={e => setF('expand_prompt', e.target.value)} style={{ width: '100%' }} />
               <div className="save-row" style={{ marginTop: 12 }}>
                 <button className="btn primary" disabled={busy} onClick={save}>{busy ? '保存中…' : '保存'}</button>
                 <button className="btn secondary" onClick={() => setEditing(null)}>取消</button>

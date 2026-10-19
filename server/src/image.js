@@ -1,5 +1,6 @@
 // v0.1.0: 生图统一入口。provider: dashscope | openai_compatible
 // 按次扣积分；prompt 由 DNA 确定性渲染，不经过 LLM 自由发挥。
+import { dnaRenderProfiles, categorySubjects, mappedDnaValue } from './dnaRenderProfiles.js';
 import { getConfig } from './config.js';
 import { getProviderCreds, listImageModelsCompat } from './registry.js';
 import { deductPoints, getBalance } from './points.js';
@@ -31,12 +32,15 @@ const DNA_FIELD_ORDER = [
 ];
 const PROMPT_SUFFIX = 'high fashion photography, studio lighting, ultra detailed';
 
-export function renderDnaPrompt(dna) {
+export function renderDnaPrompt(input) {
+  // Backwards compatible with template generation that passes bare DNA.
+  const context = input && Object.hasOwn(input, 'dna') ? input : { dna: input };
+  const { dna, presetId = '', intentText = '' } = context;
   const v = (k) => (dna && dna[k] && dna[k].value) || '';
-  const parts = [];
+  const parts = [dnaRenderProfiles[presetId]?.subject || categorySubjects[presetId] || 'fashion garment'];
   const seen = new Set();
   for (const [key, suffix] of DNA_FIELD_ORDER) {
-    const val = String(v(key) || '').replace(/_/g, ' ').trim();
+    const val = mappedDnaValue(presetId, key, v(key) || '');
     if (val && val !== 'null') parts.push(suffix ? `${val} ${suffix}` : val);
     seen.add(key);
   }
@@ -46,19 +50,20 @@ export function renderDnaPrompt(dna) {
       if (seen.has(key) || key === 'details') continue;
       const val = v(key);
       const s = Array.isArray(val) ? val.join(', ') : String(val || '');
-      const clean = s.replace(/_/g, ' ').trim();
+      const clean = mappedDnaValue(presetId, key, s);
       if (clean && clean !== 'null') parts.push(clean);
     }
   }
   const det = v('details');
   if (Array.isArray(det)) {
     for (const d of det) {
-      const s = String(d || '').replace(/_/g, ' ').trim();
+      const s = mappedDnaValue(presetId,'details',d);
       if (s) parts.push(s);
     }
   }
+  if (String(intentText || '').trim()) parts.push(`Design requirements from client: ${String(intentText).slice(0, 500).trim()}`);
   parts.push(PROMPT_SUFFIX);
-  return parts.filter(Boolean).join(', ');
+  return [...new Set(parts.filter(Boolean))].join(', ');
 }
 
 // 换色/改细节：在渲染好的 prompt 基础上只替换目标字段（调用方先改 DNA 再渲染）
@@ -96,7 +101,7 @@ export async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size
   // （status_code 是 DashScope SDK 的封装概念）；仅以 HTTP 状态 + 响应体是否可解析判定
   if (!res.ok || !json) {
     const msg = (json && (json.message || json.code)) || `HTTP ${res.status}`;
-    throw new Error(`DashScope 生图失败: ${msg}`);
+    throw Object.assign(new Error('DashScope 生图失败'),{status:res.status});
   }
   const content = json.output && json.output.choices && json.output.choices[0] &&
     json.output.choices[0].message && json.output.choices[0].message.content;
@@ -106,17 +111,23 @@ export async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size
 }
 
 // ---------- adapter：openai_compatible ----------
+export function imageApiUrl(baseUrl, endpoint) {
+  const base=String(baseUrl).replace(/\/+$/, '');
+  const pathPart=new URL(base).pathname;
+  return `${base}${pathPart==='/'?'/v1':''}/images/${endpoint}`;
+}
+
 async function openaiText2Image({ baseUrl, apiKey, model, prompt, size, seed }) {
   const body = { model, prompt, size: String(size || '1024x1024').replace('*', 'x'), n: 1, response_format: 'b64_json' };
   if (seed != null) body.seed = seed;
-  const res = await fetch(`${baseUrl}/v1/images/generations`, {
+  const res = await fetch(imageApiUrl(baseUrl,'generations'), {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(180000),
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(`生图失败 HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error('生图失败'),{status:res.status});
   const b64 = json && json.data && json.data[0] && json.data[0].b64_json;
   if (!b64) throw new Error('上游未返回图片数据');
   return { imageBase64: b64, seed };
@@ -130,14 +141,14 @@ async function openaiEditImage({ baseUrl, apiKey, model, prompt, size, imageBase
   form.append('prompt', prompt);
   form.append('size', String(size || '1024x1024').replace('*', 'x'));
   form.append('response_format', 'b64_json');
-  const res = await fetch(`${baseUrl}/v1/images/edits`, {
+  const res = await fetch(imageApiUrl(baseUrl,'edits'), {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
     signal: AbortSignal.timeout(180000),
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(`图生图失败 HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error('图生图失败'),{status:res.status});
   const b64 = json && json.data && json.data[0] && json.data[0].b64_json;
   if (!b64) throw new Error('上游未返回图片数据');
   return { imageBase64: b64 };
@@ -155,20 +166,20 @@ async function downloadToBase64(url) {
 // P4 回归用 1x1 占位 PNG（base64）
 const MOCK_PLACEHOLDER_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-export async function generateImage({ userId, modelId, prompt, size, seed, sourceImageBase64 = null }) {
-  const m = listImageModelsCompat(true).find((x) => x.id === modelId || x.model_id === modelId);
+export async function generateImage({ userId, modelId, prompt, size, seed, sourceImageBase64 = null, executionModel = null, deferBilling = false }) {
+  const m = executionModel || listImageModelsCompat(true).find((x) => x.id === modelId || x.model_id === modelId);
   if (!m) throw new Error('图片模型不存在或已停用');
   // P4: mock 模式——保留模型存在性校验，跳过上游网络调用，不扣费（供回归）
   if (getConfig().mockLlm) {
     return { imageBase64: MOCK_PLACEHOLDER_PNG, seed: seed != null ? seed : 1, model: m.model_id, size, price: 0 };
   }
-  const creds = getProviderCreds(m.provider_id);
+  const creds = executionModel || getProviderCreds(m.provider_id);
   const apiKey = creds && creds.apiKey;
   if (!apiKey) throw new Error('该图片模型未配置 Key');
   const baseUrl = String((creds && creds.baseUrl) || '').replace(/\/+$/, '');
   if (!baseUrl) throw new Error('该图片模型未配置 Base URL');
-  const price = m.price_per_call | 0;
-  if (price > 0 && userId) {
+  const price = m.price_per_call;
+  if (!deferBilling && price > 0 && userId) {
     const bal = getBalance(userId);
     if (bal < price) throw new Error('积分不足，请充值或切换模型');
   }
@@ -185,7 +196,7 @@ export async function generateImage({ userId, modelId, prompt, size, seed, sourc
       : await openaiText2Image({ baseUrl, apiKey, model: m.model_id, prompt, size, seed: useSeed });
     result.seed = useSeed;
   }
-  if (price > 0 && userId) {
+  if (!deferBilling && price > 0 && userId) {
     deductPoints(userId, price, 'studio_image', 'models', m.id, { model: m.model_id, size });
   }
   return { imageBase64: result.imageBase64, seed: result.seed != null ? result.seed : useSeed, model: m.model_id, size, price };
@@ -201,7 +212,15 @@ export async function saveStudioImage(imageBase64, filename) {
   const buf = Buffer.from(imageBase64, 'base64');
   const rel = path.posix.join('uploads', 'studio', filename);
   const thumbRel = path.posix.join('uploads', 'studio', 'thumbs', filename);
-  fs.writeFileSync(path.join(dir, filename), buf);
-  await sharp(buf).resize({ width: 600, withoutEnlargement: true }).jpeg({ quality: 82 }).toFile(path.join(thumbDir, filename));
+  const original=path.join(dir,filename), thumb=path.join(thumbDir,filename);
+  const token=`.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(original+token,buf);
+    await sharp(buf).resize({width:600,withoutEnlargement:true}).jpeg({quality:82}).toFile(thumb+token);
+    fs.renameSync(original+token,original);fs.renameSync(thumb+token,thumb);
+  } catch(e) {
+    for(const f of [original+token,thumb+token])try{fs.unlinkSync(f);}catch{}
+    throw e;
+  }
   return { image_path: rel, thumb_path: thumbRel };
 }

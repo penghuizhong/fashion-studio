@@ -1,0 +1,29 @@
+name: Validate
+on:
+  pull_request:
+  push:
+    branches: [feat/explore-workflow-hardening]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            client/package-lock.json
+      - run: npm ci --prefix server
+      - run: npm ci --prefix client
+      - run: npm --prefix server run check
+      - run: CHECK_MODE=multi npm --prefix server run check
+      - run: npm --prefix server run check:explore
+      - run: npx playwright install --with-deps chromium
+        working-directory: client
+      - run: npm run test:e2e
+        working-directory: client

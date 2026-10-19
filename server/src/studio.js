@@ -82,7 +82,21 @@ export function mountStudioRoutes(app) {  const db = getDb();
   // 生成图静态服务（仅 studio 目录）
   const studioDir = path.join(cfg.dataDir || './data', 'uploads', 'studio');
   fs.mkdirSync(studioDir, { recursive: true });
-  app.use('/uploads/studio', express.static(studioDir));
+  app.use('/uploads/studio', (req,res,next)=>{
+    if(!cfg.multiUser)return next();
+    if(!req.userId)return res.status(401).json({error:'未登录'});
+    let file;
+    try{file=path.posix.normalize('uploads/studio'+decodeURIComponent(req.path));}catch{return res.status(400).end();}
+    if(!file.startsWith('uploads/studio/'))return res.status(404).end();
+    const uid=req.userId;
+    const owned=db.prepare(`SELECT 1 FROM dna_generations WHERE user_id=? AND (image_path=? OR thumb_path=?)
+      UNION ALL SELECT 1 FROM style_dna_templates WHERE user_id=? AND (source_image_path=? OR source_thumb_path=?)
+      UNION ALL SELECT 1 FROM exploration_batches b,json_each(b.renders_json) r WHERE b.user_id=? AND (json_extract(r.value,'$.image_path')=? OR json_extract(r.value,'$.thumb_path')=?)
+      UNION ALL SELECT 1 FROM explore_items i JOIN explore_jobs j ON j.id=i.job_id WHERE j.user_id=? AND (json_extract(i.result_json,'$.image_path')=? OR json_extract(i.result_json,'$.thumb_path')=?) LIMIT 1`)
+      .get(uid,file,file,uid,file,file,uid,file,file,uid,file,file);
+    if(!owned)return res.status(404).end();
+    next();
+  },express.static(studioDir,{setHeaders:res=>{if(cfg.multiUser)res.setHeader('Cache-Control','private, no-store');}}));
 
   // ---------- DNA 提取 ----------
   // GET /api/studio/vision-models → 启用且支持视觉的聊天模型（公开信息，无密钥）

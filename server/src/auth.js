@@ -559,10 +559,11 @@ export function mountAuthRoutes(app, authLimiter) {
       if (!String(b.name || '').trim()) return res.status(400).json({ error: '名称必填' });
       const fields = Array.isArray(b.fields) ? b.fields.filter((f) => f && f.key && f.label) : [];
       if (!fields.length) return res.status(400).json({ error: '至少需要一个字段' });
+      if(fields.length>64 || new Set(fields.map(f=>f.key)).size!==fields.length || fields.some(f=>!/^[a-z][a-z0-9_]{0,63}$/.test(f.key)||['constructor','prototype','__proto__'].includes(f.key)||typeof f.label!=='string'||f.label.length>100||String(f.hint||'').length>2000))return res.status(400).json({error:'字段 key 必须唯一且安全，字段数最多 64，标签最长 100 字，hint 最长 2000 字'});
       const now = new Date().toISOString();
-      getDb().prepare(`INSERT INTO dna_presets(id,name,fields_json,prompt,sort_order,is_active,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?)`).run(
-        id, String(b.name).trim(), JSON.stringify(fields), String(b.prompt || ''),
+      getDb().prepare(`INSERT INTO dna_presets(id,name,fields_json,prompt,expand_prompt,sort_order,is_active,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?)`).run(
+        id, String(b.name).trim(), JSON.stringify(fields), String(b.prompt || ''), String(b.expand_prompt || '').slice(0, 10000),
         Number(b.sort_order) || 0, b.is_active === false ? 0 : 1, now, now);
       res.json({ ok: true, id });
     } catch (e) {
@@ -576,10 +577,12 @@ export function mountAuthRoutes(app, authLimiter) {
       if (!row) return res.status(404).json({ error: '预设不存在' });
       const fields = Array.isArray(b.fields) ? b.fields.filter((f) => f && f.key && f.label) : null;
       if (fields && !fields.length) return res.status(400).json({ error: '至少需要一个字段' });
-      getDb().prepare(`UPDATE dna_presets SET name=?, fields_json=?, prompt=?, sort_order=?, is_active=?, updated_at=? WHERE id=?`).run(
+      if(fields && (fields.length>64 || new Set(fields.map(f=>f.key)).size!==fields.length || fields.some(f=>!/^[a-z][a-z0-9_]{0,63}$/.test(f.key)||['constructor','prototype','__proto__'].includes(f.key)||typeof f.label!=='string'||f.label.length>100||String(f.hint||'').length>2000)))return res.status(400).json({error:'字段 key 必须唯一且安全，字段数最多 64，标签最长 100 字，hint 最长 2000 字'});
+      getDb().prepare(`UPDATE dna_presets SET name=?, fields_json=?, prompt=?, expand_prompt=?, sort_order=?, is_active=?, updated_at=? WHERE id=?`).run(
         b.name != null ? String(b.name).trim() : row.name,
         fields ? JSON.stringify(fields) : row.fields_json,
         b.prompt != null ? String(b.prompt) : row.prompt,
+        b.expand_prompt != null ? String(b.expand_prompt).slice(0, 10000) : row.expand_prompt,
         b.sort_order != null ? Number(b.sort_order) || 0 : row.sort_order,
         b.is_active != null ? (b.is_active ? 1 : 0) : row.is_active,
         new Date().toISOString(), req.params.id);
@@ -774,8 +777,8 @@ export function mountAuthRoutes(app, authLimiter) {
     const agg = db
       .prepare(
         `SELECT
-           COALESCE(SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0) AS granted,
-           COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0) AS consumed
+           COALESCE(SUM(CASE WHEN COALESCE(accounting_delta,delta) > 0 THEN COALESCE(accounting_delta,delta) ELSE 0 END), 0) AS granted,
+           COALESCE(SUM(CASE WHEN COALESCE(accounting_delta,delta) < 0 THEN -COALESCE(accounting_delta,delta) ELSE 0 END), 0) AS consumed
          FROM points_ledger`
       )
       .get();
@@ -784,7 +787,7 @@ export function mountAuthRoutes(app, authLimiter) {
     const tok = db
       .prepare(
         `SELECT model, COALESCE(SUM(tokens_input),0) AS ti, COALESCE(SUM(tokens_output),0) AS too
-         FROM points_ledger WHERE delta < 0 AND tokens_input IS NOT NULL GROUP BY model`
+         FROM points_ledger WHERE COALESCE(accounting_delta,delta) < 0 AND tokens_input IS NOT NULL GROUP BY model`
       )
       .all();
     let estUsd = 0;
@@ -796,7 +799,7 @@ export function mountAuthRoutes(app, authLimiter) {
     }
     const today = db
       .prepare(
-        `SELECT COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0) AS consumed,
+        `SELECT COALESCE(SUM(CASE WHEN COALESCE(accounting_delta,delta) < 0 THEN -COALESCE(accounting_delta,delta) ELSE 0 END), 0) AS consumed,
                 COUNT(DISTINCT user_id) AS activeUsers
          FROM points_ledger WHERE substr(created_at, 1, 10) = date('now')`
       )
@@ -819,8 +822,8 @@ export function mountAuthRoutes(app, authLimiter) {
     const rows = db
       .prepare(
         `SELECT substr(created_at, 1, 10) AS day,
-                COALESCE(SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0) AS granted,
-                COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0) AS consumed
+                COALESCE(SUM(CASE WHEN COALESCE(accounting_delta,delta) > 0 THEN COALESCE(accounting_delta,delta) ELSE 0 END), 0) AS granted,
+                COALESCE(SUM(CASE WHEN COALESCE(accounting_delta,delta) < 0 THEN -COALESCE(accounting_delta,delta) ELSE 0 END), 0) AS consumed
          FROM points_ledger WHERE created_at >= date('now', ?) GROUP BY day ORDER BY day ASC`
       )
       .all(`-${days} days`);
@@ -864,8 +867,8 @@ export function mountAuthRoutes(app, authLimiter) {
         `SELECT model, reason, COUNT(*) AS calls,
                 COALESCE(SUM(tokens_input),0) AS inputTokens,
                 COALESCE(SUM(tokens_output),0) AS outputTokens,
-                COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END),0) AS points
-         FROM points_ledger WHERE delta < 0 AND model IS NOT NULL
+                COALESCE(SUM(CASE WHEN COALESCE(accounting_delta,delta) < 0 THEN -COALESCE(accounting_delta,delta) ELSE 0 END),0) AS points
+         FROM points_ledger WHERE COALESCE(accounting_delta,delta) < 0 AND model IS NOT NULL
          GROUP BY model, reason ORDER BY points DESC`
       )
       .all();
@@ -894,8 +897,8 @@ export function mountAuthRoutes(app, authLimiter) {
     const rows = getDb()
       .prepare(
         `SELECT u.id, u.username, u.is_admin, u.jailbreak_allowed,
-                COALESCE(SUM(CASE WHEN l.delta < 0 THEN -l.delta ELSE 0 END),0) AS consumed,
-                COALESCE(SUM(CASE WHEN l.delta > 0 THEN l.delta ELSE 0 END),0) AS granted,
+                COALESCE(SUM(CASE WHEN COALESCE(l.accounting_delta,l.delta) < 0 THEN -COALESCE(l.accounting_delta,l.delta) ELSE 0 END),0) AS consumed,
+                COALESCE(SUM(CASE WHEN COALESCE(l.accounting_delta,l.delta) > 0 THEN COALESCE(l.accounting_delta,l.delta) ELSE 0 END),0) AS granted,
                 u.points_balance AS balance,
                 COALESCE((SELECT COUNT(*) FROM api_usage a WHERE a.user_id = u.id), 0) AS api_calls
          FROM users u LEFT JOIN points_ledger l ON l.user_id = u.id

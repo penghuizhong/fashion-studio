@@ -112,7 +112,7 @@ export function addLedger(userId, delta, reason, refType = null, refId = null, e
     if (delta < 0 && after < 0) throw new Error('积分不足');
     db.prepare('UPDATE users SET points_balance = ? WHERE id = ?').run(after, userId);
     db.prepare(
-      'INSERT INTO points_ledger(user_id, delta, balance_after, reason, ref_type, ref_id, tokens_input, tokens_output, model, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)'
+      'INSERT INTO points_ledger(user_id, delta, balance_after, reason, ref_type, ref_id, tokens_input, tokens_output, model, created_at, accounting_delta) VALUES(?,?,?,?,?,?,?,?,?,?,?)'
     ).run(
       userId,
       delta,
@@ -123,7 +123,8 @@ export function addLedger(userId, delta, reason, refType = null, refId = null, e
       extra.tokensInput != null ? Math.round(extra.tokensInput) : null,
       extra.tokensOutput != null ? Math.round(extra.tokensOutput) : null,
       extra.model || null,
-      new Date().toISOString()
+      new Date().toISOString(),
+      extra.accountingDelta ?? (['explore_reserve','explore_release','explore_expand_reserve','explore_expand_release','explore_resolve'].includes(reason) ? 0 : null)
     );
     return after;
   })();
@@ -215,6 +216,8 @@ export function getLedger(userId, limit = 20) {
 
 // 账本原因 → 中文展示
 export const REASON_LABELS = {
+  explore_reserve:'创意生图额度预留', explore_release:'创意生图失败退款', explore_settle:'创意生图完成结算',
+  explore_expand_reserve:'创意发散额度预留', explore_expand_settle:'创意发散完成结算', explore_expand_release:'创意发散额度释放', explore_resolve:'创意任务人工核对退款',
   signup_bonus: '注册赠送',
   admin_grant: '管理员发放',
   chat: '聊天消耗',

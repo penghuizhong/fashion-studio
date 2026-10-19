@@ -183,7 +183,7 @@ export function createApp() {
   mountExploreRoutes(app);
   // v0.2.0: 记忆遗忘——启动归档一次，之后每天一次
   try { runArchive(); runExploreArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); }
-  setInterval(() => { try { runArchive(); runExploreArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); } }, 24 * 3600 * 1000);
+  setInterval(() => { try { runArchive(); runExploreArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); } }, 24 * 3600 * 1000).unref();
 
   // user_id 隔离 helper：单用户模式（req.userId 为 null）时不加任何条件，原样查询
   const uidOf = (req) => (req && req.userId) || null;

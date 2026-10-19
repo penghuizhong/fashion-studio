@@ -691,8 +691,8 @@ export async function runSingle() {
     const props = (e1.json && e1.json.proposals) || [];
     const fieldsOk = props.length === 4 && props.every((x) => x.dna && FIELDS.every((f) => x.dna[f] && 'value' in x.dna[f]));
     const silVals = new Set(props.map((x) => x.dna.silhouette.value));
-    ok('E1. 发散创建：4 候选、13 字段齐全、发散轴有差异、预估 4×5=20',
-      e1.status === 200 && bid && fieldsOk && silVals.size > 1 && e1.json.cost_estimate === 20,
+    ok('E1. 发散创建：4 候选、13 字段齐全、发散轴有差异、不提前绑定图片模型',
+      e1.status === 200 && bid && fieldsOk && silVals.size > 1 && e1.json.cost_estimate === 0,
       `status=${e1.status} fieldsOk=${fieldsOk} silVals=${silVals.size} estimate=${e1.json && e1.json.cost_estimate}`);
 
     // E2. 非法入参
@@ -710,15 +710,20 @@ export async function runSingle() {
 
     // E4. 渲染确认门 + mock 渲染
     const e4a = await req('POST', `/api/studio/explore/${bid}/render`, {});
-    const e4b = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true });
+    const e4missing = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true });
+    const e4invalid = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true, indexes: [99] });
+    const quote = await req('POST', `/api/studio/explore/${bid}/quote`, { indexes:[0,2], render_model_id:'model_exptest', render_size:'1:1' });
+    const e4b = await req('POST', `/api/studio/explore/${bid}/render`, { confirm:true, quote_id:quote.json?.quote?.id, request_key:'single_explore_test' });
+    const e4repeat = await req('POST', `/api/studio/explore/${bid}/render`, { confirm: true, indexes: [0, 2] });
     const renders = (e4b.json && e4b.json.renders) || [];
     const fs = await import('node:fs');
     const path = await import('node:path');
     const filesOk = renders.length === 2 && renders.every((r) => r.image_path && fs.existsSync(path.join(process.env.DATA_DIR, r.image_path)));
-    ok('E4. 无 confirm → 400 带预估；confirm → 200，2 张渲染图落盘',
-      e4a.status === 400 && e4a.json && e4a.json.cost_estimate === 20 &&
-      e4b.status === 200 && filesOk,
-      `a=${e4a.status} b=${e4b.status} filesOk=${filesOk}`);
+    ok('E4. 无 confirm → 400；服务端报价确认；confirm → 200，2 张渲染图落盘',
+      e4a.status === 400 && quote.status === 200 && quote.json.quote.indexes.length === 2 &&
+      e4missing.status === 400 && e4invalid.status === 400 && e4b.status === 200 && filesOk &&
+       e4repeat.status === 200 && e4repeat.json.reused === true && JSON.stringify(e4repeat.json.renders) === JSON.stringify(renders),
+      `a=${e4a.status} missing=${e4missing.status} invalid=${e4invalid.status} b=${e4b.status} repeat=${e4repeat.status} filesOk=${filesOk}`);
 
     // E5. 收卡：模板 draft + 首图进 history
     const e5 = await req('POST', `/api/studio/explore/${bid}/adopt`, { indexes: [0] });
@@ -726,7 +731,7 @@ export async function runSingle() {
     const tpl = tid && db.prepare('SELECT * FROM style_dna_templates WHERE id=?').get(tid);
     const gen = tid && db.prepare("SELECT * FROM dna_generations WHERE template_id=? AND op='explore'").get(tid);
     ok('E5. 收卡：模板 draft、命名发散灵感、history 有 explore 记录',
-      e5.status === 200 && tpl && tpl.status === 'draft' && String(tpl.name).startsWith('发散灵感') && !!gen,
+      e5.status === 200 && tpl && tpl.status === 'draft' && String(tpl.name).startsWith('发散灵感') && !!gen && !!gen.prompt_snapshot,
       `status=${e5.status} tpl=${tpl && tpl.status} gen=${!!gen}`);
 
     // E6. 归档：100 天前的批次被 runExploreArchive 归档
