@@ -39,6 +39,7 @@ export default function StyleLayoutEditor({
   layouts = [],
   onSaved,
   onSelectVersion,
+  onResolveImages,
 }) {
   const { user, multiUser } = useAuth();
   const draftKey = `style-draft-layout-v1:${multiUser ? user?.id || user?.username : "local"}:${templateId}:${versionId}`;
@@ -77,17 +78,21 @@ export default function StyleLayoutEditor({
       );
     } catch {}
   }, [form, draftKey]);
+  useEffect(()=>{
+    const missing=form.selected.filter(id=>!images.some(i=>i.id===id));
+    if(missing.length)onResolveImages?.(missing).catch(e=>setError(e.message));
+  },[JSON.stringify(form.selected)]);
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   const selected = images.filter(
     (i) => form.selected.includes(i.id) && i.user_rating !== "deleted",
   );
   useEffect(() => {
-    let alive = true;
+    let alive = true;const controller=new AbortController();
     Promise.all(
       selected.map(async (i) => {
         if (embedded[i.id]) return [i.id, embedded[i.id]];
         const r = await fetch(`/${i.image_path}`, {
-          credentials: "same-origin",
+          credentials: "same-origin",signal:controller.signal,
         });
         if (!r.ok) throw new Error("原图读取失败");
         const blob = await r.blob();
@@ -108,7 +113,7 @@ export default function StyleLayoutEditor({
         if (alive) setError(e.message);
       });
     return () => {
-      alive = false;
+      alive = false;controller.abort();
     };
   }, [JSON.stringify(form.selected)]);
   const width = Math.min(2400, Math.max(600, Number(form.width) || 1000)),
@@ -117,10 +122,10 @@ export default function StyleLayoutEditor({
     (r) => r.label.trim() && r.cm !== "" && Number(r.cm) > 0,
   );
   const complete =
-    selected.length > 0 &&
+    selected.length > 0 && selected.length === form.selected.length &&
     form.confirmed &&
     (form.type !== "spec" || measurements.length > 0) &&
-    selected.every((i) => embedded[i.id]);
+    selected.every((i) => i.image_available!==false && embedded[i.id]);
   const save = async () => {
     setBusy(true);
     setError("");
@@ -328,10 +333,11 @@ export default function StyleLayoutEditor({
           />
         </label>
       </div>
+      {form.selected.some(id=>!images.some(i=>i.id===id&&i.user_rating!=='deleted'))&&<p role="alert">部分已选图片尚未加载或已不可用，加载完成前不能导出。<button className="btn secondary small" onClick={()=>set('selected',form.selected.filter(id=>images.some(i=>i.id===id&&i.user_rating!=='deleted')))}>移除不可用选择</button></p>}
       <h4>选择已确认图片（最多 4 张）</h4>
       <div className="style-layout-images">
         {images
-          .filter((i) => i.user_rating !== "deleted")
+          .filter((i) => i.user_rating !== "deleted" && !["trash","deleted"].includes(i.lifecycle))
           .map((i) => (
             <label key={i.id}>
               <img

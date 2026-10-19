@@ -1,3 +1,4 @@
+import ImagePricingEditor, { pricingPayload } from './ImagePricingEditor.jsx';
 import ImageModelConfig from './ImageModelConfig.jsx';
 import { imageOptions } from '../../../shared/imageOptions.js';
 import ExploreRecoveryPanel from './ExploreRecoveryPanel.jsx';
@@ -21,7 +22,7 @@ const KIND_LABEL = { llm: '仅聊天', image: '仅图片', both: '聊天+图片'
 const emptyPForm = { name: '', preset: 'custom', kind: 'both', base_url: '', api_key: '', is_active: true };
 const emptyMForm = {
   provider_id: '', kind: 'chat', model_id: '', name: '',
-  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true, vision: false, image_edit:false, multi_reference:false,image_config:{protocol:'openai_images',edit:false,max_images:1,text:true},image_rates:'',
+  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true, vision: false, image_edit:false, multi_reference:false,image_config:{protocol:'openai_images',edit:false,max_images:1,text:true},image_rates:[],pricing_mode:'flat',
 };
 
 export default function ModelsTab({ showToast }) {
@@ -179,7 +180,8 @@ export default function ModelsTab({ showToast }) {
       vision: !!m.extra.vision,
       image_edit: !!m.extra.image_edit, multi_reference: !!m.extra.multi_reference,
       image_config: m.extra.image_config || {protocol:m.provider_preset==='dashscope'?'dashscope':'openai_images',edit:!!m.extra.image_edit,max_images:m.extra.multi_reference?4:1,text:true},
-      image_rates: m.pricing.image_rates ? JSON.stringify(m.pricing.image_rates,null,2) : '',
+      image_rates: m.pricing.image_rates || [],
+      pricing_mode: m.pricing.image_rates?.length ? 'tiered' : 'flat',
       original_extra:m.extra, original_pricing:m.pricing,
     });
     setSizeFamily(guessFamily(m.model_id));
@@ -196,14 +198,13 @@ export default function ModelsTab({ showToast }) {
       pricing.input_per_1m = ip; pricing.output_per_1m = op;
       extra.vision = !!mForm.vision;
     } else {
-      const pc = Number(mForm.per_call);
-      if (String(mForm.per_call).trim()==='' || !Number.isSafeInteger(pc) || pc < 0 || pc > 1000000000) { showToast('请明确填写按次单价，使用非负整数；免费请填写 0'); return; }
-      pricing.per_call = pc;
+      try { Object.assign(pricing,pricingPayload(mForm));if(mForm.pricing_mode!=='tiered')delete pricing.image_rates; }
+      catch(e){showToast(e.message);return;}
       extra.sizes = String(mForm.sizes || '').split(/[,，、\s]+/).map((x) => x.trim()).filter(Boolean);
       extra.prompt_extend = !!mForm.prompt_extend;
       extra.image_config=mForm.image_config;
       extra.image_edit=!!mForm.image_config?.edit;extra.multi_reference=extra.image_edit && mForm.image_config.max_images>1;
-      try { if(mForm.image_rates?.trim()) pricing.image_rates=JSON.parse(mForm.image_rates);else delete pricing.image_rates; }catch{showToast('分档价格JSON格式不正确');return;}
+
     }
     setMBusy(true);
     try {
@@ -269,7 +270,7 @@ export default function ModelsTab({ showToast }) {
         <div className="key-desc small">
           {m.kind === 'chat'
             ? `${m.pricing.input_per_1m ?? '未配置'}/${m.pricing.output_per_1m ?? '未配置'} 积分/1M tokens${m.extra && m.extra.vision ? ' · 支持视觉' : ''}`
-            : `${m.pricing.per_call ?? '未配置'} 积分/次`}
+            : m.pricing.image_rates?.length ? `按规格分档 · ${m.pricing.image_rates.length} 条价格` : `${m.pricing.per_call ?? '未配置'} 积分/张`}
           {m.is_active ? '' : '（已停用）'}
         </div>
         {m.kind==='image'&&<div className="key-desc small">{imageOptions(m.extra,m.provider_preset).image_edit?`参考图最多 ${imageOptions(m.extra,m.provider_preset).max_images} 张`:'仅无图生成或未声明参考图能力'} · {imageOptions(m.extra,m.provider_preset).protocol||'图片协议未配置'} · {(m.checks||[]).length?'见分项测试结果':'未验证（人工声明）'}</div>}
@@ -412,9 +413,6 @@ export default function ModelsTab({ showToast }) {
           ) : (
             <>
               <div className="key-input-row" style={{ marginTop: 8 }}>
-                <input type="number" min="0" value={mForm.per_call} onChange={setM('per_call')} placeholder="单价（积分/次）" />
-              </div>
-              <div className="key-input-row" style={{ marginTop: 8 }}>
                 <select value={sizeFamily} onChange={(e) => applyFamily(e.target.value)} title="模型家族：自动带出该家族常用尺寸">
                   {SIZE_FAMILIES.map((f) => (
                     <option key={f.id} value={f.id}>{f.label}</option>
@@ -429,7 +427,8 @@ export default function ModelsTab({ showToast }) {
                 允许供应商扩展提示词（千问系有效；可能影响构图约束，标准对比建议关闭）
               </label>
               <ImageModelConfig value={mForm.image_config} onChange={image_config=>setMForm(f=>({...f,image_config}))}/>
-              <details><summary>按尺寸/质量分档计费（可选）</summary><p className="dim small">留空统一按次计费；配置后必须匹配一条规则，* 表示任意。例：[&#123;"size":"*","quality":"high","per_call":10&#125;]</p><textarea aria-label="图片分档价格" value={mForm.image_rates||''} onChange={setM('image_rates')}/></details>
+              <ImagePricingEditor value={mForm} onChange={patch=>setMForm(f=>({...f,...patch}))}/>
+
             </>
           )}
           <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>

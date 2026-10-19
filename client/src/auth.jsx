@@ -1,3 +1,4 @@
+import { clearStudioPreviewCache } from './components/studioPreviewCache.js';
 // 多用户模式的登录/注册会话：会话靠后端 HttpOnly cookie，前端只持有 user 状态。
 // 启动时先读 /api/config：multi_user 为 true 才走 /api/auth/me 检查登录态。
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
@@ -70,6 +71,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = useCallback(async (username, password) => {
+    clearStudioPreviewCache();
     const res = await authPost('/api/auth/login', { username, password });
     if (!res.ok) {
       let msg = '用户名或密码错误';
@@ -100,6 +102,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => {
+    clearStudioPreviewCache();
     try { Object.keys(sessionStorage).filter(k => k.startsWith('explore-draft-') || k.startsWith('style-draft-')).forEach(k => sessionStorage.removeItem(k)); } catch {}
     try {
       await authPost('/api/auth/logout');

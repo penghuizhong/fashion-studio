@@ -1,3 +1,4 @@
+import { imageRateMatch } from '../../shared/imagePricing.js';
 import crypto from 'node:crypto';
 import { imageOptions, sizeAllowed } from '../../shared/imageOptions.js';
 import { problem } from './exploreErrors.js';
@@ -12,10 +13,9 @@ export function chooseOutput(model,size,quality='') {
   const rates=model.pricing.image_rates;
   let unit=model.price_per_call;
   if(Array.isArray(rates) && rates.length){
-    const matches=rates.filter(r=>(r.size==='*'||r.size===size)&&(r.quality==='*'||r.quality===quality));
-    matches.sort((a,b)=>((b.size!=='*')+(b.quality!=='*'))-((a.size!=='*')+(a.quality!=='*')));
-    if(matches.length>1 && ((matches[0].size!=='*')+(matches[0].quality!=='*'))===((matches[1].size!=='*')+(matches[1].quality!=='*')) && matches[0].per_call!==matches[1].per_call)throw problem('PRICE_NOT_CONFIGURED','分档价格规则冲突，请管理员核对',422);
-    unit=matches[0]?.per_call;
+    const matched=imageRateMatch(rates,size,quality);
+    if(matched.error)throw problem('PRICE_NOT_CONFIGURED',matched.error,422);
+    unit=matched.unit;
   }
   if(!Number.isSafeInteger(unit)||unit<0||unit>1e9)throw problem('PRICE_NOT_CONFIGURED','此尺寸和质量尚未配置有效积分价格',422);
   return {size,quality,unit};

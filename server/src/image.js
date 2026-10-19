@@ -1,3 +1,4 @@
+import { writeStudioPreview } from './studioPreview.js';
 import { imageOptions } from './imageCapabilities.js';
 import { photographyPrompt } from '../../shared/photography.js';
 // v0.1.0: 生图统一入口。provider: dashscope | openai_compatible
@@ -245,6 +246,8 @@ export async function saveStudioImage(imageBase64, filename) {
     fs.writeFileSync(original+token,buf);
     await sharp(buf).resize({width:600,height:600,fit:'inside',withoutEnlargement:true}).jpeg({quality:82}).toFile(thumb+token);
     fs.renameSync(original+token,original);fs.renameSync(thumb+token,thumb);
+    // A derivative failure must not discard a successfully saved original.
+    await writeStudioPreview(buf, rel).catch(()=>{});
   } catch(e) {
     for(const f of [original+token,thumb+token])try{fs.unlinkSync(f);}catch{}
     throw e;

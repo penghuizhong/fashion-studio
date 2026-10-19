@@ -205,9 +205,7 @@ test("recolor saves design first, detail camera changes and background requests 
       exact: true,
     })
     .click();
-  await page
-    .getByLabel("添加参考图", { exact: true })
-    .selectOption("original");
+  await expect(page.locator('.reference-strip article').first()).toContainText('图1 · 款式主体');
   await page.getByLabel("目标颜色（名称或色号）", { exact: true }).fill("酒红");
   await expect(
     page.getByRole("button", { name: "确认费用并生成", exact: true }),
@@ -387,7 +385,9 @@ test('unified references, custom native output, quality and saved text design ve
  await dialog.locator('nav').getByRole('button',{name:'款式衍生',exact:true}).click();
  await expect(page.getByLabel('生成方式',{exact:true})).toHaveCount(0);
  await page.getByLabel('款式图片模型').selectOption('browser-image-two');
- await page.getByLabel('添加参考图').selectOption('original');
+ await page.getByRole('button',{name:'从图库选择',exact:true}).click();
+ await page.getByRole('button',{name:'选择原始参考图',exact:true}).click();
+ await page.getByRole('button',{name:'添加所选参考图',exact:true}).click();
  const buffer=await sharp({create:{width:512,height:512,channels:3,background:'#678912'}}).png().toBuffer();
  await page.getByLabel('上传参考图').setInputFiles({name:'sleeve.png',mimeType:'image/png',buffer});
  await expect(page.getByText('图2',{exact:true})).toBeVisible();
@@ -397,8 +397,8 @@ test('unified references, custom native output, quality and saved text design ve
  await page.getByLabel('自定义宽').fill('800');
  await page.getByLabel('自定义高').fill('1200');
  await page.getByLabel('生成质量').selectOption('high');
+ await page.getByRole('button',{name:'自由衍生 · 修改设计',exact:true}).click();
  await page.getByLabel('本次要求',{exact:true}).fill('图1的袖子，保留图2领子，改成条纹花色');
- await page.getByLabel('本次要求包含服装设计变化').check();
  await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeDisabled();
  await page.getByRole('button',{name:'保存要求为新版本'}).click();
  await expect(page.getByLabel('设计版本')).toContainText('V2');

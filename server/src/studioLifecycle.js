@@ -1,3 +1,4 @@
+import { previewFile } from './studioPreview.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -81,7 +82,7 @@ export function mountStudioLifecycle(app){
       UNION ALL SELECT 1 FROM style_layouts l JOIN style_dna_templates t ON t.id=l.template_id,json_each(json_extract(l.config_json,'$.selected')) j WHERE j.value=? AND t.lifecycle!='deleted' LIMIT 1`).get(g.id,g.id,g.id);
     if(idRef)return {ok:true,retained:true,message:'文件仍被封面、底图或排版引用，已保留'};
     const trash=path.resolve(getConfig().dataDir,'.style-trash');fs.mkdirSync(trash,{recursive:true});
-    for(const file of new Set([g.image_path,g.thumb_path].filter(Boolean))){if(!studioFileExists(file))continue;const from=path.resolve(getConfig().dataDir,file),to=path.join(trash,crypto.randomUUID());fs.renameSync(from,to);moves.push([from,to]);}
+    for(const file of new Set([g.image_path,g.thumb_path,g.image_path?previewFile(g.image_path):null].filter(Boolean))){if(!studioFileExists(file))continue;const from=path.resolve(getConfig().dataDir,file),to=path.join(trash,crypto.randomUUID());fs.renameSync(from,to);moves.push([from,to]);}
     db.prepare('INSERT INTO studio_lifecycle_events(user_id,object_type,object_id,action,created_at) VALUES(?,?,?,?,?)').run(req.userId||'local','generations',String(g.id),'cleanup-files',new Date().toISOString());
     return {ok:true,retained:false,message:'未引用文件已清理'};
    }).immediate();
