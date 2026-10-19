@@ -60,7 +60,15 @@ export function detectProvider(baseUrl) {
 }
 
 // 关思考参数：按提供商取预设；deepseek-reasoner 不可关；custom 回退保留 v1.19.1 的 qwen 模型名猜测
-export function thinkingParams(providerId, model) {
+export function thinkingParams(providerId, model, enabled) {
+  if(enabled !== undefined){
+    if(thinkingControl(providerId,model)==='forced_on')return {};
+    if(providerId==='deepseek')return {};
+    if(providerId==='dashscope')return {enable_thinking:!!enabled};
+    if(providerId==='zhipu')return {thinking:{type:enabled?'enabled':'disabled'}};
+    if(providerId==='custom'&&/qwen/i.test(model||''))return {enable_thinking:!!enabled};
+    return {reasoning:{enabled:!!enabled}};
+  }
   const prov = getProvider(providerId);
   if (prov.id === 'deepseek') return {};
   if (prov.id === 'custom') {
@@ -70,4 +78,10 @@ export function thinkingParams(providerId, model) {
     };
   }
   return prov.thinkingOff || { reasoning: { enabled: false } };
+}
+
+export function thinkingControl(providerId, model) {
+  if (/reasoner|deepseek[/-]r1(?:$|[-/:])/i.test(model || '')) return 'forced_on';
+  if (providerId === 'deepseek') return 'unsupported';
+  return ['openrouter','dashscope','zhipu'].includes(providerId) ? 'toggle' : 'best_effort';
 }

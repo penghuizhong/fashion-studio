@@ -416,7 +416,7 @@ export const api = {
     history: (id, includeArchived) => get(`/api/studio/templates/${id}/history${includeArchived ? '?include_archived=1' : ''}`),
     rate: (genId, rating) => post(`/api/studio/generations/${genId}/rate`, { rating }),
     // P4 发散创建
-    exploreCreate: (data) => post('/api/studio/explore', data),
+    exploreCreate: (data,onProgress) => onProgress?exploreCreateStream(data,onProgress):post('/api/studio/explore', data),
     exploreRecovery: () => get('/api/admin/explore-recovery'),
     exploreResolve: (type, id, body) => post(`/api/admin/explore-${type === 'image' ? 'items' : type === 'legacy' ? 'legacy' : 'expansions'}/${encodeURIComponent(id)}/resolve`, body),
     exploreModels: () => get('/api/studio/explore-models'),
@@ -445,3 +445,58 @@ export const api = {
     bulkDelete: (ids) => post('/api/studio/assets/bulk-delete', { ids }),
   },
 };
+
+async function exploreCreateStream(data, onProgress) {
+  const res = await fetch('/api/studio/explore', {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ ...data, stream_progress: true }),
+  });
+  if (!res.ok) throw await httpError(res);
+  if (!(res.headers.get('content-type') || '').includes('text/event-stream'))
+    return res.json();
+  const reader = res.body.getReader(),
+    decoder = new TextDecoder();
+  let buffer = '',
+    result;
+  const handle = (frame) => {
+    let event = 'message',
+      payload = '';
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      if (line.startsWith('data:')) payload += line.slice(5).trim();
+    }
+    if (!payload) return;
+    const d = JSON.parse(payload);
+    if (event === 'progress') onProgress(d);
+    else if (event === 'result') result = d;
+    else if (event === 'error')
+      throw Object.assign(new Error(d.error || '发散失败'), {
+        code: d.code,
+        status: d.status,
+        requestId: d.request_id,
+      });
+  };
+  try {
+    while (true) {
+      const r = await reader.read();
+      if (r.done) break;
+      buffer = (buffer + decoder.decode(r.value, { stream: true })).replace(
+        /\r\n/g,
+        '\n'
+      );
+      let i;
+      while ((i = buffer.indexOf('\n\n')) >= 0) {
+        handle(buffer.slice(0, i));
+        buffer = buffer.slice(i + 2);
+      }
+    }
+    if (!result)
+      throw new Error('发散连接已中断，可重试同一请求或查看历史，避免重复提交');
+    return result;
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}

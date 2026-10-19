@@ -4,6 +4,7 @@ import { getModel, listModels, getProviderCreds } from './registry.js';
 import { getWorkerModel } from './points.js';
 import { getUserApiKeys } from './auth.js';
 import { assertPublicHttpsUrl } from './llm.js';
+import { thinkingControl } from './providers.js';
 import { detectProvider } from './providers.js';
 import { problem } from './exploreErrors.js';
 
@@ -22,6 +23,7 @@ export function availableModels(kind) {
       name: m.name,
       model_id: m.model_id,
       provider_name: m.provider_name,
+      thinking_control: thinkingControl(m.provider_preset, m.model_id),
       pricing: m.pricing,
       sizes:
         Array.isArray(m.extra.sizes) &&
