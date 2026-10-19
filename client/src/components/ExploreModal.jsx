@@ -153,7 +153,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     setBusy(true);
     setBusyMsg(`正在渲染 ${n} 张…`);
     try {
-      const r = await api.studio.exploreRender(batch.id, true);
+      const r = await api.studio.exploreRender(batch.id, true, [...selected]);
       setRenders(r.renders || []);
       setAdoptSel((r.renders || []).filter((x) => !x.error).map((x) => x.proposal_idx));
       setStep('renders');
