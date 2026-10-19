@@ -1,3 +1,5 @@
+import OriginalImageViewer from './OriginalImageViewer.jsx';
+import OriginalImageLink from './OriginalImageLink.jsx';
 // v0.1.0: 设计台——款式克隆 DNA 模板工作台
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
@@ -709,6 +711,7 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
                 ) : (
                   <div className="history-deleted">已删</div>
                 )}
+                <OriginalImageLink path={g.image_path} />
                 <div className="history-hover">
                   <button title="选用" onClick={() => doRate(g.id, 'liked')}><Icon name="heart" size={14} /></button>
                   <button title="删除" onClick={() => doRate(g.id, 'deleted')}><Icon name="trash" size={14} /></button>
@@ -731,6 +734,8 @@ export default function StudioView({ showToast, onOpenSidebar }) {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [exploreOpen, setExploreOpen] = useState(false);
   const [drawerId, setDrawerId] = useState(null);
+  const [viewImage,setViewImage]=useState(null);
+  const openCard=t=>{const path=t.last_image||t.source_image_path;if(path)setViewImage({id:t.id,name:t.name,path});else setDrawerId(t.id);};
   const [compare, setCompare] = useState(null);
   const [compareBusy, setCompareBusy] = useState(false);
 
@@ -806,7 +811,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
       ) : (
         <div className="studio-grid">
           {templates.map((t) => (
-            <div key={t.id} className="studio-card" onClick={() => setDrawerId(t.id)}>
+            <div key={t.id} className="studio-card" role="button" tabIndex={0} aria-label={`查看${t.name}原图`} onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openCard(t);}}} onClick={() => openCard(t)}>
               <div className="studio-card-cover">
                 {(t.last_thumb || t.source_image_path) ? (
                   <img src={imgUrl(t.last_thumb || t.source_thumb_path || t.source_image_path)} alt={t.name} loading="lazy" />
@@ -817,6 +822,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
               </div>
               <div className="studio-card-body">
                 <div className="studio-card-name">{t.name}</div>
+                <button className="btn secondary small" onClick={e=>{e.stopPropagation();setDrawerId(t.id);}}>款式属性</button>
                 <div className="studio-card-tags">
                   {t.category && <span className="tag">{t.category}</span>}
                   <span className="tag dim">已生成 {t.gen_count || 0} 张</span>
@@ -827,6 +833,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
         </div>
       )}
 
+      {viewImage&&<OriginalImageViewer image={viewImage} onClose={()=>setViewImage(null)} onProperties={()=>{setDrawerId(viewImage.id);setViewImage(null);}}/>}
       {cloneOpen && (
         <CloneModal onClose={() => setCloneOpen(false)} onSaved={() => { setCloneOpen(false); load(); }} showToast={showToast} />
       )}

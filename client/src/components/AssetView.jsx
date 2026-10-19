@@ -1,3 +1,4 @@
+import OriginalImageLink from './OriginalImageLink.jsx';
 // v0.2.0: 资产库——所有生成图聚合浏览 / 筛选 / 批量删除
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
@@ -50,6 +51,7 @@ function AssetDetail({ asset, onClose, onChanged, showToast }) {
           </div>
         </div>
         <div className="modal-foot">
+          <OriginalImageLink path={asset.image_path} />
           <button className="btn secondary" disabled={busy} onClick={() => doRate('liked')}>选用</button>
           <button className="btn danger" disabled={busy} onClick={() => doRate('deleted')}>删除</button>
           <button className="btn primary" disabled={busy} onClick={replicate}>复刻</button>
