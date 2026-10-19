@@ -537,36 +537,7 @@ export function getDb() {
         ins.run(p.id, p.name, JSON.stringify(p.fields), p.prompt, p.sort_order || 0, now, now);
       }
     } catch (e) { console.warn('[db] dna_presets seed 失败:', e.message); }
-    // P5: 一次性清理旧 11 字段模板（用户 2026-10-18 明确要求删干净防串）
-    // 判定：preset_id 为空的即为旧模板；连带其生成记录与磁盘图片一起删；幂等（无旧模板时 no-op）
-    try {
-      const oldTpls = _db.prepare("SELECT id, name, source_image_path FROM style_dna_templates WHERE preset_id IS NULL OR preset_id=''").all();
-      if (oldTpls.length) {
-        const dataDir = getConfig().dataDir || './data';
-        let genN = 0, fileN = 0;
-        const delGen = _db.prepare('DELETE FROM dna_generations WHERE template_id=?');
-        const delTpl = _db.prepare('DELETE FROM style_dna_templates WHERE id=?');
-        const txn = _db.transaction((tpls) => {
-          for (const t of tpls) {
-            const gens = _db.prepare('SELECT image_path, thumb_path FROM dna_generations WHERE template_id=?').all(t.id);
-            for (const g of gens) {
-              for (const p of [g.image_path, g.thumb_path, t.source_image_path]) {
-                if (!p) continue;
-                try {
-                  const abs = path.join(dataDir, p);
-                  if (fs.existsSync(abs)) { fs.unlinkSync(abs); fileN++; }
-                } catch {}
-              }
-              genN++;
-            }
-            delGen.run(t.id);
-            delTpl.run(t.id);
-          }
-        });
-        txn(oldTpls);
-        console.log(`[db] P5 清理旧模板：${oldTpls.length} 个模板，${genN} 条生成记录，${fileN} 个文件`);
-      }
-    } catch (e) { console.warn('[db] P5 旧模板清理失败:', e.message); }
+    // Preserve legacy templates and image files; immutable-version migration labels unknown history.
     // 积分系统：users 加列（老库自动补）
     const userCols = _db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
     if (!userCols.includes('points_balance')) _db.exec('ALTER TABLE users ADD COLUMN points_balance INTEGER DEFAULT 0');
@@ -715,6 +686,28 @@ export function getDb() {
   } catch (e) {
     console.warn('[db] 迁移失败:', e.message);
   }
+  // Immutable style snapshots. Existing image/version associations stay unknown.
+  if (!_db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='style_versions'").get() && _db.prepare('SELECT COUNT(*) AS n FROM style_dna_templates').get().n) {
+    const backupDir = path.join(dataDir, 'backups'); fs.mkdirSync(backupDir, {recursive:true});
+    const backupPath = path.join(backupDir, `pre-style-versions-${Date.now()}.db`);
+    _db.exec(`VACUUM INTO '${backupPath.replaceAll("'", "''")}'`);
+  }
+  _db.transaction(() => {
+    for (const [table, additions] of Object.entries({style_dna_templates:{work_version_id:'INTEGER',cover_generation_id:'INTEGER',style_batch_id:'INTEGER'},dna_generations:{design_version_id:'INTEGER',source_generation_id:'INTEGER',task_item_id:'TEXT',settings_json:"TEXT NOT NULL DEFAULT '{}'"},exploration_batches:{workflow_kind:"TEXT NOT NULL DEFAULT 'explore'"}})) {
+      const names=_db.prepare(`PRAGMA table_info(${table})`).all().map(c=>c.name);
+      for(const [name,type] of Object.entries(additions))if(!names.includes(name))_db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
+    _db.exec(`CREATE TABLE IF NOT EXISTS style_versions(id INTEGER PRIMARY KEY AUTOINCREMENT,template_id INTEGER NOT NULL,number INTEGER NOT NULL,parent_id INTEGER,dna_json TEXT NOT NULL,schema_json TEXT NOT NULL DEFAULT '[]',preset_id TEXT NOT NULL,category TEXT NOT NULL,summary TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(template_id,number));
+      CREATE TABLE IF NOT EXISTS style_layouts(id INTEGER PRIMARY KEY,template_id INTEGER NOT NULL,version_id INTEGER NOT NULL,request_key TEXT NOT NULL,config_json TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(template_id,request_key));
+      CREATE TABLE IF NOT EXISTS style_references(id INTEGER PRIMARY KEY,user_id TEXT NOT NULL,image_path TEXT NOT NULL,thumb_path TEXT NOT NULL,created_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS style_version_requests(template_id INTEGER NOT NULL,request_key TEXT NOT NULL,signature TEXT NOT NULL,version_id INTEGER NOT NULL,PRIMARY KEY(template_id,request_key));
+      CREATE TABLE IF NOT EXISTS style_version_events(id INTEGER PRIMARY KEY,version_id INTEGER NOT NULL,action TEXT NOT NULL,created_at TEXT NOT NULL);
+      CREATE UNIQUE INDEX IF NOT EXISTS style_generation_item ON dna_generations(task_item_id) WHERE task_item_id IS NOT NULL;
+      CREATE TRIGGER IF NOT EXISTS immutable_style_attributes BEFORE UPDATE OF dna_json,schema_json,preset_id,category,parent_id,template_id,number ON style_versions BEGIN SELECT RAISE(ABORT,'Design version attributes are immutable'); END;
+      INSERT INTO style_versions(template_id,number,dna_json,schema_json,preset_id,category,summary,status,created_at) SELECT t.id,1,t.dna_json,COALESCE((SELECT fields_json FROM dna_presets WHERE id=t.preset_id),'[]'),COALESCE(t.preset_id,''),t.category,'迁移时当前属性快照（历史图片未记录属性）',t.status,strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM style_dna_templates t WHERE NOT EXISTS(SELECT 1 FROM style_versions v WHERE v.template_id=t.id);
+      UPDATE style_dna_templates SET work_version_id=(SELECT id FROM style_versions v WHERE v.template_id=style_dna_templates.id ORDER BY number LIMIT 1),cover_generation_id=(SELECT id FROM dna_generations g WHERE g.template_id=style_dna_templates.id AND COALESCE(g.user_rating,'')!='deleted' ORDER BY id DESC LIMIT 1) WHERE work_version_id IS NULL OR NOT EXISTS(SELECT 1 FROM style_versions v WHERE v.id=style_dna_templates.work_version_id AND v.template_id=style_dna_templates.id);
+    `);
+  })();
   return _db;
 }
 

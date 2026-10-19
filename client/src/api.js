@@ -402,6 +402,20 @@ export const api = {
 
   // v0.1.0: 设计台
   studio: {
+    saveLayout: (id,body) => post(`/api/studio/templates/${id}/layouts`,body),
+    workspace: id => get(`/api/studio/templates/${id}/workspace`),
+    saveVersion: (id,body) => post(`/api/studio/templates/${id}/versions`,body),
+    setWorking: (id,body) => post(`/api/studio/templates/${id}/working-version`,body),
+    versionStatus: (id,versionId,status) => post(`/api/studio/templates/${id}/versions/${versionId}/status`,{status}),
+    setCover: (id,generation_id) => post(`/api/studio/templates/${id}/cover`,{generation_id}),
+    forkStyle: (id,body) => post(`/api/studio/templates/${id}/fork`,body),
+    styleQuote: (id,body) => post(`/api/studio/templates/${id}/quote`,body),
+    styleStart: (id,body) => post(`/api/studio/templates/${id}/jobs`,body),
+    styleRetry: (id,job_id) => post(`/api/studio/templates/${id}/retry-quote`,{job_id}),
+    permanentDelete: (id,confirm) => post(`/api/studio/generations/${id}/permanent-delete`,{confirm}),
+    archiveImage: (id,archived) => post(`/api/studio/generations/${id}/archive`,{archived}),
+    references: () => get('/api/studio/references'),
+    uploadReference: body => post('/api/studio/references',body),
     extractDna: (data) => post('/api/studio/dna/extract', data),
     // P6: 带上传进度的识图（onProgress 0-100）
     extractDnaWithProgress: (data, onProgress) => postWithProgress('/api/studio/dna/extract', data, onProgress),

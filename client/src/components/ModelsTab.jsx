@@ -19,7 +19,7 @@ const KIND_LABEL = { llm: '仅聊天', image: '仅图片', both: '聊天+图片'
 const emptyPForm = { name: '', preset: 'custom', kind: 'both', base_url: '', api_key: '', is_active: true };
 const emptyMForm = {
   provider_id: '', kind: 'chat', model_id: '', name: '',
-  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true, vision: false,
+  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true, vision: false, image_edit:false, multi_reference:false,
 };
 
 export default function ModelsTab({ showToast }) {
@@ -172,6 +172,7 @@ export default function ModelsTab({ showToast }) {
       sizes: (m.extra.sizes || []).join(','),
       prompt_extend: m.extra.prompt_extend !== false,
       vision: !!m.extra.vision,
+      image_edit: !!m.extra.image_edit, multi_reference: !!m.extra.multi_reference,
     });
     setSizeFamily(guessFamily(m.model_id));
     setMEditing(m.id);
@@ -192,6 +193,7 @@ export default function ModelsTab({ showToast }) {
       pricing.per_call = pc;
       extra.sizes = String(mForm.sizes || '').split(/[,，、\s]+/).map((x) => x.trim()).filter(Boolean);
       extra.prompt_extend = !!mForm.prompt_extend;
+      extra.image_edit=!!mForm.image_edit;extra.multi_reference=!!mForm.image_edit && !!mForm.multi_reference;
     }
     setMBusy(true);
     try {
@@ -411,8 +413,10 @@ export default function ModelsTab({ showToast }) {
               </div>
               <label className="key-desc small" style={{ display: 'block', marginTop: 8 }}>
                 <input type="checkbox" checked={!!mForm.prompt_extend} onChange={setM('prompt_extend')} />
-                提示词改写增强（千问系有效；关掉后严格按原提示词生成，不离题）
+                允许供应商扩展提示词（千问系有效；可能影响构图约束，标准对比建议关闭）
               </label>
+              <label className="key-desc small"><input type="checkbox" checked={!!mForm.image_edit} onChange={setM('image_edit')} />已验证此 OpenAI 兼容模型支持图片编辑接口（DashScope 暂不支持）</label>
+              <label className="key-desc small"><input type="checkbox" checked={!!mForm.multi_reference} disabled={!mForm.image_edit} onChange={setM('multi_reference')} />已验证支持多图参考 image[]</label>
             </>
           )}
           <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>

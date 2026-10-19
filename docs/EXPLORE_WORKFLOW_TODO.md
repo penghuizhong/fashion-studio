@@ -103,3 +103,9 @@
 - [ ] 远端 CI、发布与线上人工验收，和本地实现分开记录。
 
 详见 [执行方案](EXPLORE_UX_EXECUTION_PLAN.md) 与 [0.7.0 实施记录](RELEASE_NOTES_0.7.0.md)。
+
+## 后续讨论：款式详情与属性交互
+
+- [x] 六轮讨论已核对去重，冲突与依赖已收敛，生成 [款式版本化与衍生统一执行 TODO](STYLE_DERIVATION_EXECUTION_TODO.md)。
+- [x] 0.8.0 已实现版本化、统一衍生工作区、共享取景、持久任务及排版并开展本地自检；[原讨论记录](STYLE_DETAIL_UX_TODO.md)保留追溯，详见 [实施记录](RELEASE_NOTES_0.8.0.md)。
+- [ ] 真实供应商效果、实体设备、远端 CI 与发布单独验收。

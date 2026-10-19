@@ -18,5 +18,5 @@
     "test:e2e": "npm run build && playwright test"
   },
   "type": "module",
-  "version": "0.7.0"
+  "version": "0.8.0"
 }

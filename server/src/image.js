@@ -1,3 +1,4 @@
+import { photographyPrompt } from '../../shared/photography.js';
 // v0.1.0: 生图统一入口。provider: dashscope | openai_compatible
 // 按次扣积分；prompt 由 DNA 确定性渲染，不经过 LLM 自由发挥。
 import { dnaRenderProfiles, categorySubjects, mappedDnaValue } from './dnaRenderProfiles.js';
@@ -35,9 +36,9 @@ const PROMPT_SUFFIX = 'high fashion photography, studio lighting, ultra detailed
 export function renderDnaPrompt(input) {
   // Backwards compatible with template generation that passes bare DNA.
   const context = input && Object.hasOwn(input, 'dna') ? input : { dna: input };
-  const { dna, presetId = '', intentText = '' } = context;
+  const { dna, presetId = '', intentText = '', camera } = context;
   const v = (k) => (dna && dna[k] && dna[k].value) || '';
-  const parts = [dnaRenderProfiles[presetId]?.subject || categorySubjects[presetId] || 'fashion garment'];
+  const parts = [camera?.scope === 'set' && presetId === 'suit' ? "men's coordinated suit, complete jacket and matching trousers" : dnaRenderProfiles[presetId]?.subject || categorySubjects[presetId] || 'fashion garment'];
   const seen = new Set();
   for (const [key, suffix] of DNA_FIELD_ORDER) {
     const val = mappedDnaValue(presetId, key, v(key) || '');
@@ -63,6 +64,7 @@ export function renderDnaPrompt(input) {
   }
   if (String(intentText || '').trim()) parts.push(`Design requirements from client: ${String(intentText).slice(0, 500).trim()}`);
   parts.push(PROMPT_SUFFIX);
+  if (camera) parts.push(photographyPrompt(camera, presetId));
   return [...new Set(parts.filter(Boolean))].join(', ');
 }
 
@@ -133,10 +135,11 @@ async function openaiText2Image({ baseUrl, apiKey, model, prompt, size, seed }) 
   return { imageBase64: b64, seed };
 }
 
-async function openaiEditImage({ baseUrl, apiKey, model, prompt, size, imageBase64 }) {
+async function openaiEditImage({ baseUrl, apiKey, model, prompt, size, imageBase64, referenceImages = [] }) {
   const buf = Buffer.from(imageBase64, 'base64');
   const form = new FormData();
-  form.append('image', new Blob([buf], { type: 'image/png' }), 'source.png');
+  const images=[buf,...referenceImages.map(b=>Buffer.from(b,'base64'))];
+  for(const [index,bytes] of images.entries()){const metadata=await sharp(bytes).metadata();const ext=metadata.format==='jpeg'?'jpg':metadata.format;form.append(images.length>1?'image[]':'image',new Blob([bytes],{type:`image/${metadata.format==='jpg'?'jpeg':metadata.format}`}),`source_${index}.${ext}`);}
   form.append('model', model);
   form.append('prompt', prompt);
   form.append('size', String(size || '1024x1024').replace('*', 'x'));
@@ -166,7 +169,7 @@ async function downloadToBase64(url) {
 // P4 回归用 1x1 占位 PNG（base64）
 const MOCK_PLACEHOLDER_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-export async function generateImage({ userId, modelId, prompt, size, seed, sourceImageBase64 = null, executionModel = null, deferBilling = false }) {
+export async function generateImage({ userId, modelId, prompt, size, seed, sourceImageBase64 = null, referenceImages = [], executionModel = null, deferBilling = false }) {
   const m = executionModel || listImageModelsCompat(true).find((x) => x.id === modelId || x.model_id === modelId);
   if (!m) throw new Error('图片模型不存在或已停用');
   // P4: mock 模式——保留模型存在性校验，跳过上游网络调用，不扣费（供回归）
@@ -192,7 +195,7 @@ export async function generateImage({ userId, modelId, prompt, size, seed, sourc
     delete result.imageUrl;
   } else {
     result = sourceImageBase64
-      ? await openaiEditImage({ baseUrl, apiKey, model: m.model_id, prompt, size, imageBase64: sourceImageBase64 })
+      ? await openaiEditImage({ baseUrl, apiKey, model: m.model_id, prompt, size, imageBase64: sourceImageBase64, referenceImages })
       : await openaiText2Image({ baseUrl, apiKey, model: m.model_id, prompt, size, seed: useSeed });
     result.seed = useSeed;
   }
@@ -211,6 +214,7 @@ export async function saveStudioImage(imageBase64, filename) {
   fs.mkdirSync(thumbDir, { recursive: true });
   const buf = Buffer.from(imageBase64, 'base64');
   const metadata=await sharp(buf).metadata();
+  if(!['png','jpeg','webp','avif','heif','gif','tiff'].includes(metadata.format)||!metadata.width||!metadata.height||metadata.width*metadata.height>40000000)throw Object.assign(new Error('仅支持不超过 4000 万像素的位图'),{code:'INVALID_IMAGE',statusCode:400,publicMessage:'仅支持不超过 4000 万像素的 PNG、JPEG、WebP 等位图'});
   const extension=metadata.format==='jpeg'?'jpg':metadata.format;
   const stem=path.parse(path.basename(filename)).name;
   filename=`${stem}.${extension}`;

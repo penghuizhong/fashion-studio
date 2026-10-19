@@ -1,3 +1,5 @@
+import CameraSettings from './CameraSettings.jsx';
+import { DEFAULT_CAMERA } from '../../../shared/photography.js';
 import { sanitizeExploreDraft } from './exploreDraft.js';
 import ExploreModalShell from './ExploreModalShell.jsx';
 import DnaCard from './ExploreDnaCard.jsx';
@@ -61,8 +63,8 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
   const { user, multiUser } = useAuth();
   const draftKey = `explore-draft-v1:${multiUser ? user?.id || user?.username : 'local'}`;
   const restored = useRef(false), currentTask = useRef(null), batchLoad = useRef(0);
-  const inputDraft = () => ({presetId,intent,axes,count,locked,expandId,thinking,renderId,size});
-  const restoreInputs = c => {setPresetId(c.presetId);setIntent(c.intent);setAxes(c.axes);setCount(c.count);setLocked(c.locked);setLockKeys(Object.keys(c.locked || {}));setExpandId(expandModels.some(m => m.id === c.expandId) ? c.expandId : expandModels[0]?.id || '');setThinking(c.thinking);setRenderId(c.renderId);setSize(c.size);};
+  const inputDraft = () => ({presetId,intent,axes,count,locked,expandId,thinking,renderId,size,camera});
+  const restoreInputs = c => {setPresetId(c.presetId);setIntent(c.intent);setAxes(c.axes);setCount(c.count);setLocked(c.locked);setLockKeys(Object.keys(c.locked || {}));setExpandId(expandModels.some(m => m.id === c.expandId) ? c.expandId : expandModels[0]?.id || '');setThinking(c.thinking);setRenderId(c.renderId);setSize(c.size);setCamera(c.camera||{...DEFAULT_CAMERA});};
   const [tab, setTab] = useState('new'),
     [step, setStep] = useState('intent');
   const [presets, setPresets] = useState([]),
@@ -85,6 +87,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     [adoptSel, setAdoptSel] = useState([]);
   const [viewer, setViewer] = useState(null), [adopted, setAdopted] = useState([]);
   const [onlyDiff, setOnlyDiff] = useState(false), [compare, setCompare] = useState(false);
+  const [camera, setCamera] = useState({...DEFAULT_CAMERA});
   const [quoteLoading, setQuoteLoading] = useState(false), [quoteVersion, setQuoteVersion] = useState(0);
   const [lockKeys, setLockKeys] = useState([]);
   const bodyRef = useRef(null);
@@ -170,13 +173,13 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     setQuoteLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const r = await api.studio.exploreQuote(batch.id, { indexes: selected, render_model_id: renderId, render_size: size, source_job_id: retrySource });
+        const r = await api.studio.exploreQuote(batch.id, { indexes: selected, render_model_id: renderId, render_size: size, source_job_id: retrySource, ...(retrySource ? {} : {camera}) });
         if (alive) { setQuote(r.quote); setRequestKey(crypto.randomUUID()); setError(''); }
       } catch (e) { if (alive) fail(e); }
       finally { if (alive) setQuoteLoading(false); }
     }, 350);
     return () => { alive = false; clearTimeout(timer); };
-  }, [step, batch?.id, renderId, size, selected.join(','), retrySource, active, quoteVersion]);
+  }, [step, batch?.id, renderId, size, selected.join(','), retrySource, active, quoteVersion, JSON.stringify(camera)]);
   useEffect(() => {
     if (tab !== 'history') return;
     let alive = true;
@@ -240,7 +243,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
       if (presets.some(p => p.id === saved.presetId)) { setPresetId(saved.presetId); setAxes(saved.axes || []); setLocked(saved.locked || {});setLockKeys(Object.keys(saved.locked || {})); }
       setIntent(saved.intent || ''); setCount(saved.count || 6); setThinking(!!saved.thinking);
       if (expandModels.some(m => m.id === saved.expandId)) setExpandId(saved.expandId);
-      setRenderId(saved.renderId || ''); setSize(saved.size || '');
+      setRenderId(saved.renderId || ''); setSize(saved.size || '');setCamera(saved.camera||{...DEFAULT_CAMERA});
       if (saved.batchId) loadBatch(saved.batchId, saved.jobId).then(() => {
         restoreInputs(saved);
         setSelected(saved.selected || []);
@@ -253,10 +256,10 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     if (!restored.current) return;
     try {
       const c = currentTask.current;
-      const saved = c ? {...c.inputs,batchId:c.batch?.id,jobId:c.job?.id,selected:c.selected,adopted:c.adopted,step:c.step} : {presetId,intent,axes,count,locked,expandId,thinking,renderId,size,batchId:batch?.id,jobId:job?.id,selected,adopted,step};
+      const saved = c ? {...c.inputs,batchId:c.batch?.id,jobId:c.job?.id,selected:c.selected,adopted:c.adopted,step:c.step} : {presetId,intent,axes,count,locked,expandId,thinking,renderId,size,camera,batchId:batch?.id,jobId:job?.id,selected,adopted,step};
       sessionStorage.setItem(draftKey, JSON.stringify({...saved,expansionRequest:expansionRequest.current,savedAt:Date.now()}));
     } catch { /* private browsing may disable storage */ }
-  }, [presetId,intent,axes,count,locked,expandId,thinking,renderId,size,batch?.id,job?.id,selected,adopted,step,busy]);
+  }, [presetId,intent,axes,count,locked,expandId,thinking,renderId,size,batch?.id,job?.id,selected,adopted,step,busy,JSON.stringify(camera)]);
   useEffect(() => {
     if (!quote) return;
     const timer = setTimeout(() => { setQuote(null); setQuoteVersion(v => v + 1); }, Math.max(0, quote.expires_at - Date.now()));
@@ -371,6 +374,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
       const latest = j.jobs?.find(job => job.id === jobId) || j.jobs?.[0];
       if (latest) {
         setJob(latest);
+        setCamera(latest.snapshot?.camera || {...DEFAULT_CAMERA});
         setRenderId(latest.snapshot?.model?.id || '');setSize(latest.snapshot?.size || '');
         setAdopted(adoptedIndexes(b, latest));
         setStep('results');
@@ -886,6 +890,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
               )}
               {step === 'render' && (
                 <>
+                  {retrySource && !job?.snapshot?.camera ? <p>历史任务未记录取景设置，重试沿用原提示词；调整取景请重新生成。</p> : <CameraSettings value={retrySource ? job.snapshot.camera : camera} onChange={setCamera} disabled={busy || active || !!retrySource} />}
                   {retrySource && (
                     <p className="small dim">
                       重试明确失败项，保留原提示词和随机种子，按本次报价执行。

@@ -17,6 +17,7 @@ export default function OriginalImageViewer({ image, onClose, onProperties }) {
       aria-label={`${image.name} 原图`}
       onCancel={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }}
       onClick={(e) => {

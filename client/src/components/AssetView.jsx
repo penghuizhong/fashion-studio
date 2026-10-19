@@ -1,3 +1,4 @@
+import StudioImage from './StudioImage.jsx';
 import OriginalImageLink from './OriginalImageLink.jsx';
 // v0.2.0: 资产库——所有生成图聚合浏览 / 筛选 / 批量删除
 import { useCallback, useEffect, useState } from 'react';
@@ -5,7 +6,6 @@ import { api } from '../api.js';
 import Icon from './icons.jsx';
 
 const LIMIT = 48;
-const imgUrl = (p) => (p ? `/${p}` : '');
 
 function AssetDetail({ asset, onClose, onChanged, showToast }) {
   const [busy, setBusy] = useState(false);
@@ -13,7 +13,7 @@ function AssetDetail({ asset, onClose, onChanged, showToast }) {
     setBusy(true);
     try {
       await api.studio.rate(asset.id, rating);
-      showToast(rating === 'liked' ? '已选用' : '已删除');
+      showToast(rating === 'liked' ? '已选用' : '已归档，原图保留');
       onChanged();
       onClose();
     } catch (e) {
@@ -42,7 +42,8 @@ function AssetDetail({ asset, onClose, onChanged, showToast }) {
           <button className="icon-btn" onClick={onClose}><Icon name="x" size={18} /></button>
         </div>
         <div className="asset-detail">
-          <img src={imgUrl(asset.image_path)} alt="" />
+          <StudioImage original={asset.image_available === false ? null : asset.image_path} />
+          {asset.image_available === false && <p role="status">原图文件缺失，需从备份恢复。</p>}
           <div className="asset-meta">
             <div>操作：{asset.op}</div>
             <div>模型：{asset.model_id} · 尺寸：{asset.size} · seed：{asset.seed}</div>
@@ -51,9 +52,14 @@ function AssetDetail({ asset, onClose, onChanged, showToast }) {
           </div>
         </div>
         <div className="modal-foot">
-          <OriginalImageLink path={asset.image_path} />
+          {asset.image_available !== false && <OriginalImageLink path={asset.image_path} />}
           <button className="btn secondary" disabled={busy} onClick={() => doRate('liked')}>选用</button>
-          <button className="btn danger" disabled={busy} onClick={() => doRate('deleted')}>删除</button>
+          {asset.archived ? <button className="btn secondary" disabled={busy || asset.user_rating === 'deleted'} onClick={async () => {
+            setBusy(true);
+            try { await api.studio.archiveImage(asset.id, false); showToast('已恢复到资产库'); onChanged(); onClose(); }
+            catch(e) { showToast(e.message || '恢复失败'); }
+            finally { setBusy(false); }
+          }}>取消归档</button> : <button className="btn danger" disabled={busy} onClick={() => doRate('deleted')}>归档</button>}
           <button className="btn primary" disabled={busy} onClick={replicate}>复刻</button>
         </div>
       </div>
@@ -97,14 +103,14 @@ export default function AssetView({ showToast, onOpenSidebar }) {
   };
   const bulkDelete = async () => {
     if (selected.length === 0 || busy) return;
-    if (!window.confirm(`确定删除选中的 ${selected.length} 张吗？`)) return;
+    if (!window.confirm(`确定归档选中的 ${selected.length} 张吗？`)) return;
     setBusy(true);
     try {
       const r = await api.studio.bulkDelete(selected);
-      showToast(`已删除 ${r.deleted} 张`);
+      showToast(`已归档 ${r.deleted} 张`);
       await load();
     } catch (e) {
-      showToast(e.message || '删除失败');
+      showToast(e.message || '归档失败');
     } finally {
       setBusy(false);
     }
@@ -123,7 +129,7 @@ export default function AssetView({ showToast, onOpenSidebar }) {
         </div>
         {selected.length > 0 && (
           <button className="btn danger" disabled={busy} onClick={bulkDelete}>
-            删除选中（{selected.length}）
+            归档选中（{selected.length}）
           </button>
         )}
       </div>
@@ -136,7 +142,7 @@ export default function AssetView({ showToast, onOpenSidebar }) {
           <option value="">全部评价</option>
           <option value="liked">已选用</option>
           <option value="unrated">未评价</option>
-          <option value="deleted">已删除</option>
+          <option value="archived">已归档</option>
         </select>
         {assets.length > 0 && (
           <button className="btn secondary small" onClick={toggleAll}>
@@ -156,10 +162,11 @@ export default function AssetView({ showToast, onOpenSidebar }) {
             <div key={a.id} className="studio-card asset-card" onClick={() => setDetail(a)}>
               <div className="studio-card-cover">
                 {a.thumb_path || a.image_path ? (
-                  <img src={imgUrl(a.thumb_path || a.image_path)} alt="" loading="lazy" />
+                  <StudioImage thumbnail={a.thumb_available === false ? null : a.thumb_path} original={a.image_available === false ? null : a.image_path} loading="lazy" />
                 ) : (
-                  <div className="studio-card-nocover"><span className="dim">已删</span></div>
+                  <div className="studio-card-nocover"><span className="dim">图片文件缺失</span></div>
                 )}
+                {a.image_available === false && a.thumb_available && <span className="status-badge">仅有缩略图 · 原图缺失</span>}
                 <button
                   className={`asset-check${selected.includes(a.id) ? ' on' : ''}`}
                   onClick={(e) => { e.stopPropagation(); toggleSelect(a.id); }}
