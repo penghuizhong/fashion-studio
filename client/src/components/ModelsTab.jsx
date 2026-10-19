@@ -1,3 +1,4 @@
+import ExploreRecoveryPanel from './ExploreRecoveryPanel.jsx';
 // v0.2.0: 统一模型管理（管理员）——供应商 → 模型两层；Key 只写不读
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
@@ -166,8 +167,8 @@ export default function ModelsTab({ showToast }) {
   const mStartEdit = (m) => {
     setMForm({
       provider_id: m.provider_id, kind: m.kind, model_id: m.model_id, name: m.name || '',
-      input_per_1m: m.pricing.input_per_1m || '', output_per_1m: m.pricing.output_per_1m || '',
-      per_call: m.pricing.per_call || '',
+      input_per_1m: m.pricing.input_per_1m ?? '', output_per_1m: m.pricing.output_per_1m ?? '',
+      per_call: m.pricing.per_call ?? '',
       sizes: (m.extra.sizes || []).join(','),
       prompt_extend: m.extra.prompt_extend !== false,
       vision: !!m.extra.vision,
@@ -181,13 +182,13 @@ export default function ModelsTab({ showToast }) {
     const pricing = {};
     const extra = {};
     if (mForm.kind === 'chat') {
-      const ip = Math.floor(Number(mForm.input_per_1m)), op = Math.floor(Number(mForm.output_per_1m));
-      if (!ip || ip <= 0 || !op || op <= 0) { showToast('输入/输出单价必须是大于 0 的整数'); return; }
+      const ip = Number(mForm.input_per_1m), op = Number(mForm.output_per_1m);
+      if ([mForm.input_per_1m,mForm.output_per_1m].some(v=>String(v).trim()==='') || ![ip,op].every(v=>Number.isSafeInteger(v)&&v>=0&&v<=1000000000)) { showToast('请明确填写输入/输出单价，使用非负整数；免费请填写 0'); return; }
       pricing.input_per_1m = ip; pricing.output_per_1m = op;
       extra.vision = !!mForm.vision;
     } else {
-      const pc = Math.floor(Number(mForm.per_call));
-      if (pc == null || pc < 0 || Number.isNaN(pc)) { showToast('按次单价必须是非负整数'); return; }
+      const pc = Number(mForm.per_call);
+      if (String(mForm.per_call).trim()==='' || !Number.isSafeInteger(pc) || pc < 0 || pc > 1000000000) { showToast('请明确填写按次单价，使用非负整数；免费请填写 0'); return; }
       pricing.per_call = pc;
       extra.sizes = String(mForm.sizes || '').split(/[,，、\s]+/).map((x) => x.trim()).filter(Boolean);
       extra.prompt_extend = !!mForm.prompt_extend;
@@ -255,8 +256,8 @@ export default function ModelsTab({ showToast }) {
         <div><b>{m.name || m.model_id}</b> <span className="key-desc small">{m.model_id} · {m.provider_name || ''}</span></div>
         <div className="key-desc small">
           {m.kind === 'chat'
-            ? `${m.pricing.input_per_1m | 0}/${m.pricing.output_per_1m | 0} 积分/1M tokens${m.extra && m.extra.vision ? ' · 支持视觉' : ''}`
-            : `${m.pricing.per_call | 0} 积分/次`}
+            ? `${m.pricing.input_per_1m ?? '未配置'}/${m.pricing.output_per_1m ?? '未配置'} 积分/1M tokens${m.extra && m.extra.vision ? ' · 支持视觉' : ''}`
+            : `${m.pricing.per_call ?? '未配置'} 积分/次`}
           {m.is_active ? '' : '（已停用）'}
         </div>
       </div>
@@ -270,6 +271,7 @@ export default function ModelsTab({ showToast }) {
 
   return (
     <div>
+      <ExploreRecoveryPanel showToast={showToast} />
       <div className="card-title" style={{ marginTop: 4 }}>供应商</div>
       <p className="key-desc small">Key 加密存储，只写不读；「设为默认」决定聊天默认走哪家（可在面板改，不用再改 .env）。</p>
       <div className="pm-list">
@@ -382,10 +384,10 @@ export default function ModelsTab({ showToast }) {
           {mForm.kind === 'chat' ? (
             <>
               <div className="key-input-row" style={{ marginTop: 8 }}>
-                <input type="number" min="1" value={mForm.input_per_1m} onChange={setM('input_per_1m')} placeholder="输入单价 /1M tokens" />
+                <input type="number" min="0" value={mForm.input_per_1m} onChange={setM('input_per_1m')} placeholder="输入单价 /1M tokens" />
               </div>
               <div className="key-input-row" style={{ marginTop: 8 }}>
-                <input type="number" min="1" value={mForm.output_per_1m} onChange={setM('output_per_1m')} placeholder="输出单价 /1M tokens" />
+                <input type="number" min="0" value={mForm.output_per_1m} onChange={setM('output_per_1m')} placeholder="输出单价 /1M tokens" />
               </div>
               <label className="key-desc small" style={{ display: 'block', marginTop: 8 }}>
                 <input type="checkbox" checked={!!mForm.vision} onChange={setM('vision')} />

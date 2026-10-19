@@ -9,3 +9,6 @@ client/dist/
 client/public/avatars/*.png
 client/public/avatars/*.webp
 !client/public/avatars/.gitkeep
+
+client/test-results/
+client/playwright-report/

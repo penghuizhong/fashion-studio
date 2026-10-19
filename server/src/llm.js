@@ -120,7 +120,7 @@ const EXTRACT_SYSTEM = `你是记忆整理助手。根据当前 user.md、memory
 // 无可用 Key 时的统一提示（app.js 做上游 401 拦截时复用）
 export const NO_KEY_MESSAGE = '未配置 API Key：请在侧边栏底部「API 设置」中填写你的 Key（或由管理员在「设置 → 模型管理」中配置供应商）';
 
-async function postCompletions({ model, messages, temperature, stream, onToken, apiKey, baseUrl, signal, provider, maxTokens }) {
+async function postCompletions({ model, messages, temperature, stream, onToken, apiKey, baseUrl, signal, provider, maxTokens, strictCredentials = false }) {
 const cfg = getConfig();
 // v0.2.0: 平台默认 key/address 改读统一注册表（默认供应商）；env 做最终保底（老部署不断）
 // 优先级：调用方个人 Key（BYOK）> 默认供应商 > 服务器 .env
@@ -132,8 +132,8 @@ try {
     if (dp.baseUrl) platformBase = dp.baseUrl;
   }
 } catch {}
-const key = (apiKey || '').trim() || platformKey;
-const base = (baseUrl || '').trim().replace(/\/+$/, '') || platformBase;
+const key = (apiKey || '').trim() || (strictCredentials ? '' : platformKey);
+const base = (baseUrl || '').trim().replace(/\/+$/, '') || (strictCredentials ? '' : platformBase);
 if (!key && !cfg.mockLlm) throw new Error(NO_KEY_MESSAGE);
 // 上游请求最多 120s；调用方传了 signal（客户端断开）时一起联动取消
 const timeoutSignal = AbortSignal.timeout(120000);

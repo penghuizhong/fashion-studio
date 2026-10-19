@@ -1,5 +1,7 @@
 // Express 4 不捕获 async 路由的 reject（Node 22 下 unhandled rejection 直接崩进程）。
 // 所有 async handler 用 ah() 包一层，错误统一进集中错误处理中间件。
+import { randomUUID } from 'node:crypto';
+
 export const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // 集中错误处理：500 对外脱敏（不泄堆栈/SQL），4xx 透传业务 message
@@ -11,10 +13,14 @@ export function apiErrorHandler(err, req, res, next) {
     /* 忽略日志异常 */
   }
   if (res.headersSent) return next(err);
+  const requestId = randomUUID();
   const status = err && Number.isInteger(err.statusCode) && err.statusCode >= 400 && err.statusCode < 600
     ? err.statusCode
     : 500;
+  console.error('[request-id]', requestId);
   res.status(status).json({
-    error: status === 500 ? '服务器开小差了，请稍后再试' : String((err && err.message) || '请求失败'),
+    error: err.publicMessage || (status >= 500 ? '服务器开小差了，请稍后再试' : String((err && err.message) || '请求失败')),
+    code: err.code && err.publicMessage ? err.code : 'REQUEST_FAILED',
+    request_id: requestId,
   });
 }

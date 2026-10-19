@@ -89,21 +89,14 @@ function authHeaders() {
 // 用给定的 key / 地址动态拉取可用模型列表（OpenAI 兼容的 /models 接口）
 // 统一 HTTP 错误：5xx 对外脱敏（不展示后端堆栈/SQL）；错误对象带 .status 供调用方分支
 async function httpError(res, fallback) {
-  let msg;
-  if (res.status >= 500) {
-    msg = '服务器开小差了，请稍后再试';
-  } else {
-    msg = fallback || `请求失败 (${res.status})`;
-    try {
-      const data = await res.json();
-      if (data && data.message) msg = data.message;
-      else if (data && data.error) msg = data.error;
-    } catch {
-      /* 忽略解析错误 */
-    }
-  }
+  let msg = fallback || `请求失败 (${res.status})`, data = {};
+  try { data = await res.json(); } catch {}
+  if (res.status >= 500) msg = data.code && data.code !== 'REQUEST_FAILED' ? data.error : '服务器开小差了，请稍后再试';
+  else msg = data.message || data.error || msg;
   const err = new Error(msg);
   err.status = res.status;
+  err.code = data.code;
+  err.requestId = data.request_id;
   // 401：会话过期/失效，通知 App 跳回登录页（auth 相关接口自身不触发，避免循环）
   if (res.status === 401) {
     try {
@@ -424,11 +417,17 @@ export const api = {
     rate: (genId, rating) => post(`/api/studio/generations/${genId}/rate`, { rating }),
     // P4 发散创建
     exploreCreate: (data) => post('/api/studio/explore', data),
+    exploreRecovery: () => get('/api/admin/explore-recovery'),
+    exploreResolve: (type, id, body) => post(`/api/admin/explore-${type === 'image' ? 'items' : type === 'legacy' ? 'legacy' : 'expansions'}/${encodeURIComponent(id)}/resolve`, body),
+    exploreModels: () => get('/api/studio/explore-models'),
+    exploreQuote: (id, body) => post(`/api/studio/explore/${id}/quote`, body),
+    exploreJobs: (id) => get(`/api/studio/explore/${id}/jobs`),
+    exploreStart: (id, body) => post(`/api/studio/explore/${id}/render`, body),
     exploreGet: (id) => get(`/api/studio/explore/${id}`),
-    exploreList: (params = {}) => get(`/api/studio/explore${params.include_archived ? '?include_archived=1' : ''}`),
+    exploreList: (params = {}) => get(`/api/studio/explore?${new URLSearchParams(Object.entries(params).map(([k,v])=>[k,String(v)]))}`),
     exploreSelect: (id, indexes) => post(`/api/studio/explore/${id}/select`, { indexes }),
     exploreRender: (id, confirm, indexes) => post(`/api/studio/explore/${id}/render`, { confirm: !!confirm, indexes }),
-    exploreAdopt: (id, indexes) => post(`/api/studio/explore/${id}/adopt`, { indexes }),
+    exploreAdopt: (id, indexes, job_id) => post(`/api/studio/explore/${id}/adopt`, { indexes, job_id }),
     imageModels: () => get('/api/studio/image-models'),
     visionModels: () => get('/api/studio/vision-models'),
     // P5: DNA 类目预设

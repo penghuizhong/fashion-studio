@@ -10,6 +10,7 @@ function parsePreset(row) {
     name: row.name,
     fields: Array.isArray(fields) ? fields.filter((f) => f && f.key && f.label) : [],
     prompt: row.prompt || '',
+    expand_prompt: row.expand_prompt || '',
     sort_order: row.sort_order || 0,
     is_active: !!row.is_active,
   };

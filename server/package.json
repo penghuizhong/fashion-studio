@@ -13,8 +13,9 @@
   "private": true,
   "scripts": {
     "check": "node scripts/check.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "check:explore": "node scripts/check-explore.js"
   },
   "type": "module",
-  "version": "0.3.2"
+  "version": "0.4.0"
 }

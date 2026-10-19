@@ -467,6 +467,39 @@ export function getDb() {
   _db.exec(SCHEMA);
   migrateToUnifiedRegistry(_db);
   migrateAvatarPngToWebp(_db);
+  // Additive, transactional migrations: preserve all existing preset and batch values.
+  _db.transaction(() => {
+    for (const [table, columns] of Object.entries({
+      points_ledger: { accounting_delta: 'INTEGER' },
+      dna_presets: { expand_prompt: "TEXT NOT NULL DEFAULT ''" },
+      exploration_batches: { snapshot_json: "TEXT NOT NULL DEFAULT '{}'", adopted_json: "TEXT NOT NULL DEFAULT '{}'" },
+    })) {
+      const names = _db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+      for (const [name, type] of Object.entries(columns)) if (!names.includes(name)) _db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+    }
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS explore_expansions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, status TEXT NOT NULL, reserved INTEGER NOT NULL, usage_cost INTEGER DEFAULT 0, snapshot_json TEXT NOT NULL, lease_until INTEGER DEFAULT 0, batch_id INTEGER);
+      CREATE TABLE IF NOT EXISTS explore_quotes (
+        id TEXT PRIMARY KEY, batch_id INTEGER NOT NULL, user_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL, expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS explore_jobs (
+        id TEXT PRIMARY KEY, batch_id INTEGER NOT NULL, user_id TEXT NOT NULL,
+        request_key TEXT NOT NULL, quote_id TEXT NOT NULL, status TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL, lease_until INTEGER NOT NULL, created_at TEXT NOT NULL,
+        UNIQUE(user_id, request_key)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS explore_one_active ON explore_jobs(batch_id) WHERE status='running';
+      CREATE TABLE IF NOT EXISTS explore_items (
+        id TEXT PRIMARY KEY, job_id TEXT NOT NULL, proposal_idx INTEGER NOT NULL,
+        status TEXT NOT NULL, result_json TEXT NOT NULL, reserved INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(job_id, proposal_idx)
+      );
+    `);
+  })();
+  for (const [name,type] of Object.entries({lease_until:'INTEGER DEFAULT 0',batch_id:'INTEGER'})) {
+    if (!_db.prepare('PRAGMA table_info(explore_expansions)').all().some(c=>c.name===name)) _db.exec(`ALTER TABLE explore_expansions ADD COLUMN ${name} ${type}`);
+  }
   // ---- 轻量迁移：老库自动加列（新库不受影响） ----
   try {
     const convCols = _db.prepare('PRAGMA table_info(conversations)').all().map((c) => c.name);
