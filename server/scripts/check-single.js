@@ -720,7 +720,8 @@ export async function runSingle() {
     const filesOk = renders.length === 2 && renders.every((r) => r.image_path && fs.existsSync(path.join(process.env.DATA_DIR, r.image_path)));
     ok('E4. 无 confirm → 400 带预估；confirm → 200，2 张渲染图落盘',
       e4a.status === 400 && e4a.json && e4a.json.cost_estimate === 20 &&
-      e4missing.status === 400 && e4invalid.status === 400 && e4b.status === 200 && filesOk &&\n       e4repeat.status === 200 && e4repeat.json.reused === true && JSON.stringify(e4repeat.json.renders) === JSON.stringify(renders),
+      e4missing.status === 400 && e4invalid.status === 400 && e4b.status === 200 && filesOk &&
+       e4repeat.status === 200 && e4repeat.json.reused === true && JSON.stringify(e4repeat.json.renders) === JSON.stringify(renders),
       `a=${e4a.status} missing=${e4missing.status} invalid=${e4invalid.status} b=${e4b.status} repeat=${e4repeat.status} filesOk=${filesOk}`);
 
     // E5. 收卡：模板 draft + 首图进 history
