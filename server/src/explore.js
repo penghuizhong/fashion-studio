@@ -32,7 +32,7 @@ const AXIS_SEEDS = {
 
 function fieldsOf(preset) {
   const fs = preset && preset.fields && preset.fields.length ? preset.fields : null;
-  if (fs) return fs.map((f) => ({ key: f.key, label: f.label }));
+  if (fs) return fs.map((f) => ({ key: f.key, label: f.label, hint: f.hint || '' }));
   return LEGACY_DNA_FIELDS.map((k) => ({ key: k, label: k }));
 }
 
@@ -73,7 +73,7 @@ function mockExpand({ axes, count, preset }) {
 
 function buildExpandSystem(preset) {
   const fields = fieldsOf(preset);
-  const fieldDesc = fields.map((f) => `${f.key}(${f.label})`).join(', ');
+  const fieldDesc = fields.map((f) => `${f.key}(${f.label}${f.hint ? `；建议：${f.hint}` : ''})`).join('\n');
   const pname = (preset && preset.name) || '服装';
   return `你是服装设计师的灵感发散引擎。用户给出一句灵感（可能为空），你要把它发散成 N 个完整且互异的${pname}款式 DNA。
 
@@ -84,7 +84,9 @@ ${fieldDesc}。
 1. 只输出 JSON，格式：{"proposals": [{"dna": {${fields.length}字段}, "rationale": "一句话说明这个方案的差异点"}]}，不要 markdown 代码块之外的任何文字。
 2. N 个方案必须在指定的发散轴字段上两两互异（这是发散的核心，不许换汤不换药）。
 3. 非轴字段填与灵感自洽的合理值；灵感为空时按当季流行风格自由发散。
-4. confidence 按你对该取值的把握填写。`;
+4. confidence 按你对该取值的把握填写。
+5. 用户明确给出的款式、色彩、结构及面料约束必须被所有方案保留；只在指定发散轴上改变未锁定的属性。
+6. 每个字段必须存在，confidence 必须在 0 到 1 之间；返回恰好 N 个方案。${String(preset?.expand_prompt || "").trim() ? "\n类目发散补充规则：\n" + String(preset.expand_prompt).trim() : ""}`;
 }
 
 /**
@@ -123,11 +125,20 @@ export async function expandIntent({ intentText, axes, count, preset, model, api
     try {
       const parsed = JSON.parse(stripFences(text));
       const list = parsed && parsed.proposals;
-      if (!Array.isArray(list) || list.length === 0) throw new Error('上游返回为空');
-      const proposals = list.slice(0, n).map((p) => ({
+      if (!Array.isArray(list) || list.length !== n) throw new Error(`上游返回数量错误：期望 ${n}，实际 ${Array.isArray(list) ? list.length : 0}`);
+      const proposals = list.map((p) => {
+        if (!p || !p.dna || typeof p.dna !== 'object') throw new Error('候选 DNA 格式错误');
+        for (const f of fields) {
+          const v = p.dna[f.key];
+          if (!v || typeof v !== 'object' || !Object.hasOwn(v, 'value') || !Number.isFinite(v.confidence) || v.confidence < 0 || v.confidence > 1) throw new Error(`字段 ${f.key} 不符合 DNA Schema`);
+        }
+        return ({
         dna: normalizeDna(p && p.dna, preset),
         rationale: String((p && p.rationale) || '').slice(0, 200),
-      }));
+        });
+      });
+      const signatures = proposals.map((p) => JSON.stringify(ax.map((a) => p.dna[a]?.value)));
+      if (new Set(signatures).size !== n) throw new Error('发散轴组合不互异');
       return proposals;
     } catch (e) {
       lastErr = e;
@@ -145,7 +156,7 @@ export async function renderOne({ batch, proposalIdx, userId }) {
   const p = proposals[proposalIdx];
   if (!p) return { proposal_idx: proposalIdx, error: '候选不存在' };
   try {
-    const prompt = renderDnaPrompt(p.dna);
+    const prompt = renderDnaPrompt({ dna: p.dna, presetId: batch.preset_id, intentText: batch.intent_text });
     const result = await generateImage({
       userId,
       modelId: batch.render_model_id,
@@ -155,6 +166,7 @@ export async function renderOne({ batch, proposalIdx, userId }) {
     const files = await saveStudioImage(result.imageBase64, `ex_${batch.id}_${proposalIdx}_${Date.now()}.jpg`);
     return {
       proposal_idx: proposalIdx,
+      prompt_snapshot: prompt,
       image_path: files.image_path,
       thumb_path: files.thumb_path,
       seed: result.seed,
@@ -343,7 +355,7 @@ export function mountExploreRoutes(app) {
       if (r) {
         db.prepare(`INSERT INTO dna_generations(template_id,user_id,image_path,thumb_path,prompt_snapshot,seed,model_id,size,op,created_at)
           VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
-          tid, uid, r.image_path, r.thumb_path, '', r.seed, r.model, r.size, 'explore', now);
+          tid, uid, r.image_path, r.thumb_path, r.prompt_snapshot || '', r.seed, r.model, r.size, 'explore', now);
       }
       templateIds.push(tid);
     }
