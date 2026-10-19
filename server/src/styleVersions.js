@@ -29,7 +29,7 @@ export function styleTemplate(id, req) {
         .prepare("SELECT * FROM style_dna_templates WHERE id=? AND user_id=?")
         .get(id, req.userId || "local")
     : db.prepare("SELECT * FROM style_dna_templates WHERE id=?").get(id);
-  if (!t) throw problem("TEMPLATE_NOT_FOUND", "款式不存在", 404);
+  if (!t || t.lifecycle==='deleted') throw problem("TEMPLATE_NOT_FOUND", "款式不存在", 404);
   return ensureStyle(t);
 }
 export function ensureStyle(t) {
@@ -42,7 +42,7 @@ export function ensureStyle(t) {
     if (fresh.work_version_id) return fresh;
     const root = db
       .prepare(
-        "INSERT INTO style_versions(template_id,number,parent_id,dna_json,schema_json,preset_id,category,summary,status,created_at) VALUES(?,1,NULL,?,?,?,?,?,?,?)",
+        "INSERT INTO style_versions(template_id,number,parent_id,dna_json,schema_json,preset_id,category,summary,status,created_at,design_note) VALUES(?,1,NULL,?,?,?,?,?,?,?,?)",
       )
       .run(
         t.id,
@@ -56,6 +56,7 @@ export function ensureStyle(t) {
         "初始属性快照（既有图片未记录历史属性）",
         t.status,
         now(),
+        t.initial_design_note || "",
       );
     const cover = db
       .prepare(
@@ -118,7 +119,11 @@ export function saveVersion(t, b) {
     if (changed)
       changes.push({ key, before: previous[key]?.value, after: f.value });
   }
-  const signature = canonical({ parent_id: parent.id, dna: next });
+  if(b.design_note!==undefined && typeof b.design_note!=='string')throw problem('INVALID_INSTRUCTION','设计要求必须是文字');
+  const note = b.design_note === undefined ? (parent.design_note||'') : String(b.design_note).trim();
+  if(note.length>1200)throw problem('INVALID_INSTRUCTION','设计要求限1200字');
+  if(note!==(parent.design_note||''))changes.push({key:'design_note',before:parent.design_note||'',after:note});
+  const signature = canonical({ parent_id: parent.id, dna: next, design_note:note });
   return db.transaction(() => {
     const prior = db
       .prepare(
@@ -139,7 +144,7 @@ export function saveVersion(t, b) {
         .get(t.id).n;
       const r = db
         .prepare(
-          "INSERT INTO style_versions(template_id,number,parent_id,dna_json,schema_json,preset_id,category,summary,status,created_at) VALUES(?,?,?,?,?,?,?,?,'draft',?)",
+          "INSERT INTO style_versions(template_id,number,parent_id,dna_json,schema_json,preset_id,category,summary,status,created_at,design_note) VALUES(?,?,?,?,?,?,?,?,'draft',?,?)",
         )
         .run(
           t.id,
@@ -151,6 +156,7 @@ export function saveVersion(t, b) {
           parent.category,
           JSON.stringify(changes),
           now(),
+          note,
         );
       id = r.lastInsertRowid;
     }

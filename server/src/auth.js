@@ -1,3 +1,6 @@
+import { testRegisteredModel } from './modelTests.js';
+import path from 'node:path';
+import fs from 'node:fs';
 // 多用户模式：认证 / 会话 / 用户 Key 托管
 import crypto from 'node:crypto';
 import { randomUUID } from 'node:crypto';
@@ -690,48 +693,13 @@ export function mountAuthRoutes(app, authLimiter) {
 
   // v1.26.2: 模型连通测试 POST /api/admin/models/test { model_id }
   // 发一个最小请求验证模型可用，返回延迟和成功状态
-  app.post('/api/admin/models/test', needMulti, needLogin, needAdmin, ah(async (req, res) => {
-    const { model_id } = req.body || {};
-    if (!model_id || !String(model_id).trim()) {
-      return res.status(400).json({ error: 'model_id 不能为空' });
-    }
-    const cfg = getConfig();
-    // 管理员测试用服务器默认 Key（简化：不走用户 key）
-    const apiKey = cfg.apiKey;
-    const baseUrl = cfg.baseUrl;
-    if (!apiKey && !cfg.mockLlm) {
-      return res.status(401).json({ error: '服务器未配置 API Key' });
-    }
-    if (cfg.mockLlm) {
-      return res.json({ ok: true, latency: 10, reply: 'mock' });
-    }
-    const t0 = Date.now();
-    try {
-      const r = await llmFetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: String(model_id).trim(),
-          messages: [{ role: 'user', content: 'hi' }],
-          max_tokens: 5,
-        }),
-        signal: AbortSignal.timeout(30000),
-      });
-      const latency = Date.now() - t0;
-      if (!r.ok) {
-        const t = await r.text().catch(() => '');
-        return res.json({ ok: false, latency, error: `HTTP ${r.status}: ${t.slice(0, 200)}` });
-      }
-      const j = await r.json().catch(() => null);
-      const reply = j?.choices?.[0]?.message?.content || '';
-      res.json({ ok: true, latency, reply: reply.slice(0, 100) });
-    } catch (e) {
-      res.json({ ok: false, latency: Date.now() - t0, error: String((e && e.message) || e).slice(0, 200) });
-    }
-  }));
+  app.post('/api/admin/models/test', needMulti, needLogin, needAdmin, ah(async (req,res)=>res.json(await testRegisteredModel(req))));
+  app.get('/api/admin/models/:id/test-preview',needMulti,needLogin,needAdmin,(req,res)=>{
+    const row=getDb().prepare('SELECT preview_path FROM model_capability_checks WHERE model_id=? AND task=?').get(req.params.id,req.query.task);
+    const root=path.resolve(getConfig().dataDir,'uploads/studio'), file=path.resolve(getConfig().dataDir,row?.preview_path||'');
+    if(!file.startsWith(root+path.sep)||!fs.existsSync(file))return res.status(404).json({error:'测试图片不存在'});
+    res.setHeader('Cache-Control','private, no-store'); res.sendFile(file);
+  });
 
   // GET /api/admin/users：管理员查看用户列表（q 可选，按用户名模糊搜）
   app.get('/api/admin/users', needMulti, needLogin, needAdmin, (req, res) => {

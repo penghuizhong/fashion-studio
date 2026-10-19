@@ -1,3 +1,7 @@
+import { imageTaskAllowed,sizeAllowed } from '../../../shared/imageOptions.js';
+import { StateTabs,CardMenu,useLifecycleActions } from './StudioLifecycle.jsx';
+import ImageOutputOptions from './ImageOutputOptions.jsx';
+import StudioImage from './StudioImage.jsx';
 import CameraSettings from './CameraSettings.jsx';
 import { DEFAULT_CAMERA } from '../../../shared/photography.js';
 import { sanitizeExploreDraft } from './exploreDraft.js';
@@ -15,6 +19,7 @@ import { fmtDnaValue } from './DnaFields.js';
 
 const adoptedIndexes = (batch, job) => {
   const map = json(batch?.adopted_json || '{}', {});
+  for(const key of Object.keys(map))if(batch?.adopted_templates?.[key]?.lifecycle==='deleted')delete map[key];
   return (job?.renders || []).filter(r => map[r.item_id || `proposal_${r.proposal_idx}`]).map(r => r.proposal_idx);
 };
 const imgUrl = (p) => (p ? `/${p}` : '');
@@ -63,8 +68,10 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
   const { user, multiUser } = useAuth();
   const draftKey = `explore-draft-v1:${multiUser ? user?.id || user?.username : 'local'}`;
   const restored = useRef(false), currentTask = useRef(null), batchLoad = useRef(0);
-  const inputDraft = () => ({presetId,intent,axes,count,locked,expandId,thinking,renderId,size,camera});
-  const restoreInputs = c => {setPresetId(c.presetId);setIntent(c.intent);setAxes(c.axes);setCount(c.count);setLocked(c.locked);setLockKeys(Object.keys(c.locked || {}));setExpandId(expandModels.some(m => m.id === c.expandId) ? c.expandId : expandModels[0]?.id || '');setThinking(c.thinking);setRenderId(c.renderId);setSize(c.size);setCamera(c.camera||{...DEFAULT_CAMERA});};
+  const inputDraft = () => ({presetId,intent,axes,count,locked,expandId,thinking,renderId,size,quality,camera});
+  const restoreInputs = c => {setPresetId(c.presetId);setIntent(c.intent);setAxes(c.axes);setCount(c.count);setLocked(c.locked);setLockKeys(Object.keys(c.locked || {}));setExpandId(expandModels.some(m => m.id === c.expandId) ? c.expandId : expandModels[0]?.id || '');setThinking(c.thinking);setRenderId(c.renderId);setSize(c.size);setQuality(c.quality||'');setCamera(c.camera||{...DEFAULT_CAMERA});};
+  const [historyState,setHistoryState]=useState('active'),[historyRefresh,setHistoryRefresh]=useState(0);
+  const lifecycleActions=useLifecycleActions({onChanged:()=>setHistoryRefresh(n=>n+1),showToast});
   const [tab, setTab] = useState('new'),
     [step, setStep] = useState('intent');
   const [presets, setPresets] = useState([]),
@@ -78,6 +85,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
   const [imgModels, setImgModels] = useState([]),
     [renderId, setRenderId] = useState(''),
     [size, setSize] = useState('');
+  const [quality,setQuality]=useState('');
   const [batch, setBatch] = useState(null),
     [selected, setSelected] = useState([]),
     [job, setJob] = useState(null),
@@ -153,12 +161,13 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
         if (!alive) return;
         setImgModels(r.models || []);
         const m =
-          (r.models || []).find((x) => x.id === renderId) ||
-          (r.models || []).find((x) => x.price_per_call !== null);
-        if (renderId && !r.models?.some(x => x.id === renderId)) setError('原图片模型已不可用，请确认当前模型及尺寸后生成');
+          (r.models || []).find((x) => x.id === renderId&&imageTaskAllowed(x.capabilities,0)) ||
+          (r.models || []).find(x=>imageTaskAllowed(x.capabilities,0)&&x.capabilities?.default_for?.includes('text')) ||
+          (r.models || []).find((x) => x.price_per_call !== null&&imageTaskAllowed(x.capabilities,0));
+        if (renderId && !r.models?.some(x => x.id === renderId&&imageTaskAllowed(x.capabilities,0))) setError('原图片模型已不可用，请确认当前模型及尺寸后生成');
         setRenderId(m?.id || '');
         setSize((previous) =>
-          m?.sizes?.includes(previous) ? previous : m?.sizes?.[0] || ''
+          m && sizeAllowed(m.capabilities,previous) ? previous : m?.sizes?.[0] || ''
         );
       })
       .catch(fail);
@@ -173,18 +182,18 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     setQuoteLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const r = await api.studio.exploreQuote(batch.id, { indexes: selected, render_model_id: renderId, render_size: size, source_job_id: retrySource, ...(retrySource ? {} : {camera}) });
+        const r = await api.studio.exploreQuote(batch.id, { indexes: selected, render_model_id: renderId, render_size: size, quality, source_job_id: retrySource, ...(retrySource ? {} : {camera}) });
         if (alive) { setQuote(r.quote); setRequestKey(crypto.randomUUID()); setError(''); }
       } catch (e) { if (alive) fail(e); }
       finally { if (alive) setQuoteLoading(false); }
     }, 350);
     return () => { alive = false; clearTimeout(timer); };
-  }, [step, batch?.id, renderId, size, selected.join(','), retrySource, active, quoteVersion, JSON.stringify(camera)]);
+  }, [step, batch?.id, renderId, size, quality, selected.join(','), retrySource, active, quoteVersion, JSON.stringify(camera)]);
   useEffect(() => {
     if (tab !== 'history') return;
     let alive = true;
     api.studio
-      .exploreList()
+      .exploreList({state:historyState})
       .then((r) => {
         if (!alive) return;
         setBatches(r.batches || []);
@@ -192,7 +201,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
       })
       .catch(e => { if(alive) fail(e); });
     return () => { alive = false; };
-  }, [tab]);
+  }, [tab,historyState,historyRefresh]);
   useEffect(() => {
     if (!active || !batch) return;
     let alive = true;
@@ -207,7 +216,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
           if (current.status !== 'running')
             setAdoptSel(
               current.renders
-                .filter((x) => x.status === 'succeeded' && !adopted.includes(x.proposal_idx))
+                .filter((x) => x.status === 'succeeded' && x.image_available!==false && !adopted.includes(x.proposal_idx))
                 .map((x) => x.proposal_idx)
             );
         }
@@ -243,7 +252,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
       if (presets.some(p => p.id === saved.presetId)) { setPresetId(saved.presetId); setAxes(saved.axes || []); setLocked(saved.locked || {});setLockKeys(Object.keys(saved.locked || {})); }
       setIntent(saved.intent || ''); setCount(saved.count || 6); setThinking(!!saved.thinking);
       if (expandModels.some(m => m.id === saved.expandId)) setExpandId(saved.expandId);
-      setRenderId(saved.renderId || ''); setSize(saved.size || '');setCamera(saved.camera||{...DEFAULT_CAMERA});
+      setRenderId(saved.renderId || ''); setSize(saved.size || '');setQuality(saved.quality||'');setCamera(saved.camera||{...DEFAULT_CAMERA});
       if (saved.batchId) loadBatch(saved.batchId, saved.jobId).then(() => {
         restoreInputs(saved);
         setSelected(saved.selected || []);
@@ -256,10 +265,10 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     if (!restored.current) return;
     try {
       const c = currentTask.current;
-      const saved = c ? {...c.inputs,batchId:c.batch?.id,jobId:c.job?.id,selected:c.selected,adopted:c.adopted,step:c.step} : {presetId,intent,axes,count,locked,expandId,thinking,renderId,size,camera,batchId:batch?.id,jobId:job?.id,selected,adopted,step};
+      const saved = c ? {...c.inputs,batchId:c.batch?.id,jobId:c.job?.id,selected:c.selected,adopted:c.adopted,step:c.step} : {presetId,intent,axes,count,locked,expandId,thinking,renderId,size,quality,camera,batchId:batch?.id,jobId:job?.id,selected,adopted,step};
       sessionStorage.setItem(draftKey, JSON.stringify({...saved,expansionRequest:expansionRequest.current,savedAt:Date.now()}));
     } catch { /* private browsing may disable storage */ }
-  }, [presetId,intent,axes,count,locked,expandId,thinking,renderId,size,batch?.id,job?.id,selected,adopted,step,busy,JSON.stringify(camera)]);
+  }, [presetId,intent,axes,count,locked,expandId,thinking,renderId,size,quality,batch?.id,job?.id,selected,adopted,step,busy,JSON.stringify(camera)]);
   useEffect(() => {
     if (!quote) return;
     const timer = setTimeout(() => { setQuote(null); setQuoteVersion(v => v + 1); }, Math.max(0, quote.expires_at - Date.now()));
@@ -375,23 +384,19 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
       if (latest) {
         setJob(latest);
         setCamera(latest.snapshot?.camera || {...DEFAULT_CAMERA});
-        setRenderId(latest.snapshot?.model?.id || '');setSize(latest.snapshot?.size || '');
+        setRenderId(latest.snapshot?.model?.id || '');setSize(latest.snapshot?.size || '');setQuality(latest.snapshot?.quality||'');
         setAdopted(adoptedIndexes(b, latest));
         setStep('results');
         setAdoptSel(
           latest.renders
-            .filter((x) => x.status === 'succeeded' && !adoptedIndexes(b, latest).includes(x.proposal_idx))
+            .filter((x) => x.status === 'succeeded' && x.image_available!==false && !adoptedIndexes(b, latest).includes(x.proposal_idx))
             .map((x) => x.proposal_idx)
         );
       } else if (json(b.renders_json, []).length) {
-        setJob({
-          id: 'legacy',
-          status: 'succeeded',
-          renders: json(b.renders_json, []).map((x) => ({
-            ...x,
-            status: x.error ? 'failed' : 'succeeded',
-          })),
-        });
+        const legacy={id:'legacy',status:'succeeded',renders:json(b.renders_json,[]).map(x=>({...x,status:x.error?'failed':'succeeded'}))};
+        setJob(legacy);
+        const collected=adoptedIndexes(b,legacy);setAdopted(collected);
+        setAdoptSel(legacy.renders.filter(x=>x.status==='succeeded'&&x.image_available!==false&&!collected.includes(x.proposal_idx)).map(x=>x.proposal_idx));
         setStep('results');
       } else {
         setJob(null);
@@ -460,7 +465,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
   const retry = () => {
     setRetrySource(job.id);
     setRenderId(job.snapshot.model.id);
-    setSize(job.snapshot.size);
+    setSize(job.snapshot.size);setQuality(job.snapshot.quality||'');
     setSelected(
       images.filter((r) => r.status === 'failed').map((r) => r.proposal_idx)
     );
@@ -572,6 +577,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
           {step === 'render' && !quote && !quoteLoading && <button className="btn secondary" onClick={() => setQuoteVersion(v => v + 1)} disabled={busy || !renderId || !size || !selected.length}>重新获取报价</button>}
         </footer>)}>
       <div className="modal-body" ref={bodyRef} tabIndex={-1} aria-label={tab === 'history' ? '历史记录' : titles[steps.indexOf(step)]}>
+          {lifecycleActions.modal}
           {error && (
             <div id="explore-error" role="alert" className="explore-render-err">
               {error}
@@ -579,9 +585,10 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
           )}
           {tab === 'history' ? (
             <>
-              {!batches.length && <p>还没有发散批次</p>}
+              <StateTabs value={historyState} onChange={setHistoryState}/>
+              {!batches.length && <p>此分类暂无发散批次</p>}
               {batches.map((b) => (
-                <button
+                <div className="explore-history-row" key={b.id}><CardMenu name={`批次${b.id}`} items={historyState==='trash'?[{label:'还原批次',action:()=>lifecycleActions.perform('explore',b,'restore')},{label:'永久删除',action:()=>lifecycleActions.perform('explore',b,'delete')}]:[{label:historyState==='archived'?'恢复使用':'归档',action:()=>lifecycleActions.perform('explore',b,historyState==='archived'?'activate':'archive')},{label:'删除（移入回收站）',action:()=>lifecycleActions.perform('explore',b,'trash')}]}/><button
                   key={b.id}
                   className="explore-batch-row"
                   disabled={busy}
@@ -590,16 +597,16 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                     loadBatch(b.id);
                   }}
                 >
-                  {b.thumb_path && <img loading="lazy" src={imgUrl(b.thumb_path)} alt="" className="explore-history-thumb" />}
+                  {(b.thumb_path||b.image_path)?<StudioImage thumbnail={b.thumb_path} original={b.image_path} loading="lazy" alt="历史预览" className="explore-history-thumb"/>:b.success_count>0?<span className="history-missing">原图缺失</span>:null}
                   <span>
                     {b.intent_text || '随机灵感'}
                     <small className="dim">
                       {' '}
-                      · {presets.find(p => p.id === b.preset_id)?.name || '历史类目'} · {b.proposal_count} 个方案 · {b.success_count || 0} 张成功 · {stateName(b.status)} · {b.created_at}
+                      · {presets.find(p => p.id === b.preset_id)?.name || '历史类目'} · {b.proposal_count} 个方案 · {b.success_count || 0} 张成功 · 原图可用 {b.available_count || 0} 张{b.missing_count>0?` · 缺失 ${b.missing_count} 张`:""} · {stateName(b.status)} · {new Date(b.created_at).toLocaleString()}
                     </small>
                   </span>
                   <Icon name="chevronRight" size={18} />
-                </button>
+                </button></div>
               ))}
               {moreHistory && (
                 <button
@@ -609,6 +616,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                     setBusy(true);
                     try {
                       const r = await api.studio.exploreList({
+                        state:historyState,
                         offset: batches.length,
                         limit: 20,
                       });
@@ -907,7 +915,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                       aria-label="图片模型"
                       value={renderId}
                       onChange={(e) => {
-                        setRenderId(e.target.value);
+                        setRenderId(e.target.value);setQuality('');
                         setSize(
                           imgModels.find((x) => x.id === e.target.value)
                             ?.sizes?.[0] || ''
@@ -919,10 +927,10 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                         <option
                           key={m.id}
                           value={m.id}
-                          disabled={m.price_per_call === null}
+                          disabled={m.price_per_call === null||!imageTaskAllowed(m.capabilities,0)}
                         >
                           {modelName(m)}（
-                          {m.price_per_call === null
+                          {m.variable_pricing?'分档计费，以报价为准':m.price_per_call === null
                             ? '价格未配置'
                             : `${m.price_per_call} 积分/张`}
                           ）
@@ -930,21 +938,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                       ))}
                     </select>
                   </label>
-                  <label className="key-label">
-                    图片尺寸
-                    <select
-                      className="text-input"
-                      aria-label="图片尺寸"
-                      value={size}
-                      onChange={(e) => setSize(e.target.value)}
-                    >
-                      {selectedModel?.sizes.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <ImageOutputOptions model={selectedModel} size={size} quality={quality} onChange={v=>{if(v.size!==undefined)setSize(v.size);if(v.quality!==undefined)setQuality(v.quality);}} />
                   {!imgModels.length && (
                     <p>暂无可用图片模型，请先在模型管理中配置。</p>
                   )}
@@ -1001,14 +995,14 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                       <div className="explore-render-item" key={r.proposal_idx}><div
                         data-status={r.status} className={`explore-render-card${adoptSel.includes(r.proposal_idx) ? ' checked' : ''}`}
                         onClick={() =>
-                          r.status === 'succeeded' && setViewer({path:r.image_path, name:`方案 ${r.proposal_idx + 1}`})
+                          r.status === 'succeeded' && r.image_available!==false && setViewer({path:r.image_path, name:`方案 ${r.proposal_idx + 1}`})
                         }
                       >
                         {r.status === 'succeeded' ? (
                           <>
-                            <img
-                              src={imgUrl(r.thumb_path || r.image_path)}
-                              role="button" tabIndex={0} onKeyDown={e => { if (['Enter', ' '].includes(e.key)) {e.preventDefault();setViewer({path:r.image_path,name:`方案 ${r.proposal_idx + 1}`});} }}
+                            <StudioImage
+                              thumbnail={r.thumb_available===false?null:r.thumb_path} original={r.image_available===false?null:r.image_path}
+                              role="button" tabIndex={0} onKeyDown={e => { if (r.image_available!==false&&['Enter', ' '].includes(e.key)) {e.preventDefault();setViewer({path:r.image_path,name:`方案 ${r.proposal_idx + 1}`});} }}
                               loading="lazy" alt={`候选 ${r.proposal_idx + 1}，点击查看原图`}
                             />
                             <label
@@ -1017,7 +1011,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                             >
                               <input
                                 type="checkbox"
-                                disabled={adopted.includes(r.proposal_idx)}
+                                disabled={adopted.includes(r.proposal_idx)||r.image_available===false}
                                 aria-label={`收取候选${r.proposal_idx + 1}`}
                                 checked={adoptSel.includes(r.proposal_idx)}
                                 onClick={(e) => e.stopPropagation()}
@@ -1037,7 +1031,8 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                       </div>
                       <details><summary>设计摘要</summary>{proposals[r.proposal_idx]?.rationale || '历史方案'} </details>
                       <p>方案 {r.proposal_idx + 1} · {adopted.includes(r.proposal_idx) ? '已收卡' : stateName(r.status)}</p>
-                      {r.status==='succeeded'&&<OriginalImageLink path={r.image_path}/> }
+                      {r.image_available===false?<p role="status">{r.thumb_available?'仅缩略图可用 · 原图缺失':'图片文件缺失'}，请从备份恢复</p>:r.status==='succeeded'&&<OriginalImageLink path={r.image_path}/>}
+                      {['archived','trash'].includes(batch?.adopted_templates?.[r.item_id||`proposal_${r.proposal_idx}`]?.lifecycle)&&<button onClick={async()=>{const t=batch.adopted_templates[r.item_id||`proposal_${r.proposal_idx}`];await lifecycleActions.perform('templates',t,t.lifecycle==='trash'?'restore':'activate');await loadBatch(batch.id,job.id);}}>恢复已收款式</button>}
                       </div>
                     ))}
                   </div>

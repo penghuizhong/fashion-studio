@@ -27,6 +27,9 @@ jobs:
       - name: Style versions, billing and migration regression
         working-directory: server
         run: npm run check:style
+      - name: Studio lifecycle and image capability regression
+        working-directory: server
+        run: npm run check:studio
       - name: Build client
         working-directory: client
         run: |

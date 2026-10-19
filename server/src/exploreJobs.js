@@ -1,3 +1,6 @@
+import { imageTaskAllowed } from '../../shared/imageOptions.js';
+import { imageAvailability,studioFileExists } from './imageLifecycle.js';
+import { chooseOutput } from './imageCapabilities.js';
 import fs from "node:fs";
 import path from "node:path";
 import { recordStyleImage } from "./styleVersions.js";
@@ -35,7 +38,7 @@ export function requireBatch(id, req) {
         .prepare("SELECT * FROM exploration_batches WHERE id=? AND user_id=?")
         .get(id, owner(req))
     : db.prepare("SELECT * FROM exploration_batches WHERE id=?").get(id);
-  if (!b || b.workflow_kind === "style")
+  if (!b || b.lifecycle==='deleted' || b.workflow_kind === "style")
     throw problem("BATCH_NOT_FOUND", "批次不存在", 404);
   return b;
 }
@@ -54,7 +57,7 @@ export function jobView(id) {
     status: j.status,
     created_at: j.created_at,
     snapshot: JSON.parse(j.snapshot_json),
-    renders: rows.map((i) => ({
+    renders: rows.map((i) => imageAvailability({
       ...JSON.parse(i.result_json),
       status: i.status,
       item_id: i.id,
@@ -163,6 +166,7 @@ export function recoverExploreJobs() {
 export function makeQuote(batch, req, b, context = null) {
   if (batch.workflow_kind === "style" && !context)
     throw problem("STYLE_CONTEXT_REQUIRED", "请从款式衍生工作区生成");
+  if(batch.lifecycle!=='active')throw problem("RESTORE_REQUIRED","请先恢复批次再生成",409);
   recoverExploreJobs();
   const db = getDb(),
     proposals = JSON.parse(batch.proposals_json);
@@ -213,9 +217,12 @@ export function makeQuote(batch, req, b, context = null) {
     b.render_model_id || source?.snapshot.model.id || batch.render_model_id,
     "image",
   );
+  const inputCount=context?.style?.source_path?1+(context.style.references||[]).length:0;
+  if(!imageTaskAllowed(model.capabilities,inputCount))throw problem('MODEL_CAPABILITY_UNAVAILABLE','所选模型不支持此任务，或该功能最近验证失败，请更换模型或复测',422);
   const size = b.render_size || source?.snapshot.size || model.sizes[0];
-  if (!model.sizes.includes(size))
-    throw problem("INVALID_SIZE", "所选模型不支持该尺寸");
+  const quality = b.quality ?? source?.snapshot.quality ?? "";
+  const output = chooseOutput(model, size, quality);
+  if(source && (size !== source.snapshot.size || quality !== (source.snapshot.quality || ""))) throw problem("INVALID_RETRY", "重试沿用原尺寸和质量，请新建生成");
   const camera = source ? source.snapshot.camera : normalizeCamera(b.camera);
   if (
     source &&
@@ -225,13 +232,14 @@ export function makeQuote(batch, req, b, context = null) {
     throw problem("INVALID_RETRY", "重试沿用原取景设置，调整取景请新建生成");
   if (camera && !source && !context)
     validateCameraIntent(camera, batch.intent_text);
-  const unit = model.billable ? model.price_per_call : 0;
+  const unit = model.billable ? output.unit : 0;
   const payload = {
     indexes,
     ...(context?.style ? { style: context.style } : {}),
     ...(camera ? { camera } : {}),
     model: publicModel(model),
     size,
+    quality,
     unit_price: unit,
     total: indexes.length * unit,
     pricing_version: JSON.stringify(model.pricing),
@@ -261,13 +269,10 @@ export function makeQuote(batch, req, b, context = null) {
     expires_at: Date.now() + 5 * 60 * 1000,
   };
   const id = randomUUID();
-  db.prepare("INSERT INTO explore_quotes VALUES(?,?,?,?,?)").run(
-    id,
-    batch.id,
-    owner(req),
-    JSON.stringify(payload),
-    payload.expires_at,
-  );
+  db.transaction(()=>{
+    for(const file of [payload.style?.source_path,...(payload.style?.references||[]).map(r=>r.path)].filter(Boolean))if(!studioFileExists(file))throw problem('SOURCE_MISSING','参考图片已失效，请重新选择',404);
+    db.prepare("INSERT INTO explore_quotes VALUES(?,?,?,?,?)").run(id,batch.id,owner(req),JSON.stringify(payload),payload.expires_at);
+  }).immediate();
   return { id, ...payload };
 }
 const running = new Map();
@@ -312,9 +317,11 @@ export async function executeJob(id, model) {
         modelId: model.id,
         prompt: result.prompt_snapshot,
         size: q.size,
+        quality: q.quality,
         seed: result.seed,
         executionModel: {
           ...model,
+          price_per_call: q.unit_price,
           prompt_extend: q.effective_prompt_extend ?? model.prompt_extend,
           provider:
             model.provider === "dashscope" ? "dashscope" : "openai_compatible",
@@ -437,6 +444,9 @@ export function startJob(batch, req, b) {
   if (b.confirm !== true) throw problem("CONFIRM_REQUIRED", "请确认费用后重试");
   const id = randomUUID();
   db.transaction(() => {
+    const currentBatch=db.prepare('SELECT lifecycle FROM exploration_batches WHERE id=?').get(batch.id);
+    const styleState=q.style?db.prepare('SELECT lifecycle FROM style_dna_templates WHERE id=?').get(q.style.template_id)?.lifecycle:'active';
+    if(currentBatch?.lifecycle!=='active'||styleState!=='active')throw problem('RESTORE_REQUIRED','任务所属内容已归档或移除，请先恢复后重新确认',409);
     if (
       db
         .prepare(

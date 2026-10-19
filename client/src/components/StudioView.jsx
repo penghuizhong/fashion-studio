@@ -1,3 +1,4 @@
+import { StateTabs,CardMenu,useLifecycleActions } from './StudioLifecycle.jsx';
 import StudioImage from './StudioImage.jsx';
 import StyleWorkspace from './StyleWorkspace.jsx';
 // v0.1.0: 设计台——款式克隆 DNA 模板工作台
@@ -299,6 +300,7 @@ function CloneModal({ onClose, onSaved, showToast }) {
 // ---------- 主视图：卡片流 ----------
 export default function StudioView({ showToast, onOpenSidebar }) {
   const [templates, setTemplates] = useState([]);
+  const [lifecycle,setLifecycle]=useState('active');
   const hasLoaded=useRef(false);
   const [loading, setLoading] = useState(true);
   const [cloneOpen, setCloneOpen] = useState(false);
@@ -309,14 +311,15 @@ export default function StudioView({ showToast, onOpenSidebar }) {
   const load = useCallback(async () => {
     if(!hasLoaded.current)setLoading(true);
     try {
-      const r = await api.studio.listTemplates();
+      const r = await api.studio.listTemplates(lifecycle);
       setTemplates(r.templates || []);
     } catch (e) {
       showToast(e.message || '加载失败');
     } finally {
       hasLoaded.current=true;setLoading(false);
     }
-  }, [showToast]);
+  }, [showToast,lifecycle]);
+  const lifecycleActions=useLifecycleActions({onChanged:load,showToast});
   useEffect(() => { load(); }, [load]);
 
   return (
@@ -339,12 +342,14 @@ export default function StudioView({ showToast, onOpenSidebar }) {
           )}
         </div>
       </div>
+      <StateTabs value={lifecycle} onChange={setLifecycle}/>
+      {lifecycleActions.modal}
       {loading ? (
         <div className="studio-loading"><div className="spinner" /><p>加载中…</p></div>
       ) : templates.length === 0 ? (
         <div className="studio-empty">
           <Icon name="sparkles" size={40} />
-          <p>还没有款式卡</p>
+          <p>{lifecycle==='trash'?'回收站为空':lifecycle==='archived'?'暂无归档款式':'还没有款式卡'}</p>
           <p className="dim">传一张趋势图，AI 提取款式 DNA，一键开始生产</p>
           <button className="btn secondary" onClick={() => setCloneOpen(true)}>
             <Icon name="plus" size={16} /> 解析款式
@@ -355,15 +360,27 @@ export default function StudioView({ showToast, onOpenSidebar }) {
           {templates.map((t) => (
             <div key={t.id} className="studio-card" data-style-id={t.id} role="button" tabIndex={0} aria-label={`查看${t.name}原图`} onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openCard(t);}}} onClick={() => openCard(t)}>
               <div className="studio-card-cover">
+                <CardMenu name={t.name} items={lifecycle==='trash'?[
+                  {label:'还原款式',action:()=>lifecycleActions.perform('templates',t,'restore')},
+                  {label:'永久删除',action:()=>lifecycleActions.perform('templates',t,'delete')},
+                ]:[
+                  {label:'重命名',action:async()=>{const name=window.prompt('款式名称',t.name);if(!name?.trim())return;try{await api.studio.updateTemplate(t.id,{name:name.trim()});await load();}catch(e){showToast(e.message);}}},
+                  {label:'更换展示图',action:()=>setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,panel:'versions'})},
+                  {label:'另存为新款式',action:async()=>{try{const w=await api.studio.workspace(t.id);const r=await api.studio.forkStyle(t.id,{version_id:w.template.work_version_id,name:t.name+' 副本',generation_id:t.image_available?w.template.cover_generation_id||undefined:undefined,attributes_only:!t.image_available});showToast('已另存为新款式');await load();}catch(e){showToast(e.message);}}},
+                  {label:lifecycle==='archived'?'恢复使用':'归档款式',action:()=>lifecycleActions.perform('templates',t,lifecycle==='archived'?'activate':'archive')},
+                  {label:'删除（移入回收站）',action:()=>lifecycleActions.perform('templates',t,'trash')},
+                ]}/>
+
                 {(t.last_thumb || t.source_image_path) ? (
                   <StudioImage thumbnail={t.last_thumb || t.source_thumb_path} original={t.last_image || t.source_image_path} alt={t.name} loading="lazy" />
                 ) : (
-                  <div className="studio-card-nocover"><Icon name="sparkles" size={28} /></div>
+                  <div className="studio-card-nocover"><span>{t.image_state==='missing'?'原图文件缺失':'尚未生成图片'}</span></div>
                 )}
                 <em className={`status-badge ${t.status}`}>{t.status === 'final' ? '定稿' : '培育中'}</em>
               </div>
               <div className="studio-card-body">
                 <div className="studio-card-name">{t.name}</div>
+                {t.image_state==='thumbnail_only'&&<p className="dim small">仅缩略图可用 · 原图缺失</p>}
                 <button className="btn secondary small" onClick={e=>{e.stopPropagation();setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,panel:'attributes'});}}>款式属性</button>
                 <div className="studio-card-tags">
                   {t.category && <span className="tag">{t.category}</span>}

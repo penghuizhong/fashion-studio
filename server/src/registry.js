@@ -1,3 +1,4 @@
+import { modelSignature, imageOptions } from './imageCapabilities.js';
 // v0.2.0: 统一模型注册表——供应商（providers）→ 模型（models）两层
 // 替代：.env 直读（聊天 key/address）、points_models（聊天模型定价）、image_models（图片模型）
 // 密钥 AES-256-GCM 只写不读；对外一律掩码。
@@ -172,7 +173,7 @@ export function deleteProvider(id) {
   const n = db.prepare('SELECT COUNT(*) c FROM models WHERE provider_id=? AND is_active=1').get(id).c;
   // 级联下架其模型（不硬删，防历史计费断链），再删供应商
   db.prepare('UPDATE models SET is_active=0 WHERE provider_id=?').run(id);
-  db.prepare('DELETE FROM providers WHERE id=?').run(id);
+  db.prepare('UPDATE providers SET is_active=0,is_default=0 WHERE id=?').run(id);
   return { ok: true, deactivatedModels: n };
 }
 
@@ -189,7 +190,10 @@ function parseJson(s, fb) {
 
 function shapeModel(r) {
   if (!r) return null;
+  const signature = modelSignature({provider_id:r.provider_id,model_id:r.model_id,kind:r.kind,extra:parseJson(r.extra_json,{})},getDb().prepare('SELECT * FROM providers WHERE id=?').get(r.provider_id));
+  const checks = getDb().prepare('SELECT task,signature,status,message,created_at,preview_path FROM model_capability_checks WHERE model_id=?').all(r.id).map(c=>({task:c.task,status:c.signature===signature?c.status:'stale',message:c.signature===signature?c.message:'配置已变化，请重新测试',created_at:c.created_at,preview:c.preview_path?`/api/admin/models/${r.id}/test-preview?task=${c.task}`:null}));
   return {
+    checks,
     id: r.id,
     provider_id: r.provider_id,
     provider_name: r.provider_name || '',
@@ -229,6 +233,7 @@ export function createModel({ provider_id, kind, model_id, name, pricing, extra,
   if (!mid) throw new Error('模型 ID 不能为空');
   const dup = db.prepare('SELECT 1 FROM models WHERE provider_id=? AND model_id=?').get(provider_id, mid);
   if (dup) throw new Error('该供应商下模型 ID 已存在');
+  validateImageConfig(extra, pricing);
   const id = 'model_' + randomUUID().replace(/-/g, '').slice(0, 12);
   db.prepare(
     'INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)'
@@ -236,6 +241,7 @@ export function createModel({ provider_id, kind, model_id, name, pricing, extra,
     JSON.stringify(pricing && typeof pricing === 'object' ? pricing : {}),
     JSON.stringify(extra && typeof extra === 'object' ? extra : {}),
     1, Math.floor(Number(sort_order)) || 0, now());
+  syncImageDefaults(id,extra);
   return getModel(id);
 }
 
@@ -243,6 +249,7 @@ export function updateModel(id, patch = {}) {
   const db = getDb();
   const cur = db.prepare('SELECT * FROM models WHERE id=?').get(id);
   if (!cur) throw new Error('模型不存在');
+  validateImageConfig(patch.extra ?? parseJson(cur.extra_json,{}), patch.pricing ?? parseJson(cur.pricing_json,{}));
   const upd = {};
   if (patch.provider_id !== undefined) {
     const pv = db.prepare('SELECT id FROM providers WHERE id=?').get(patch.provider_id);
@@ -261,11 +268,12 @@ export function updateModel(id, patch = {}) {
   if (patch.sort_order !== undefined) upd.sort_order = Math.floor(Number(patch.sort_order)) || 0;
   const keys = Object.keys(upd);
   if (keys.length) db.prepare(`UPDATE models SET ${keys.map((k) => `${k}=?`).join(', ')} WHERE id=?`).run(...keys.map((k) => upd[k]), id);
+  if(patch.extra) syncImageDefaults(id,patch.extra);
   return getModel(id);
 }
 
 export function deleteModel(id) {
-  const r = getDb().prepare('DELETE FROM models WHERE id=?').run(id);
+  const r = getDb().prepare('UPDATE models SET is_active=0 WHERE id=?').run(id);
   if (!r.changes) throw new Error('模型不存在');
   return { ok: true };
 }
@@ -292,7 +300,7 @@ export function listImageModelsCompat(activeOnly = true) {
   const rows = db.prepare(
     `SELECT m.*, p.preset AS provider_preset, p.base_url AS provider_base_url
      FROM models m LEFT JOIN providers p ON p.id=m.provider_id
-     ${activeOnly ? "WHERE m.is_active=1 AND m.kind='image'" : "WHERE m.kind='image'"}
+     ${activeOnly ? "WHERE m.is_active=1 AND p.is_active=1 AND m.kind='image'" : "WHERE m.kind='image'"}
      ORDER BY m.sort_order, m.id`
   ).all();
   return rows.map((r) => {
@@ -303,6 +311,7 @@ export function listImageModelsCompat(activeOnly = true) {
       model_id: r.model_id,
       name: r.name,
       provider: r.provider_preset === 'dashscope' ? 'dashscope' : 'openai_compatible',
+      capabilities: imageOptions(extra,r.provider_preset),
       provider_id: r.provider_id,
       base_url: r.provider_base_url || '',
       price_per_call: Math.floor(Number(pricing.per_call)) || 0,
@@ -312,4 +321,25 @@ export function listImageModelsCompat(activeOnly = true) {
       sort_order: r.sort_order,
     };
   });
+}
+
+function validateImageConfig(extra={},pricing={}) {
+  const c=extra.image_config;if(!c)return;
+  if(!['openai_images','dashscope','dashscope_multimodal'].includes(c.protocol))throw new Error('请选择已实现的图片协议');
+  for(const key of ['generation_path','edit_path'])if(c[key]&&(!/^\/[A-Za-z0-9_./-]+$/.test(c[key])||c[key].includes('..')))throw new Error('图片接口路径须为安全相对路径');
+  if(c.response_format&&!['omit','b64_json','url'].includes(c.response_format))throw new Error('图片返回格式无效');
+  if(c.max_images!==undefined&&(!Number.isInteger(c.max_images)||c.max_images<1||c.max_images>16))throw new Error('参考图上限须为1–16');
+  if(c.qualities!==undefined&&(!Array.isArray(c.qualities)||c.qualities.length>8||c.qualities.some(q=>!q||!/^[-\w]{1,32}$/.test(q.value)||typeof q.label!=='string')||new Set(c.qualities.map(q=>q.value)).size!==c.qualities.length))throw new Error('质量档位格式无效');
+  const z=c.custom_size;if(z?.enabled&&(![z.min,z.max,z.step,z.max_pixels].every(Number.isInteger)||z.min<64||z.max>8192||z.max<z.min||z.step<1||z.max_pixels<z.min*z.min||z.max_pixels>16777216))throw new Error('自定义尺寸约束无效');
+  if(pricing.image_rates!==undefined&&(!Array.isArray(pricing.image_rates)||pricing.image_rates.some(r=>typeof r.size!=='string'||typeof r.quality!=='string'||!Number.isSafeInteger(r.per_call)||r.per_call<0||r.per_call>1e9)))throw new Error('图片分档价格格式无效');
+}
+
+function syncImageDefaults(id,extra){
+ const tasks=extra?.image_config?.default_for;if(!Array.isArray(tasks)||!tasks.length)return;
+ const db=getDb();db.transaction(()=>{
+  for(const row of db.prepare("SELECT id,extra_json FROM models WHERE kind='image' AND id!=?").all(id)){
+   const config=parseJson(row.extra_json,{});const old=config.image_config?.default_for;
+   if(Array.isArray(old)&&old.some(t=>tasks.includes(t))){config.image_config.default_for=old.filter(t=>!tasks.includes(t));db.prepare('UPDATE models SET extra_json=? WHERE id=?').run(JSON.stringify(config),row.id);}
+  }
+ })();
 }

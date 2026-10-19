@@ -24,6 +24,7 @@ jobs:
       - run: CHECK_MODE=multi npm --prefix server run check
       - run: npm --prefix server run check:explore
       - run: npm --prefix server run check:style
+      - run: npm --prefix server run check:studio
       - run: npx playwright install --with-deps chromium
         working-directory: client
       - run: npm run test:e2e

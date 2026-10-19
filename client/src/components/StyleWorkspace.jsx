@@ -1,3 +1,8 @@
+import { imageTaskAllowed,sizeAllowed } from '../../../shared/imageOptions.js';
+import { StateTabs,useLifecycleActions } from "./StudioLifecycle.jsx";
+import ReferenceImages from "./ReferenceImages.jsx";
+import ImageOutputOptions from "./ImageOutputOptions.jsx";
+import { PRESENTATION_STYLES } from "../../../shared/presentationStyles.js";
 import StudioImage from "./StudioImage.jsx";
 import StyleLayoutEditor from "./StyleLayoutEditor.jsx";
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -38,11 +43,13 @@ const defaultForm = {
   source: "",
   model_id: "",
   size: "",
+  quality: "",
   count: 1,
   camera: { ...DEFAULT_CAMERA },
-  visual_style: "product",
+  visual_style: "auto",
   purpose: "free",
   instruction: "",
+  instruction_scope:"presentation",
   keep: "",
   references: [],
   consistent: true,
@@ -81,7 +88,6 @@ export default function StyleWorkspace({
     [part, setPart] = useState("primary_color"),
     [target, setTarget] = useState(""),
     [detailAction, setDetailAction] = useState("替换");
-  const [deleteConfirm, setDeleteConfirm] = useState({ id: null, text: "" });
   const [notice, setNotice] = useState("");
   const notifiedJobs = useRef(new Map());
   const notify = (message) => {
@@ -100,8 +106,8 @@ export default function StyleWorkspace({
   const [compare, setCompare] = useState(false),
     [mobileCompare, setMobileCompare] = useState("after"),
     [closing, setClosing] = useState(false),
-    [showArchived, setShowArchived] = useState(false),
     [showHistory, setShowHistory] = useState(true);
+  const [imageState,setImageState]=useState("active");
   const version = data?.versions.find((v) => v.id === versionId),
     dna = parse(version?.dna_json),
     editVersion = data?.versions.find((v) => v.id === editParent);
@@ -186,7 +192,7 @@ export default function StyleWorkspace({
           setPreview(saved.preview || initialImage || null);
         } else {
           setVersionId(r.template.work_version_id);
-          const model = m.models?.find((m) => m.price_per_call !== null);
+          const model = m.models?.find(m=>m.capabilities?.text&&m.capabilities.default_for?.includes('text'))||m.models?.find((m) => m.price_per_call !== null&&m.capabilities?.text);
           setForm((f) => ({
             ...f,
             model_id: model?.id || "",
@@ -240,6 +246,7 @@ export default function StyleWorkspace({
     setRequestKey("");
     if (
       !data ||
+      data.template.lifecycle!=="active" ||
       !versionId ||
       !form.model_id ||
       !form.size ||
@@ -273,7 +280,7 @@ export default function StyleWorkspace({
       alive = false;
       clearTimeout(timer);
     };
-  }, [signature, active, tab, quoteNonce, !!data]);
+  }, [signature, active, tab, quoteNonce, !!data,data?.template.lifecycle]);
   useEffect(() => {
     if (!quote) return;
     const timer = setTimeout(
@@ -432,24 +439,9 @@ export default function StyleWorkspace({
     setTab("derive");
     setPanel("derive");
   };
-  const upload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    await run(async () => {
-      if (file.size > 15 * 1024 * 1024) throw new Error("图片不能超过 15MB");
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(",")[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      const r = await api.studio.uploadReference({ image_base64: base64 });
-      setReferences((old) => [r, ...old]);
-      notify("参考图已上传，请选择其用途后添加");
-    });
-    e.target.value = "";
-  };
   const file = preview?.path || preview?.image_path;
+  const fileAvailability=data?.images.find(i=>i.image_path===file)?.image_available ?? (file===data?.template.source_image_path?data?.template.source_available:preview?.image_available);
+
   const previewVersionId =
     preview?.design_version_id ||
     data?.images.find((i) => i.image_path === file)?.design_version_id;
@@ -458,12 +450,26 @@ export default function StyleWorkspace({
       ? data?.template.source_image_path
       : data?.images.find((i) => String(i.id) === form.source)?.image_path;
   const selectedModel = models.find((m) => m.id === form.model_id);
+  const lifecycleActions=useLifecycleActions({onChanged:async()=>{await load();onChanged();},showToast:notify});
+  const setReferenceItems=items=>{
+    const task=items.length>1?'multi':items.length?'single':'text';
+    const compatible=m=>imageTaskAllowed(m?.capabilities,items.length);
+    const recommended=compatible(selectedModel)?selectedModel:models.find(m=>compatible(m)&&m.capabilities.default_for?.includes(task))||models.find(compatible);
+    setRetryJob(null);
+    setForm(f=>({...f,mode:items.length?'image':'text',source:items[0]||'',references:items.slice(1).map(source=>({source,role:'instruction'})),...(recommended&&recommended.id!==f.model_id?{model_id:recommended.id,size:sizeAllowed(recommended.capabilities,f.size)?f.size:recommended.sizes[0],quality:''}:{})}));
+    if(recommended&&recommended.id!==form.model_id)notify(`已选择支持${items.length}张参考图的模型：${recommended.name}，请核对报价`);
+  };
+  const referenceChoices = data ? [
+    ...(data.template.source_image_path?[{key:'original',name:'原始参考图',image_path:data.template.source_image_path,thumb_path:data.template.source_thumb_path,available:data.template.source_available}]:[]),
+    ...data.images.filter(i=>i.user_rating!=='deleted'&&!['trash','deleted'].includes(i.lifecycle)).map(i=>({key:String(i.id),name:`款式图片 #${i.id}`,image_path:i.image_path,thumb_path:i.thumb_path,available:i.image_available})),
+    ...references.map(r=>({key:`ref:${r.id}`,name:`已上传参考 #${r.id}`,...r})),
+  ] : [];
   const visibleImages =
     data?.images.filter(
       (i) =>
         (i.design_version_id === versionId || i.design_version_id == null) &&
         i.user_rating !== "deleted" &&
-        (showArchived || !i.archived),
+        (i.lifecycle || (i.archived?"archived":"active"))===imageState,
     ) || [];
   return (
     <dialog
@@ -486,7 +492,7 @@ export default function StyleWorkspace({
           )}
         </div>
         <div className="style-toolbar">
-          <OriginalImageLink path={file} />
+          {fileAvailability!==false&&<OriginalImageLink path={file} />}
           <button
             className="btn secondary small"
             onClick={() => {
@@ -547,7 +553,7 @@ export default function StyleWorkspace({
                         ? `图片所属版本：V${data.versions.find((v) => v.id === previewVersionId)?.number || version?.number}`
                         : `V${version?.number} 尚未生成图片`}
                 </span>
-                {file && (
+                {file && fileAvailability!==false && (
                   <>
                     <button
                       className="btn secondary small style-actual-toggle"
@@ -668,6 +674,7 @@ export default function StyleWorkspace({
                       {notice}
                     </p>
                   )}
+                  {data.template.lifecycle!=="active"&&<p className="style-notice">此款式已归档或在回收站；可查看属性与历史，恢复后才能生成。</p>}
                   {error && (
                     <p role="alert" className="style-error">
                       {error}
@@ -805,6 +812,8 @@ export default function StyleWorkspace({
                             onClick={() => {
                               update("op", op);
                               update("instruction", "");
+                              update("instruction_scope", "presentation");
+                              if(op!=="create"&&op!=="scene")update("purpose","free");
                               if (op !== "create") update("mode", "image");
                               if (op === "detail_shot")
                                 update("camera", {
@@ -825,44 +834,8 @@ export default function StyleWorkspace({
                           </button>
                         ))}
                       </div>
-                      <label className="style-field">
-                        生成方式
-                        <select
-                          aria-label="生成方式"
-                          value={form.mode}
-                          onChange={(e) => update("mode", e.target.value)}
-                        >
-                          <option value="text" disabled={form.op !== "create"}>
-                            按已保存属性生成
-                          </option>
-                          <option value="image">基于图片修改</option>
-                        </select>
-                      </label>
-                      {form.mode === "image" && (
-                        <label className="style-field">
-                          本次衍生底图
-                          <select
-                            aria-label="本次衍生底图"
-                            value={form.source}
-                            onChange={(e) => update("source", e.target.value)}
-                          >
-                            <option value="">请选择，不自动使用最新图片</option>
-                            {data.template.source_image_path && (
-                              <option value="original">原始参考图</option>
-                            )}
-                            {data.images
-                              .filter((i) => i.user_rating !== "deleted")
-                              .map((i) => (
-                                <option key={i.id} value={String(i.id)}>
-                                  图片 #{i.id} ·{" "}
-                                  {i.design_version_id
-                                    ? `V${data.versions.find((v) => v.id === i.design_version_id)?.number}`
-                                    : "历史属性未记录"}
-                                </option>
-                              ))}
-                          </select>
-                        </label>
-                      )}
+                      <ReferenceImages items={form.mode==='image'?[form.source,...form.references.map(r=>r.source)].filter(Boolean):[]} model={selectedModel} availableLimit={Math.max(0,...models.map(m=>m.capabilities?.max_images||0))} choices={referenceChoices} disabled={busy||active} onError={fail} onUploaded={r=>setReferences(old=>[r,...old])} onChange={setReferenceItems} />
+                      <details><summary>从资产库添加参考</summary><select aria-label="从资产库添加参考" value="" onChange={e=>{const generation_id=Number(e.target.value);if(generation_id)run(async()=>{const r=await api.studio.uploadReference({generation_id});setReferences(old=>[r,...old]);setReferenceItems([...(form.mode==='image'?[form.source,...form.references.map(x=>x.source)].filter(Boolean):[]),`ref:${r.id}`]);});}}><option value="">选择资产</option>{assets.filter(i=>i.user_rating!=='deleted'&&i.image_available!==false).map(i=><option key={i.id} value={i.id}>{i.template_name} · 图片 #{i.id}</option>)}</select></details>
                       {["recolor", "detail_modify"].includes(form.op) && (
                         <div className="style-notice">
                           <h4>先保存设计变化</h4>
@@ -924,18 +897,19 @@ export default function StyleWorkspace({
                         本次要求
                         <textarea
                           aria-label="本次要求"
-                          readOnly={["recolor", "detail_modify"].includes(
-                            form.op,
-                          )}
                           rows={3}
                           maxLength={1200}
                           value={form.instruction}
                           onChange={(e) =>
                             update("instruction", e.target.value)
                           }
-                          placeholder="例如：换成简洁的室内背景，服装配色和结构保持不变"
+                          placeholder="例如：保留图1版型，参考图2的领子、图3的花色；或只更换背景。"
                         />
                       </label>
+                      <label className="inline-check"><input type="checkbox" checked={form.instruction_scope==='design'} onChange={e=>update('instruction_scope',e.target.checked?'design':'presentation')}/>本次要求包含服装设计变化</label>
+                      {form.instruction_scope==='design'&&<div className="style-notice"><p>将文字设计要求保存为新版本，原版保留。结构化属性不会自动推断修改，需在属性面板核对。</p><button className="btn secondary" disabled={busy||!form.instruction.trim()||form.instruction.trim()===(version?.design_note||'')} onClick={()=>run(async()=>{const r=await api.studio.saveVersion(templateId,{parent_id:versionId,dna,design_note:form.instruction,request_key:crypto.randomUUID()});await load();setVersionId(r.version.id);notify('设计要求已保存为新版本，结构化属性待核对');})}>保存要求为新版本</button></div>}
+                      {version?.design_note&&<p className="style-notice">当前版本设计要求：{version?.design_note}（结构化属性待核对）</p>}
+
                       <button
                         className="btn secondary small"
                         onClick={() =>
@@ -982,6 +956,7 @@ export default function StyleWorkspace({
                           <button onClick={() => setAssist(null)}>取消</button>
                         </div>
                       )}
+                      <details><summary>高级设置与必须保留</summary>
                       <label className="style-field">
                         必须保留
                         <input
@@ -1003,220 +978,16 @@ export default function StyleWorkspace({
                           探索呈现变化（保留设计版本）
                         </label>
                       )}
-                      <h3>图片呈现</h3>
-                      <CameraSettings
-                        value={form.camera}
-                        onChange={(c) => update("camera", c)}
-                      />
-                      <label className="style-field">
-                        出图用途
-                        <select
-                          value={form.purpose}
-                          onChange={(e) => update("purpose", e.target.value)}
-                        >
-                          {[
-                            ["free", "自由主图"],
-                            ["white", "白底商品图"],
-                            ["scene", "场景展示"],
-                            ["detail", "细节特写"],
-                          ].map(([v, l]) => (
-                            <option key={v} value={v}>
-                              {l}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="style-preset-grid">
-                        {[
-                          ["auto", "自动推荐"],
-                          ["preserve", "沿用底图"],
-                          ["natural", "自然实拍"],
-                          ["product", "商品展示"],
-                          ["editorial", "品牌大片"],
-                        ].map(([v, l]) => (
-                          <button
-                            className={
-                              form.visual_style === v ? "selected" : ""
-                            }
-                            key={v}
-                            aria-pressed={form.visual_style === v}
-                            onClick={() => update("visual_style", v)}
-                          >
-                            <svg
-                              aria-hidden="true"
-                              viewBox="0 0 180 100"
-                              className="presentation-sample"
-                            >
-                              <rect
-                                width="180"
-                                height="100"
-                                rx="8"
-                                fill={
-                                  v === "editorial"
-                                    ? "#36424e"
-                                    : v === "natural"
-                                      ? "#e6dcc9"
-                                      : "#f1f1f1"
-                                }
-                              />
-                              <circle
-                                cx="145"
-                                cy="22"
-                                r="14"
-                                fill={v === "natural" ? "#e8c886" : "#d7dfe5"}
-                              />
-                              <path
-                                d="M69 18 L48 29 L36 74 L54 79 L64 48 L62 94 L118 94 L116 48 L126 79 L144 74 L132 29 L111 18 L90 30 Z"
-                                fill={v === "editorial" ? "#b7c3cc" : "#3c5266"}
-                              />
-                              <path
-                                d="M69 18 L90 61 L111 18 L90 30 Z"
-                                fill="#263a4b"
-                              />
-                            </svg>
-                            <strong>{l}</strong>
-                            <small>
-                              {
-                                {
-                                  auto: "按用途推荐呈现方式",
-                                  preserve: "尽量沿用参考图表现",
-                                  natural: "自然光线、适度修饰",
-                                  product: "清晰展示服装结构",
-                                  editorial: "强调光影与视觉氛围",
-                                }[v]
-                              }
-                            </small>
-                          </button>
-                        ))}
-                      </div>
-                      <p className="dim small">
-                        卡片为风格示意，并非当前款式的生成预览。视角与完整取景优先。
-                      </p>
-                      <div className="style-field">
-                        套图约束
-                        <label className="style-option">
-                          <input
-                            type="checkbox"
-                            checked={form.consistent}
-                            onChange={(e) =>
-                              update("consistent", e.target.checked)
-                            }
-                          />
-                          同批沿用设计、视角、风格及参考条件
-                        </label>
-                      </div>
-                      <p className="dim small">
-                        约束能减少漂移，但不能保证每张图片完全一致。
-                      </p>
-                      <details>
-                        <summary>辅助参考图片</summary>
-                        <p>
-                          第一张底图定义服装。辅助图仅提供指定特征参考，实际效果取决于模型。当前模型
-                          {selectedModel?.capabilities?.multi_reference
-                            ? "支持"
-                            : "未确认支持"}
-                          多图参考。
-                        </p>
-                        <label className="style-field">
-                          上传辅助图
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={upload}
-                            disabled={busy}
-                          />
-                        </label>
-                        <div className="style-reference-list">
-                          {references.map((r) => (
-                            <div key={r.id}>
-                              <StudioImage thumbnail={r.thumb_path} original={r.image_path} alt="辅助参考" />
-                              <select
-                                aria-label={`参考图${r.id}用途`}
-                                value={
-                                  form.references.find(
-                                    (x) => x.source === `ref:${r.id}`,
-                                  )?.role || ""
-                                }
-                                onChange={(e) =>
-                                  update("references", [
-                                    ...form.references.filter(
-                                      (x) => x.source !== `ref:${r.id}`,
-                                    ),
-                                    ...(e.target.value
-                                      ? [
-                                          {
-                                            source: `ref:${r.id}`,
-                                            role: e.target.value,
-                                          },
-                                        ]
-                                      : []),
-                                  ])
-                                }
-                              >
-                                <option value="">不使用</option>
-                                {[
-                                  ["color", "配色"],
-                                  ["fabric", "面料"],
-                                  ["detail", "细节"],
-                                  ["presentation", "画面风格"],
-                                ].map(([v, l]) => (
-                                  <option key={v} value={v}>
-                                    {l}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          ))}
-                        </div>
-                        <label className="style-field">
-                          从资产库添加
-                          <select
-                            value=""
-                            onChange={(e) => {
-                              const generation_id = Number(e.target.value);
-                              if (generation_id)
-                                run(async () => {
-                                  const r = await api.studio.uploadReference({
-                                    generation_id,
-                                  });
-                                  setReferences((old) => [r, ...old]);
-                                  update("references", [
-                                    ...form.references,
-                                    {
-                                      source: `ref:${r.id}`,
-                                      role: "presentation",
-                                    },
-                                  ]);
-                                });
-                            }}
-                          >
-                            <option value="">选择有权限的资产图片</option>
-                            {assets
-                              .filter((i) => i.user_rating !== "deleted")
-                              .map((i) => (
-                                <option key={i.id} value={i.id}>
-                                  {i.template_name || "款式"} · 图片 #{i.id}
-                                </option>
-                              ))}
-                          </select>
-                        </label>
-                        {form.references.map((r, i) => (
-                          <p key={i}>
-                            {r.source} · {r.role}
-                            <button
-                              onClick={() =>
-                                update(
-                                  "references",
-                                  form.references.filter((_, n) => n !== i),
-                                )
-                              }
-                            >
-                              移除
-                            </button>
-                          </p>
-                        ))}
                       </details>
+                      <h3>风格预设</h3>
+                      <p className="dim small">{PRESENTATION_STYLES.some(([v])=>v===form.visual_style)?'仅调整画面氛围，保留服装设计':'未指定风格，沿用当前要求'}</p>
+                      <div className="style-text-presets">{PRESENTATION_STYLES.slice(0,6).map(([v,label])=><button key={v} aria-pressed={form.visual_style===v} className={form.visual_style===v?'selected':''} onClick={()=>update('visual_style',form.visual_style===v?'auto':v)}>{label}</button>)}</div>
+                      <details><summary>更多风格</summary><div className="style-text-presets">{[...PRESENTATION_STYLES.slice(6),['preserve','沿用底图'],['natural','自然实拍'],['product','商品展示'],['editorial','品牌大片']].map(([v,label])=><button key={v} aria-pressed={form.visual_style===v} onClick={()=>update('visual_style',form.visual_style===v?'auto':v)}>{label}</button>)}</div></details>
+                      {form.count>1&&<label className="inline-check"><input type="checkbox" checked={form.consistent} onChange={e=>update('consistent',e.target.checked)}/>保持款式一致<small>沿用设计与参考条件；提示词约束不保证跨图一致，不强制同一视角。</small></label>}
+                      <details open={form.op==='detail_shot'?true:undefined}><summary>视角与取景 · {form.camera.view} / {form.camera.framing}</summary><CameraSettings value={form.camera} onChange={c=>update('camera',c)}/></details>
+                      {(form.op==='create'||form.op==='scene')&&<label className="inline-check"><input type="checkbox" checked={form.purpose==='white'} onChange={e=>update('purpose',e.target.checked?'white':'free')}/>白底商品图</label>}
                       <h3>模型与输出</h3>
+                      <div className="style-model-output">
                       <label className="style-field">
                         图片模型
                         <select
@@ -1227,7 +998,8 @@ export default function StyleWorkspace({
                               (m) => m.id === e.target.value,
                             );
                             update("model_id", e.target.value);
-                            if (m?.sizes?.includes(form.size))
+                            update("quality", "");
+                            if (m && sizeAllowed(m.capabilities,form.size))
                               update("size", form.size);
                             else {
                               update("size", m?.sizes?.[0] || "");
@@ -1244,12 +1016,11 @@ export default function StyleWorkspace({
                               value={m.id}
                               disabled={
                                 m.price_per_call === null ||
-                                (form.mode === "image" &&
-                                  !m.capabilities?.image_edit)
+                                !imageTaskAllowed(m.capabilities,form.mode==='image'?[form.source,...form.references].filter(Boolean).length:0)
                               }
                             >
                               {m.provider_name} · {m.name} ·{" "}
-                              {m.price_per_call ?? "未配置"} 积分/张
+                              {m.variable_pricing?"分档计费，以报价为准":`${m.price_per_call ?? "未配置"} 积分/张`}
                               {m.capabilities?.image_edit ? " · 图片编辑" : ""}
                             </option>
                           ))}
@@ -1258,21 +1029,10 @@ export default function StyleWorkspace({
                       {form.mode === "image" &&
                         !selectedModel?.capabilities?.image_edit && (
                           <p className="style-error">
-                            当前模型未确认支持图片编辑，请更换模型或由管理员验证能力。
+                            当前模型不支持所选参考图，请选择支持图片输入的模型。
                           </p>
                         )}
-                      <label className="style-field">
-                        原生图片尺寸
-                        <select
-                          aria-label="款式图片尺寸"
-                          value={form.size}
-                          onChange={(e) => update("size", e.target.value)}
-                        >
-                          {selectedModel?.sizes.map((s) => (
-                            <option key={s}>{s}</option>
-                          ))}
-                        </select>
-                      </label>
+                      <ImageOutputOptions model={selectedModel} size={form.size} quality={form.quality||''} onChange={values=>{setRetryJob(null);setForm(f=>({...f,...values}));}} />
                       <label className="style-field">
                         生成张数
                         <input
@@ -1287,6 +1047,7 @@ export default function StyleWorkspace({
                           }
                         />
                       </label>
+                      </div>
                       <p className="dim small">
                         不提供未经模型适配器验证的蒙版、参考强度或高清翻倍选项。原图完整保存，不做生成后强裁切。
                       </p>
@@ -1319,6 +1080,7 @@ export default function StyleWorkspace({
                   {tab === "versions" && (
                     <>
                       <h3>设计版本</h3>
+                      {data.template.source_available&&<button className="btn secondary small" onClick={()=>run(async()=>{await api.studio.setCover(templateId,null);await load();onChanged();notify('已使用原始参考图作展示图');})}>使用原始参考图作展示图</button>}
                       {data.versions.map((v) => (
                         <div className="style-version-row" key={v.id}>
                           <strong>
@@ -1329,7 +1091,7 @@ export default function StyleWorkspace({
                           </strong>
                           <span>
                             {v.status === "final" ? "已定稿" : "设计中"} ·{" "}
-                            {v.created_at}
+                            {new Date(v.created_at).toLocaleString()}
                           </span>
                           <p>
                             {Array.isArray(parse(v.summary, null))
@@ -1406,14 +1168,7 @@ export default function StyleWorkspace({
                     </div>
                     {showHistory && (
                       <>
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={showArchived}
-                            onChange={(e) => setShowArchived(e.target.checked)}
-                          />
-                          显示归档
-                        </label>
+                        <StateTabs value={imageState} onChange={setImageState}/>
                         {data.jobs.map((j) => (
                           <details
                             className="style-job"
@@ -1457,11 +1212,11 @@ export default function StyleWorkspace({
                               <button
                                 className="style-image-button"
                                 onClick={() =>
-                                  setPreview({ ...i, path: i.image_path })
+                                  i.image_available!==false&&setPreview({ ...i, path: i.image_path })
                                 }
                               >
                                 <StudioImage
-                                  thumbnail={i.thumb_path} original={i.image_path}
+                                  thumbnail={i.thumb_available===false?null:i.thumb_path} original={i.image_available===false?null:i.image_path}
                                   alt={`图片 ${i.id}`}
                                   loading="lazy"
                                 />
@@ -1476,11 +1231,12 @@ export default function StyleWorkspace({
                                   : ""}
                                 {i.archived ? " · 已归档" : ""}
                               </p>
-                              <OriginalImageLink path={i.image_path} />
+                              {i.image_available!==false&&<OriginalImageLink path={i.image_path} />}
+                              {i.image_available===false&&<p role="status">{i.thumb_available?"仅缩略图可用 · 原图缺失":"图片文件缺失"}</p>}
                               <button
                                 className="btn secondary small"
                                 onClick={() => {
-                                  setPreview({ ...i, path: i.image_path });
+                                  i.image_available!==false&&setPreview({ ...i, path: i.image_path });
                                   setCompare(true);
                                 }}
                               >
@@ -1488,7 +1244,7 @@ export default function StyleWorkspace({
                               </button>
                               <button
                                 className="btn secondary small"
-                                onClick={() => chooseSource(i)}
+                                disabled={i.image_available===false||i.lifecycle==='trash'} onClick={() => chooseSource(i)}
                               >
                                 以此继续衍生
                               </button>
@@ -1536,48 +1292,7 @@ export default function StyleWorkspace({
                                 >
                                   另存新款式
                                 </button>
-                                {i.archived && (
-                                  <div>
-                                    <input
-                                      aria-label={`永久删除确认${i.id}`}
-                                      placeholder="输入永久删除"
-                                      value={
-                                        deleteConfirm.id === i.id
-                                          ? deleteConfirm.text
-                                          : ""
-                                      }
-                                      onChange={(e) =>
-                                        setDeleteConfirm({
-                                          id: i.id,
-                                          text: e.target.value,
-                                        })
-                                      }
-                                    />
-                                    <button
-                                      disabled={
-                                        busy ||
-                                        deleteConfirm.id !== i.id ||
-                                        deleteConfirm.text !== "永久删除"
-                                      }
-                                      onClick={() =>
-                                        run(async () => {
-                                          await api.studio.permanentDelete(
-                                            i.id,
-                                            deleteConfirm.text,
-                                          );
-                                          await load();
-                                          setDeleteConfirm({
-                                            id: null,
-                                            text: "",
-                                          });
-                                          notify("已永久删除未被引用的图片");
-                                        })
-                                      }
-                                    >
-                                      永久删除原文件
-                                    </button>
-                                  </div>
-                                )}
+                                {i.lifecycle==='trash'?<><button onClick={()=>lifecycleActions.perform('generations',i,'restore')}>还原图片</button><button onClick={()=>lifecycleActions.perform('generations',i,'delete')}>永久删除</button></>:<button onClick={()=>lifecycleActions.perform('generations',i,'trash')}>删除（移入回收站）</button>}
                                 <details>
                                   <summary>生成参数</summary>
                                   <pre>
@@ -1700,6 +1415,7 @@ export default function StyleWorkspace({
           </footer>
         </>
       )}
+      {lifecycleActions.modal}
       {large && (
         <OriginalImageViewer image={large} onClose={() => setLarge(null)} />
       )}

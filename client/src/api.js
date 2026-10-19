@@ -359,6 +359,7 @@ export const api = {
     models: (id) => get(`/api/admin/providers/${id}/models`),
   },
   adminModels: {
+    test: body => post('/api/admin/models/test',body),
     list: (kind) => get(`/api/admin/models${kind ? `?kind=${kind}` : ''}`),
     create: (data) => post('/api/admin/models', data),
     update: (id, data) => put(`/api/admin/models/${id}`, data),
@@ -402,6 +403,10 @@ export const api = {
 
   // v0.1.0: 设计台
   studio: {
+    lifecycle: (kind,id,action,confirm) => post(`/api/studio/${kind}/${id}/lifecycle`,{action,confirm}),
+    lifecycleImpact: (kind,id) => get(`/api/studio/${kind}/${id}/impact`),
+    bulkLifecycle: (ids,action,confirm) => post('/api/studio/assets/lifecycle',{ids,action,confirm}),
+    cleanupFiles: id => post(`/api/studio/generations/${id}/cleanup-files`,{confirm:'清理文件'}),
     saveLayout: (id,body) => post(`/api/studio/templates/${id}/layouts`,body),
     workspace: id => get(`/api/studio/templates/${id}/workspace`),
     saveVersion: (id,body) => post(`/api/studio/templates/${id}/versions`,body),
@@ -419,7 +424,7 @@ export const api = {
     extractDna: (data) => post('/api/studio/dna/extract', data),
     // P6: 带上传进度的识图（onProgress 0-100）
     extractDnaWithProgress: (data, onProgress) => postWithProgress('/api/studio/dna/extract', data, onProgress),
-    listTemplates: () => get('/api/studio/templates'),
+    listTemplates: (state='active') => get(`/api/studio/templates?state=${state}`),
     getTemplate: (id) => get(`/api/studio/templates/${id}`),
     createTemplate: (data) => post('/api/studio/templates', data),
     updateTemplate: (id, data) => put(`/api/studio/templates/${id}`, data),

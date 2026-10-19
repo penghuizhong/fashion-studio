@@ -1,4 +1,5 @@
-import { imageAvailability } from './imageLifecycle.js';
+import { mountStudioLifecycle,lifecycleState,changeLifecycle } from './studioLifecycle.js';
+import { imageAvailability,templateAvailability,studioFileExists } from './imageLifecycle.js';
 import { randomUUID } from 'node:crypto';
 import { problem } from './exploreErrors.js';
 import { mountStyleWorkspace } from './styleWorkspace.js';
@@ -41,7 +42,7 @@ import { listModels, listImageModelsCompat } from './registry.js';
 export function runArchive() {
   const db = getDb();
   const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
-  const r1 = db.prepare('UPDATE dna_generations SET archived=1 WHERE archived=0 AND created_at < ?').run(cutoff);
+  const r1 = db.prepare("UPDATE dna_generations SET archived=1,lifecycle='archived' WHERE lifecycle='active' AND archived=0 AND created_at < ?").run(cutoff);
   let n2 = 0;
   const tplIds = db.prepare('SELECT DISTINCT template_id FROM dna_generations WHERE archived=0').all();
   for (const { template_id } of tplIds) {
@@ -49,7 +50,7 @@ export function runArchive() {
       .all(template_id).map((r) => r.id);
     if (ids.length) {
       const ph = ids.map(() => '?').join(',');
-      n2 += db.prepare(`UPDATE dna_generations SET archived=1 WHERE id IN (${ph})`).run(...ids).changes;
+      n2 += db.prepare(`UPDATE dna_generations SET archived=1,lifecycle='archived' WHERE lifecycle='active' AND id IN (${ph})`).run(...ids).changes;
     }
   }
   return { by_age: r1.changes, by_count: n2 };
@@ -59,11 +60,12 @@ export function runArchive() {
 export function runExploreArchive() {
   const db = getDb();
   const cutoff = new Date(Date.now() - 90 * 86400000).toISOString();
-  const r = db.prepare('UPDATE exploration_batches SET archived=1 WHERE archived=0 AND created_at < ?').run(cutoff);
+  const r = db.prepare("UPDATE exploration_batches SET archived=1,lifecycle='archived' WHERE lifecycle='active' AND archived=0 AND created_at < ?").run(cutoff);
   return { by_age: r.changes };
 }
 
 export function mountStudioRoutes(app) {  const db = getDb();
+  mountStudioLifecycle(app);
   mountStyleWorkspace(app);
   const cfg = getConfig();
   const uidOf = (req) => (req && req.userId) || 'local';
@@ -186,10 +188,11 @@ export function mountStudioRoutes(app) {  const db = getDb();
       } catch { throw problem('INVALID_SOURCE_IMAGE','原始参考图保存失败，请选择有效的位图重试'); }
     }
     const now = new Date().toISOString();
-    const r = db.prepare(`INSERT INTO style_dna_templates(user_id,name,source_image_path,source_thumb_path,category,preset_id,dna_json,gen_params_json,status,version,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?, 'draft',1,?,?)`).run(
-      uid, String(name).trim(), srcPath, srcThumb, category || '', preset_id || '',
-      JSON.stringify(dna_json), JSON.stringify(gen_params_json || {}), now, now);
+    const r = db.transaction(()=>{
+      if(srcPath&&!studioFileExists(srcPath))throw problem('SOURCE_MISSING','原始图片已失效，请重新选择',404);
+      return db.prepare(`INSERT INTO style_dna_templates(user_id,name,source_image_path,source_thumb_path,category,preset_id,dna_json,gen_params_json,status,version,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?, 'draft',1,?,?)`).run(uid,String(name).trim(),srcPath,srcThumb,category||'',preset_id||'',JSON.stringify(dna_json),JSON.stringify(gen_params_json||{}),now,now);
+    }).immediate();
     res.json({ ok: true, id: r.lastInsertRowid });
   }));
 
@@ -206,21 +209,21 @@ export function mountStudioRoutes(app) {  const db = getDb();
           (SELECT thumb_path FROM dna_generations g WHERE g.id=t.cover_generation_id AND COALESCE(g.user_rating,'')!='deleted') AS last_thumb,
           (SELECT image_path FROM dna_generations g WHERE g.id=t.cover_generation_id AND COALESCE(g.user_rating,'')!='deleted') AS last_image
         FROM style_dna_templates t ORDER BY t.updated_at DESC`).all();
-    res.json({ ok: true, templates: rows });
+    res.json({ ok: true, templates: rows.filter(t=>t.lifecycle===lifecycleState(req.query.state)).map(templateAvailability) });
   }));
 
   // GET /api/studio/templates/:id → 详情
   app.get('/api/studio/templates/:id', ah(async (req, res) => {
     const t = getTemplate(req.params.id, req);
-    if (!t) return res.status(404).json({ error: '模板不存在' });
+    if (!t || t.lifecycle==='deleted') return res.status(404).json({ error: '模板不存在' });
     res.json({ ok: true, template: t });
   }));
 
   // PUT /api/studio/templates/:id { name?, category?, preset_id?, dna_json?, gen_params_json? }；定稿后 403；version+1
   app.put('/api/studio/templates/:id', ah(async (req, res) => {
     const t = getTemplate(req.params.id, req);
-    if (!t) return res.status(404).json({ error: '模板不存在' });
-    if (t.status === 'final') return res.status(403).json({ error: '已定稿的模板不可修改 DNA，请先解锁定' });
+    if (!t || t.lifecycle==='deleted') return res.status(404).json({ error: '模板不存在' });
+    if (t.status === 'final' && (req.body.dna_json || req.body.category || req.body.preset_id)) return res.status(403).json({ error: '已定稿的模板不可修改 DNA，请先解锁定' });
     const { name, category, preset_id, dna_json, gen_params_json } = req.body || {};
     if((preset_id!=null && preset_id!==(t.preset_id||''))||(category!=null && category!==t.category))throw problem('VERSION_SCHEMA_CONFLICT','类目变更请另存款式，不能混用已有设计版本的字段');
     const versioned=ensureStyle(t);
@@ -240,7 +243,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
   // POST /api/studio/templates/:id/finalize → 定稿（锁定 DNA）；/unfinalize → 解锁定
   const setStatus = (status) => ah(async (req, res) => {
     const t = getTemplate(req.params.id, req);
-    if (!t) return res.status(404).json({ error: '模板不存在' });
+    if (!t || t.lifecycle==='deleted') return res.status(404).json({ error: '模板不存在' });
     db.prepare('UPDATE style_dna_templates SET status=?, updated_at=? WHERE id=?').run(status, new Date().toISOString(), t.id);
     res.json({ ok: true, status });
   });
@@ -278,7 +281,8 @@ export function mountStudioRoutes(app) {  const db = getDb();
   // POST /api/studio/templates/:id/generate { model_id?, size?, seed? } → 一键生图（文生图）
   app.post('/api/studio/templates/:id/generate', ah(async (req, res) => {
     const t = getTemplate(req.params.id, req);
-    if (!t) return res.status(404).json({ error: '模板不存在' });
+    if(t&&t.lifecycle!=='active')throw problem('RESTORE_REQUIRED','请先恢复款式再生成',409);
+    if (!t || t.lifecycle==='deleted') return res.status(404).json({ error: '模板不存在' });
     const { model_id, size, seed } = req.body || {};
     try {
       const g = await doGenerate({ req, template: t, op: 'create', modelId: model_id, size, seed, camera:req.body.camera });
@@ -291,7 +295,8 @@ export function mountStudioRoutes(app) {  const db = getDb();
   // POST /api/studio/templates/:id/variant { op, changes?, model_id?, size?, seed_mode?, source_generation_id? }
   app.post('/api/studio/templates/:id/variant', ah(async (req, res) => {
     const t = getTemplate(req.params.id, req);
-    if (!t) return res.status(404).json({ error: '模板不存在' });
+    if(t&&t.lifecycle!=='active')throw problem('RESTORE_REQUIRED','请先恢复款式再生成',409);
+    if (!t || t.lifecycle==='deleted') return res.status(404).json({ error: '模板不存在' });
     const { op, changes, model_id, size, seed_mode, source_generation_id } = req.body || {};
     const validOps = ['recolor', 'detail_modify', 'detail_shot', 'scene', 'variant'];
     if (!validOps.includes(op)) return res.status(400).json({ error: 'op 非法' });
@@ -322,7 +327,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
   // GET /api/studio/templates/:id/history?include_archived=1
   app.get('/api/studio/templates/:id/history', ah(async (req, res) => {
     const t = getTemplate(req.params.id, req);
-    if (!t) return res.status(404).json({ error: '模板不存在' });
+    if (!t || t.lifecycle==='deleted') return res.status(404).json({ error: '模板不存在' });
     const uid = uidOf(req);
     const inc = req.query && req.query.include_archived === '1';
     const conds = ['template_id=?'];
@@ -330,7 +335,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
     if (cfg.multiUser) { conds.push('user_id=?'); args.push(uid); }
     if (!inc) conds.push('archived=0');
     const rows = db.prepare(`SELECT * FROM dna_generations WHERE ${conds.join(' AND ')} ORDER BY id DESC`).all(...args);
-    res.json({ ok: true, generations: rows });
+    res.json({ ok: true, generations: rows.filter(g=>!(['trash','deleted'].includes(g.lifecycle))).map(imageAvailability) });
   }));
 
   // POST /api/studio/generations/:id/rate { rating: liked|deleted }；deleted 兼容为归档，保留被版本引用的原文件
@@ -343,7 +348,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
     const { rating } = req.body || {};
     if (!['liked', 'deleted'].includes(rating)) return res.status(400).json({ error: 'rating 非法' });
     const now = new Date().toISOString();
-    if(rating==='deleted') db.prepare('UPDATE dna_generations SET archived=1 WHERE id=?').run(g.id);
+    if(rating==='deleted') changeLifecycle('generations',g.id,req,'archive');
     else db.prepare('UPDATE dna_generations SET user_rating=?,rated_at=? WHERE id=?').run(rating,now,g.id);
     res.json({ ok: true });
   }));
@@ -362,9 +367,10 @@ export function mountStudioRoutes(app) {  const db = getDb();
     if (rating === 'liked') conds.push("g.user_rating = 'liked'");
     else if (rating === 'deleted') conds.push("g.user_rating = 'deleted'");
     else if (rating === 'unrated') conds.push("(g.user_rating IS NULL OR g.user_rating = '')");
-    conds.push(rating === 'archived' ? 'g.archived=1' : 'g.archived=0');
+    conds.push('g.lifecycle=?');args.push(lifecycleState(req.query.state || (rating==='archived'?'archived':'active')));
+    if(!req.query.template_id && lifecycleState(req.query.state)==='active')conds.push("t.lifecycle='active'");
     const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
-    const total = db.prepare(`SELECT COUNT(*) AS c FROM dna_generations g ${where}`).get(...args).c;
+    const total = db.prepare(`SELECT COUNT(*) AS c FROM dna_generations g LEFT JOIN style_dna_templates t ON t.id=g.template_id ${where}`).get(...args).c;
     const rows = db.prepare(
       `SELECT g.*, t.name AS template_name FROM dna_generations g LEFT JOIN style_dna_templates t ON t.id = g.template_id
        ${where} ORDER BY g.id DESC LIMIT ? OFFSET ?`).all(...args, lim, (pg - 1) * lim);
@@ -383,7 +389,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
         ? db.prepare('SELECT * FROM dna_generations WHERE id=? AND user_id=?').get(id, uid)
         : db.prepare('SELECT * FROM dna_generations WHERE id=?').get(id);
       if (!g) continue;
-      db.prepare('UPDATE dna_generations SET archived=1,rated_at=? WHERE id=?').run(now,g.id);
+      changeLifecycle('generations',g.id,req,'archive');
       n++;
     }
     res.json({ ok: true, deleted: n });

@@ -600,8 +600,8 @@ export function getDb() {
       const upd = _db.prepare('UPDATE users SET invite_code = ? WHERE id = ?');
       _db.transaction((rows) => {
         for (const r of rows) {
-          let code = mk();
-          while (used.has(code)) code = mk();
+          let code = genInviteCode();
+          while (used.has(code)) code = genInviteCode();
           used.add(code);
           upd.run(code, r.id);
         }
@@ -686,11 +686,13 @@ export function getDb() {
   } catch (e) {
     console.warn('[db] 迁移失败:', e.message);
   }
+  let backedUpBeforeStyle=false;
   // Immutable style snapshots. Existing image/version associations stay unknown.
   if (!_db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='style_versions'").get() && _db.prepare('SELECT COUNT(*) AS n FROM style_dna_templates').get().n) {
     const backupDir = path.join(dataDir, 'backups'); fs.mkdirSync(backupDir, {recursive:true});
     const backupPath = path.join(backupDir, `pre-style-versions-${Date.now()}.db`);
     _db.exec(`VACUUM INTO '${backupPath.replaceAll("'", "''")}'`);
+    backedUpBeforeStyle=true;
   }
   _db.transaction(() => {
     for (const [table, additions] of Object.entries({style_dna_templates:{work_version_id:'INTEGER',cover_generation_id:'INTEGER',style_batch_id:'INTEGER'},dna_generations:{design_version_id:'INTEGER',source_generation_id:'INTEGER',task_item_id:'TEXT',settings_json:"TEXT NOT NULL DEFAULT '{}'"},exploration_batches:{workflow_kind:"TEXT NOT NULL DEFAULT 'explore'"}})) {
@@ -707,6 +709,26 @@ export function getDb() {
       INSERT INTO style_versions(template_id,number,dna_json,schema_json,preset_id,category,summary,status,created_at) SELECT t.id,1,t.dna_json,COALESCE((SELECT fields_json FROM dna_presets WHERE id=t.preset_id),'[]'),COALESCE(t.preset_id,''),t.category,'迁移时当前属性快照（历史图片未记录属性）',t.status,strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM style_dna_templates t WHERE NOT EXISTS(SELECT 1 FROM style_versions v WHERE v.template_id=t.id);
       UPDATE style_dna_templates SET work_version_id=(SELECT id FROM style_versions v WHERE v.template_id=style_dna_templates.id ORDER BY number LIMIT 1),cover_generation_id=(SELECT id FROM dna_generations g WHERE g.template_id=style_dna_templates.id AND COALESCE(g.user_rating,'')!='deleted' ORDER BY id DESC LIMIT 1) WHERE work_version_id IS NULL OR NOT EXISTS(SELECT 1 FROM style_versions v WHERE v.id=style_dna_templates.work_version_id AND v.template_id=style_dna_templates.id);
     `);
+  })();
+  if (!backedUpBeforeStyle && !_db.prepare('PRAGMA table_info(style_dna_templates)').all().some(c=>c.name==='lifecycle') && _db.prepare('SELECT COUNT(*) n FROM style_dna_templates').get().n) {
+    const backupDir=path.join(dataDir,'backups');fs.mkdirSync(backupDir,{recursive:true});
+    const backupPath=path.join(backupDir,`pre-studio-lifecycle-${Date.now()}.db`);
+    _db.exec(`VACUUM INTO '${backupPath.replaceAll("'", "''")}'`);
+  }
+  _db.transaction(() => {
+    for (const table of ['style_dna_templates','dna_generations','exploration_batches']) {
+      const columns = new Set(_db.prepare(`PRAGMA table_info(${table})`).all().map(c=>c.name));
+      if(!columns.has('lifecycle')) {
+        _db.exec(`ALTER TABLE ${table} ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'`);
+        if(table==='exploration_batches')_db.exec("UPDATE exploration_batches SET lifecycle='archived' WHERE archived=1");
+        if(table==='dna_generations')_db.exec("UPDATE dna_generations SET lifecycle=CASE WHEN user_rating='deleted' THEN 'deleted' WHEN archived=1 THEN 'archived' ELSE 'active' END");
+      }
+      if(!columns.has('restore_lifecycle'))_db.exec(`ALTER TABLE ${table} ADD COLUMN restore_lifecycle TEXT NOT NULL DEFAULT 'active'`);
+    }
+    if(!_db.prepare('PRAGMA table_info(style_versions)').all().some(c=>c.name==='design_note'))_db.exec("ALTER TABLE style_versions ADD COLUMN design_note TEXT NOT NULL DEFAULT ''");
+    _db.exec("CREATE TRIGGER IF NOT EXISTS immutable_style_design_note BEFORE UPDATE OF design_note ON style_versions BEGIN SELECT RAISE(ABORT,'Design note is immutable'); END");
+    _db.exec(`CREATE TABLE IF NOT EXISTS model_capability_checks(model_id TEXT NOT NULL,task TEXT NOT NULL,signature TEXT NOT NULL,status TEXT NOT NULL,message TEXT NOT NULL DEFAULT '',preview_path TEXT,created_at TEXT NOT NULL,PRIMARY KEY(model_id,task));
+      CREATE TABLE IF NOT EXISTS studio_lifecycle_events(id INTEGER PRIMARY KEY,user_id TEXT NOT NULL,object_type TEXT NOT NULL,object_id TEXT NOT NULL,action TEXT NOT NULL,created_at TEXT NOT NULL);`);
   })();
   return _db;
 }

@@ -1,3 +1,5 @@
+import ImageModelConfig from './ImageModelConfig.jsx';
+import { imageOptions } from '../../../shared/imageOptions.js';
 import ExploreRecoveryPanel from './ExploreRecoveryPanel.jsx';
 // v0.2.0: 统一模型管理（管理员）——供应商 → 模型两层；Key 只写不读
 import { useEffect, useState } from 'react';
@@ -19,7 +21,7 @@ const KIND_LABEL = { llm: '仅聊天', image: '仅图片', both: '聊天+图片'
 const emptyPForm = { name: '', preset: 'custom', kind: 'both', base_url: '', api_key: '', is_active: true };
 const emptyMForm = {
   provider_id: '', kind: 'chat', model_id: '', name: '',
-  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true, vision: false, image_edit:false, multi_reference:false,
+  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true, vision: false, image_edit:false, multi_reference:false,image_config:{protocol:'openai_images',edit:false,max_images:1,text:true},image_rates:'',
 };
 
 export default function ModelsTab({ showToast }) {
@@ -33,6 +35,9 @@ export default function ModelsTab({ showToast }) {
   const [mForm, setMForm] = useState(emptyMForm);
   const [sizeFamily, setSizeFamily] = useState('generic');
   const [mBusy, setMBusy] = useState(false);
+  const [testing,setTesting]=useState('');
+  const [testPreview,setTestPreview]=useState(null);
+  const testModel=async(m,task)=>{if(!window.confirm('此测试会向所选供应商发起真实请求，可能产生上游费用；不扣普通用户积分。继续？'))return;setTesting(m.id+task);try{const r=await api.adminModels.test({id:m.id,task,confirm:true});showToast(r.message);setTestPreview(r.preview);await load();}catch(e){showToast(e.message);}finally{setTesting('');}};
   const [modelCfg, setModelCfg] = useState({ worker_model: '', chat_default_model: '', filter_fallback_models: null });
   const [modelCfgSaving, setModelCfgSaving] = useState(false);
 
@@ -115,11 +120,11 @@ export default function ModelsTab({ showToast }) {
     try {
       const r = await api.adminProviders.test(p.id);
       if (r.ok) {
-        showToast(`连通正常，已拉取 ${r.count} 个可用模型（${r.latency}ms）`);
+        showToast(`列表接口可访问，已拉取 ${r.count} 个可用模型（${r.latency}ms）`);
         await load();
         if (mForm.provider_id === p.id) await loadPulledModels(p.id);
       } else {
-        showToast(`连通失败：${r.error || '未知错误'}`);
+        showToast(`模型列表拉取失败（不代表生图不可用）：${r.error || '未知错误'}`);
       }
     } catch (e) {
       showToast(e.message || '测试失败');
@@ -173,6 +178,9 @@ export default function ModelsTab({ showToast }) {
       prompt_extend: m.extra.prompt_extend !== false,
       vision: !!m.extra.vision,
       image_edit: !!m.extra.image_edit, multi_reference: !!m.extra.multi_reference,
+      image_config: m.extra.image_config || {protocol:m.provider_preset==='dashscope'?'dashscope':'openai_images',edit:!!m.extra.image_edit,max_images:m.extra.multi_reference?4:1,text:true},
+      image_rates: m.pricing.image_rates ? JSON.stringify(m.pricing.image_rates,null,2) : '',
+      original_extra:m.extra, original_pricing:m.pricing,
     });
     setSizeFamily(guessFamily(m.model_id));
     setMEditing(m.id);
@@ -180,8 +188,8 @@ export default function ModelsTab({ showToast }) {
   const mSave = async () => {
     if (!mForm.provider_id) { showToast('请选择供应商'); return; }
     if (!mForm.model_id.trim()) { showToast('模型 ID 必填'); return; }
-    const pricing = {};
-    const extra = {};
+    const pricing = {...mForm.original_pricing};
+    const extra = {...mForm.original_extra};
     if (mForm.kind === 'chat') {
       const ip = Number(mForm.input_per_1m), op = Number(mForm.output_per_1m);
       if ([mForm.input_per_1m,mForm.output_per_1m].some(v=>String(v).trim()==='') || ![ip,op].every(v=>Number.isSafeInteger(v)&&v>=0&&v<=1000000000)) { showToast('请明确填写输入/输出单价，使用非负整数；免费请填写 0'); return; }
@@ -193,7 +201,9 @@ export default function ModelsTab({ showToast }) {
       pricing.per_call = pc;
       extra.sizes = String(mForm.sizes || '').split(/[,，、\s]+/).map((x) => x.trim()).filter(Boolean);
       extra.prompt_extend = !!mForm.prompt_extend;
-      extra.image_edit=!!mForm.image_edit;extra.multi_reference=!!mForm.image_edit && !!mForm.multi_reference;
+      extra.image_config=mForm.image_config;
+      extra.image_edit=!!mForm.image_config?.edit;extra.multi_reference=extra.image_edit && mForm.image_config.max_images>1;
+      try { if(mForm.image_rates?.trim()) pricing.image_rates=JSON.parse(mForm.image_rates);else delete pricing.image_rates; }catch{showToast('分档价格JSON格式不正确');return;}
     }
     setMBusy(true);
     try {
@@ -229,7 +239,7 @@ export default function ModelsTab({ showToast }) {
     if (!window.confirm(`删除模型「${m.name || m.model_id}」？历史计费记录不受影响。`)) return;
     try {
       await api.adminModels.remove(m.id);
-      showToast('已删除');
+      showToast('已下架，历史关联已保留');
       await load();
     } catch (e) {
       showToast(e.message || '删除失败');
@@ -262,6 +272,8 @@ export default function ModelsTab({ showToast }) {
             : `${m.pricing.per_call ?? '未配置'} 积分/次`}
           {m.is_active ? '' : '（已停用）'}
         </div>
+        {m.kind==='image'&&<div className="key-desc small">{imageOptions(m.extra,m.provider_preset).image_edit?`参考图最多 ${imageOptions(m.extra,m.provider_preset).max_images} 张`:'仅无图生成或未声明参考图能力'} · {imageOptions(m.extra,m.provider_preset).protocol||'图片协议未配置'} · {(m.checks||[]).length?'见分项测试结果':'未验证（人工声明）'}</div>}
+        <details><summary>能力测试与结果</summary><p className="dim small">模型列表连接成功不代表图片功能可用。测试可能收费，请检查测试图片的参考遵从效果。</p><div className="model-test-actions">{(m.kind==='chat'?['chat']:['text','single','multi']).map(task=><button key={task} className="btn secondary small" disabled={!!testing||!m.is_active} onClick={()=>testModel(m,task)}>{testing===m.id+task?'测试中…':({chat:'聊天',text:'文生图',single:'单图编辑',multi:'多图参考'}[task])+'测试'}</button>)}</div>{(m.checks||[]).map(c=><p key={c.task}>{c.task} · {{passed:'已验证',failed:'验证失败',simulated:'仅模拟',stale:'需复测'}[c.status]} · {new Date(c.created_at).toLocaleString()}<br/>{c.message}{c.preview&&<button onClick={()=>setTestPreview(c.preview)}>查看测试结果</button>}</p>)}</details>
       </div>
       <div style={{ display: 'flex', gap: 6 }}>
         <button className="btn secondary small" onClick={() => mToggle(m)}>{m.is_active ? '下架' : '上架'}</button>
@@ -274,6 +286,7 @@ export default function ModelsTab({ showToast }) {
   return (
     <div>
       <ExploreRecoveryPanel showToast={showToast} />
+      {testPreview&&<div className="model-test-preview"><button onClick={()=>setTestPreview(null)}>关闭测试预览</button><img src={testPreview} alt="供应商测试结果，需人工检查参考遵从程度"/></div>}
       <div className="card-title" style={{ marginTop: 4 }}>供应商</div>
       <p className="key-desc small">Key 加密存储，只写不读；「设为默认」决定聊天默认走哪家（可在面板改，不用再改 .env）。</p>
       <div className="pm-list">
@@ -415,8 +428,8 @@ export default function ModelsTab({ showToast }) {
                 <input type="checkbox" checked={!!mForm.prompt_extend} onChange={setM('prompt_extend')} />
                 允许供应商扩展提示词（千问系有效；可能影响构图约束，标准对比建议关闭）
               </label>
-              <label className="key-desc small"><input type="checkbox" checked={!!mForm.image_edit} onChange={setM('image_edit')} />已验证此 OpenAI 兼容模型支持图片编辑接口（DashScope 暂不支持）</label>
-              <label className="key-desc small"><input type="checkbox" checked={!!mForm.multi_reference} disabled={!mForm.image_edit} onChange={setM('multi_reference')} />已验证支持多图参考 image[]</label>
+              <ImageModelConfig value={mForm.image_config} onChange={image_config=>setMForm(f=>({...f,image_config}))}/>
+              <details><summary>按尺寸/质量分档计费（可选）</summary><p className="dim small">留空统一按次计费；配置后必须匹配一条规则，* 表示任意。例：[&#123;"size":"*","quality":"high","per_call":10&#125;]</p><textarea aria-label="图片分档价格" value={mForm.image_rates||''} onChange={setM('image_rates')}/></details>
             </>
           )}
           <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
