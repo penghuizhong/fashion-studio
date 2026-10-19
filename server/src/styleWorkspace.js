@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { sharedImageFile } from "./imageLifecycle.js";
 import path from "node:path";
 import { getDb } from "./db.js";
 import { getConfig } from "./config.js";
@@ -607,47 +608,51 @@ export function mountStyleWorkspace(app) {
         );
       if (g.user_rating === "deleted")
         return res.json({ ok: true, reused: true });
-      const referenced = db
-        .prepare(
-          `SELECT 1 FROM style_dna_templates WHERE source_image_path=? OR cover_generation_id=?
-      UNION ALL SELECT 1 FROM dna_generations WHERE id!=? AND (image_path=? OR source_generation_id=?)
-      UNION ALL SELECT 1 FROM style_references WHERE image_path=?
-      UNION ALL SELECT 1 FROM style_layouts,json_each(json_extract(config_json,'$.selected')) WHERE value=?
-      UNION ALL SELECT 1 FROM explore_jobs WHERE json_extract(snapshot_json,'$.style.source_path')=?
-      UNION ALL SELECT 1 FROM explore_jobs,json_each(json_extract(snapshot_json,'$.style.references')) WHERE json_extract(value,'$.path')=?
-      UNION ALL SELECT 1 FROM exploration_batches b,json_each(b.renders_json) r WHERE b.workflow_kind='explore' AND json_extract(r.value,'$.image_path')=? LIMIT 1`,
-        )
-        .get(
-          g.image_path,
-          g.id,
-          g.id,
-          g.image_path,
-          g.id,
-          g.image_path,
-          g.id,
-          g.image_path,
-          g.image_path,
-          g.image_path,
-        );
-      if (referenced)
-        throw problem(
-          "IMAGE_IN_USE",
-          "图片仍被封面、底图、参考或排版引用，请保留归档",
-          409,
-        );
       const moves = [];
-      const trash = path.join(getConfig().dataDir || "./data", ".style-trash");
-      fs.mkdirSync(trash, { recursive: true });
       try {
-        for (const relative of [g.image_path, g.thumb_path]) {
-          const from = localImage(relative);
-          const to = path.join(trash, crypto.randomUUID());
-          fs.renameSync(from, to);
-          moves.push([from, to]);
-        }
-        db.prepare(
-          "UPDATE dna_generations SET user_rating='deleted',archived=1,rated_at=? WHERE id=?",
-        ).run(stamp(), g.id);
+        db.transaction(() => {
+          const current = db.prepare("SELECT archived,user_rating FROM dna_generations WHERE id=?").get(g.id);
+          if (!current.archived || current.user_rating === "deleted") throw problem("IMAGE_CHANGED", "图片状态已变化，请刷新后重试", 409);
+          const referenced = db
+            .prepare(
+              `SELECT 1 FROM style_dna_templates WHERE source_image_path=? OR cover_generation_id=?
+          UNION ALL SELECT 1 FROM dna_generations WHERE id!=? AND (image_path=? OR source_generation_id=?)
+          UNION ALL SELECT 1 FROM style_references WHERE image_path=?
+          UNION ALL SELECT 1 FROM style_layouts,json_each(json_extract(config_json,'$.selected')) WHERE value=?
+          UNION ALL SELECT 1 FROM explore_jobs WHERE json_extract(snapshot_json,'$.style.source_path')=?
+          UNION ALL SELECT 1 FROM explore_jobs,json_each(json_extract(snapshot_json,'$.style.references')) WHERE json_extract(value,'$.path')=?
+          UNION ALL SELECT 1 FROM exploration_batches b,json_each(b.renders_json) r WHERE b.workflow_kind='explore' AND json_extract(r.value,'$.image_path')=? LIMIT 1`,
+            )
+            .get(
+              g.image_path,
+              g.id,
+              g.id,
+              g.image_path,
+              g.id,
+              g.image_path,
+              g.id,
+              g.image_path,
+              g.image_path,
+              g.image_path,
+            );
+          if (referenced || sharedImageFile(db, g))
+            throw problem(
+              "IMAGE_IN_USE",
+              "图片仍被封面、底图、参考或排版引用，请保留归档",
+              409,
+            );
+          const trash = path.join(getConfig().dataDir || "./data", ".style-trash");
+          fs.mkdirSync(trash, { recursive: true });
+          for (const relative of new Set([g.image_path, g.thumb_path].filter(Boolean))) {
+            const from = localImage(relative);
+            const to = path.join(trash, crypto.randomUUID());
+            fs.renameSync(from, to);
+            moves.push([from, to]);
+          }
+          db.prepare(
+            "UPDATE dna_generations SET user_rating='deleted',archived=1,rated_at=? WHERE id=?",
+          ).run(stamp(), g.id);
+        }).immediate();
       } catch (e) {
         for (const [from, to] of moves.reverse())
           if (fs.existsSync(to)) fs.renameSync(to, from);
@@ -670,6 +675,8 @@ export function mountStyleWorkspace(app) {
         .get(req.params.id);
       if (!g) throw problem("IMAGE_NOT_FOUND", "图片不存在", 404);
       styleTemplate(g.template_id, req);
+      if (req.body.archived === false && g.user_rating === "deleted")
+        throw problem("IMAGE_PERMANENTLY_DELETED", "图片已永久删除，无法取消归档", 409);
       db.prepare("UPDATE dna_generations SET archived=? WHERE id=?").run(
         req.body.archived === false ? 0 : 1,
         g.id,

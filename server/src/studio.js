@@ -1,3 +1,4 @@
+import { imageAvailability } from './imageLifecycle.js';
 import { randomUUID } from 'node:crypto';
 import { problem } from './exploreErrors.js';
 import { mountStyleWorkspace } from './styleWorkspace.js';
@@ -361,13 +362,13 @@ export function mountStudioRoutes(app) {  const db = getDb();
     if (rating === 'liked') conds.push("g.user_rating = 'liked'");
     else if (rating === 'deleted') conds.push("g.user_rating = 'deleted'");
     else if (rating === 'unrated') conds.push("(g.user_rating IS NULL OR g.user_rating = '')");
-    conds.push('g.archived=0');
+    conds.push(rating === 'archived' ? 'g.archived=1' : 'g.archived=0');
     const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
     const total = db.prepare(`SELECT COUNT(*) AS c FROM dna_generations g ${where}`).get(...args).c;
     const rows = db.prepare(
       `SELECT g.*, t.name AS template_name FROM dna_generations g LEFT JOIN style_dna_templates t ON t.id = g.template_id
        ${where} ORDER BY g.id DESC LIMIT ? OFFSET ?`).all(...args, lim, (pg - 1) * lim);
-    res.json({ ok: true, total, page: pg, limit: lim, assets: rows });
+    res.json({ ok: true, total, page: pg, limit: lim, assets: rows.map(imageAvailability) });
   }));
 
   // POST /api/studio/assets/bulk-delete { ids: [] }（≤200）
@@ -383,7 +384,6 @@ export function mountStudioRoutes(app) {  const db = getDb();
         : db.prepare('SELECT * FROM dna_generations WHERE id=?').get(id);
       if (!g) continue;
       db.prepare('UPDATE dna_generations SET archived=1,rated_at=? WHERE id=?').run(now,g.id);
-      db.prepare('UPDATE dna_generations SET archived=1 WHERE id=?').run(g.id);
       n++;
     }
     res.json({ ok: true, deleted: n });

@@ -1,3 +1,4 @@
+import StudioImage from './StudioImage.jsx';
 import StyleWorkspace from './StyleWorkspace.jsx';
 // v0.1.0: 设计台——款式克隆 DNA 模板工作台
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -355,7 +356,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
             <div key={t.id} className="studio-card" data-style-id={t.id} role="button" tabIndex={0} aria-label={`查看${t.name}原图`} onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openCard(t);}}} onClick={() => openCard(t)}>
               <div className="studio-card-cover">
                 {(t.last_thumb || t.source_image_path) ? (
-                  <img src={imgUrl(t.last_thumb || t.source_thumb_path || t.source_image_path)} alt={t.name} loading="lazy" />
+                  <StudioImage thumbnail={t.last_thumb || t.source_thumb_path} original={t.last_image || t.source_image_path} alt={t.name} loading="lazy" />
                 ) : (
                   <div className="studio-card-nocover"><Icon name="sparkles" size={28} /></div>
                 )}

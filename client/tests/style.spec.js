@@ -324,3 +324,18 @@ test('clone analysis compresses its request but saves the uploaded original byte
  await page.getByPlaceholder('模板名称，如：香槟色鱼尾裙').fill('保留上传原始图');await page.getByRole('button',{name:'保存模板',exact:true}).click();await expect(page.locator('.studio-card').filter({hasText:'保留上传原始图'})).toBeVisible();
  const list=await (await request.get('/api/studio/templates')).json();const t=list.templates.find(t=>t.name==='保留上传原始图');const response=await request.get('/'+t.source_image_path);expect(response.ok()).toBeTruthy();expect(Buffer.compare(await response.body(),original)).toBe(0);const metadata=await sharp(await response.body()).metadata();expect(metadata.width).toBe(1400);expect(metadata.height).toBe(900);
 });
+
+test('card preview falls back from missing thumbnail and shows missing files explicitly', async ({page, request}) => {
+  const t = await makeStyle(request, '文件失效测试');
+  const ws = await (await request.get(`/api/studio/templates/${t.id}/workspace`)).json();
+  await page.route('**/' + ws.template.source_thumb_path, route => route.fulfill({status:404, body:''}));
+  await page.goto('/');
+  await page.getByText('设计台', {exact:true}).first().click();
+  const card = page.locator('.studio-card').filter({hasText:'文件失效测试'});
+  await expect(card.locator('.studio-card-cover img')).toHaveAttribute('src', '/' + ws.template.source_image_path);
+  await expect.poll(() => card.locator('.studio-card-cover img').evaluate(el => el.naturalWidth)).toBeGreaterThan(0);
+  await page.route('**/' + ws.template.source_image_path, route => route.fulfill({status:404, body:''}));
+  await page.reload();
+  await page.getByText('设计台', {exact:true}).first().click();
+  await expect(card.getByText('图片文件缺失', {exact:true})).toBeVisible();
+});

@@ -1,3 +1,4 @@
+import StudioImage from "./StudioImage.jsx";
 import StyleLayoutEditor from "./StyleLayoutEditor.jsx";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "../api.js";
@@ -579,20 +580,20 @@ export default function StyleWorkspace({
                     <figure
                       className={mobileCompare === "before" ? "selected" : ""}
                     >
-                      <img src={`/${sourceImage}`} alt="本次底图" />
+                      <StudioImage original={sourceImage} alt="本次底图" />
                       <figcaption>本次底图</figcaption>
                     </figure>
                     <figure
                       className={mobileCompare === "after" ? "selected" : ""}
                     >
-                      <img src={`/${file}`} alt="生成结果" />
+                      <StudioImage original={file} alt="生成结果" />
                       <figcaption>生成结果</figcaption>
                     </figure>
                   </div>
                 </>
               ) : file ? (
                 <div className="style-preview-image">
-                  <img src={`/${file}`} alt={data.template.name} />
+                  <StudioImage original={file} alt={data.template.name} />
                 </div>
               ) : (
                 <div className="style-empty">
@@ -1128,7 +1129,7 @@ export default function StyleWorkspace({
                         <div className="style-reference-list">
                           {references.map((r) => (
                             <div key={r.id}>
-                              <img src={`/${r.thumb_path}`} alt="辅助参考" />
+                              <StudioImage thumbnail={r.thumb_path} original={r.image_path} alt="辅助参考" />
                               <select
                                 aria-label={`参考图${r.id}用途`}
                                 value={
@@ -1459,8 +1460,8 @@ export default function StyleWorkspace({
                                   setPreview({ ...i, path: i.image_path })
                                 }
                               >
-                                <img
-                                  src={`/${i.thumb_path || i.image_path}`}
+                                <StudioImage
+                                  thumbnail={i.thumb_path} original={i.image_path}
                                   alt={`图片 ${i.id}`}
                                   loading="lazy"
                                 />

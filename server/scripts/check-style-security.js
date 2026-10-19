@@ -336,6 +336,62 @@ try {
     );
     assert.ok(fs.existsSync(path.join(process.env.DATA_DIR, image.image_path)));
   });
+  const addImage = (imagePath, thumbPath = imagePath, user = "alice") => Number(db.prepare(
+    "INSERT INTO dna_generations(template_id,user_id,image_path,thumb_path,created_at) VALUES(?,?,?,?,?)"
+  ).run(id, user, imagePath, thumbPath, now).lastInsertRowid);
+  const fixtureFile = () => {
+    const relative = `uploads/studio/${crypto.randomUUID()}.png`;
+    fs.writeFileSync(path.join(process.env.DATA_DIR, relative), png);
+    return relative;
+  };
+  await test("archiving one shared asset preserves every other record and original bytes", async () => {
+    const file = fixtureFile(), thumb = fixtureFile();
+    const first = addImage(file, thumb), second = addImage(file, thumb), third = addImage(file, thumb);
+    await req("bob", "POST", `/api/studio/generations/${first}/rate`, {rating:"deleted"}, 404);
+    await req("alice", "POST", `/api/studio/generations/${first}/rate`, {rating:"deleted"});
+    await req("alice", "POST", "/api/studio/assets/bulk-delete", {ids:[second]});
+    assert.equal(db.prepare("SELECT archived FROM dna_generations WHERE id=?").get(third).archived, 0);
+    const active = await req("alice", "GET", "/api/studio/assets");
+    assert.ok(active.assets.some(a => a.id === third && a.image_available && a.thumb_available));
+    assert.ok(!active.assets.some(a => a.id === first || a.id === second));
+    const archived = await req("alice", "GET", "/api/studio/assets?rating=archived");
+    assert.ok(archived.assets.some(a => a.id === first));
+    await req("alice", "POST", `/api/studio/generations/${second}/archive`, {archived:false});
+    assert.equal(db.prepare("SELECT archived FROM dna_generations WHERE id=?").get(second).archived, 0);
+    await req("alice", "POST", `/api/studio/generations/${first}/permanent-delete`, {confirm:"永久删除"}, 409);
+    for (const f of [file, thumb]) assert.deepEqual(fs.readFileSync(path.join(process.env.DATA_DIR, f)), png);
+    const response = await originalFetch(base + "/" + file, {headers:{Cookie:`soulchat_session=${tokens.alice}`}});
+    assert.equal(response.status, 200);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+  });
+  await test("permanent deletion protects a thumbnail shared with another user's original", async () => {
+    const file = fixtureFile(), thumb = fixtureFile();
+    const target = addImage(file, thumb);
+    addImage(thumb, fixtureFile(), "bob");
+    await req("alice", "POST", `/api/studio/generations/${target}/archive`, {});
+    await req("alice", "POST", `/api/studio/generations/${target}/permanent-delete`, {confirm:"永久删除"}, 409);
+    assert.deepEqual(fs.readFileSync(path.join(process.env.DATA_DIR, thumb)), png);
+  });
+  await test("missing originals are reported; unique original/thumbnail paths can be deleted once", async () => {
+    const file = fixtureFile();
+    const target = addImage(file);
+    await req("alice", "POST", `/api/studio/generations/${target}/archive`, {});
+    await req("alice", "POST", `/api/studio/generations/${target}/permanent-delete`, {confirm:"永久删除"});
+    assert.equal(fs.existsSync(path.join(process.env.DATA_DIR, file)), false);
+    await req("alice", "POST", `/api/studio/generations/${target}/archive`, {archived:false}, 409);
+    const missing = addImage("uploads/studio/missing.png", fixtureFile());
+    const a = (await req("alice", "GET", "/api/studio/assets")).assets.find(a => a.id === missing);
+    assert.equal(a.image_available, false);
+    assert.equal(a.thumb_available, true);
+  });
+  await test("failed file staging restores the original and leaves metadata unchanged", async () => {
+    const file = fixtureFile();
+    const target = addImage(file, "uploads/studio/missing-thumbnail.png");
+    await req("alice", "POST", `/api/studio/generations/${target}/archive`, {});
+    await req("alice", "POST", `/api/studio/generations/${target}/permanent-delete`, {confirm:"永久删除"}, 404);
+    assert.deepEqual(fs.readFileSync(path.join(process.env.DATA_DIR, file)), png);
+    assert.notEqual(db.prepare("SELECT user_rating FROM dna_generations WHERE id=?").get(target).user_rating, "deleted");
+  });
   await test("network uncertainty preserves reserve and blocks blind resubmission", async () => {
     mode = "timeout";
     const q = (
