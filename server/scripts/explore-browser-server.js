@@ -41,6 +41,7 @@ for (const kind of ['chat', 'image'])
       1,
       now
     );
+db.prepare('INSERT INTO models(id,provider_id,kind,model_id,name,pricing_json,extra_json,is_active,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run('browser-reasoner','browser-provider','chat','deepseek-reasoner','固定推理模型','{"input_per_1m":100,"output_per_1m":200}','{}',1,now);
 setSetting('worker_model', 'test/chat/one');
 const server = createApp().listen(3310, '127.0.0.1', () =>
   console.log('browser fixture ready')

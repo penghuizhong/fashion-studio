@@ -21,7 +21,13 @@ import {
   syncBatch,
 } from './exploreJobs.js';
 import { addLedger, recordByokUsage } from './points.js';
-import { postJson, stripFences } from './llm.js';
+import {
+  MAX_EXPLORE_COUNT,
+  expandOutputBudget,
+  receivedProposalCount,
+  progressRoute,
+} from './exploreProgress.js';
+import { postJson, postJsonStream, stripFences } from './llm.js';
 import { getPreset } from './dnaPresets.js';
 
 // 旧 11 字段保留作回退（无预设时的兼容）；正常流程一律走预设
@@ -120,7 +126,7 @@ DNA 有 ${fields.length} 个字段，每个字段格式为 {"value": ..., "confi
 ${fieldDesc}。
 
 严格要求：
-1. 只输出 JSON，格式：{"proposals": [{"dna": {${fields.length}字段}, "rationale": "一句话说明这个方案的差异点"}]}，不要 Markdown 代码块或说明文字。
+1. 只输出 JSON，格式：{"proposals": [{"dna": {${fields.length}字段}, "rationale": "一句话说明这个方案的差异点"}]}，不要 Markdown 代码块或说明文字；使用紧凑 JSON 不缩进，rationale 不超过 60 字。
 2. N 个方案的发散轴组合必须两两互异（这是发散的核心，不许换汤不换药）。
 3. 规则优先级：用户明确要求及锁定字段 > 类目补充规则 > 字段 hint > 发散轴建议；非轴字段填与灵感自洽的合理值；灵感为空时按当季流行风格自由发散。
 4. confidence 按你对该取值的把握填写。
@@ -218,16 +224,19 @@ export async function expandIntent({
   provider,
   onUsage,
   locked = {},
+  thinking = false,
+  onProgress,
 }) {
   const fields = fieldsOf(preset);
   const validKeys = new Set(fields.map((f) => f.key));
   const ax = [...new Set((axes || []).map((a) => String(a).trim()))];
-  const n = Math.floor(Number(count)) || 6;
+  const n = count === undefined ? 6 : Number(count);
   if (ax.length === 0) throw new Error('至少选择一个发散轴');
   for (const a of ax) {
     if (!validKeys.has(a)) throw new Error(`非法发散轴: ${a}`);
   }
-  if (n < 2 || n > 8) throw new Error('候选数量须在 2..8 之间');
+  if (!Number.isInteger(n) || n < 1 || n > MAX_EXPLORE_COUNT)
+    throw new Error(`候选数量须在 1..${MAX_EXPLORE_COUNT} 之间`);
   validateLocks(locked, fields, ax);
   const intent = String(intentText || '').slice(0, 500);
 
@@ -241,15 +250,37 @@ export async function expandIntent({
   const labelOf = (k) => (fields.find((f) => f.key === k) || {}).label || k;
   const userPrompt = `灵感：${intent || '（空，按流行风格自由发散）'}\n发散轴：${ax.map((a) => `${a}(${labelOf(a)})`).join(', ')}\n数量：${n}\n锁定字段（必须逐字保留）：${JSON.stringify(locked)}`;
   let lastErr = null;
-  for (const temperature of [0.8, 0.5]) {
-    const { json, usage } = await postJson({
+  let attempt = 0;
+  for (const temperature of [0.65, 0.4]) {
+    attempt++;
+    onProgress?.({
+      stage: attempt === 1 ? 'waiting' : 'repairing',
+      attempt,
+      message:
+        attempt === 1
+          ? '请求已提交，等待模型响应'
+          : '方案未通过校验，正在进行一次格式修复',
+      received_chars: 0,
+      received_proposals: 0,
+    });
+    const { json, usage } = await (onProgress ? postJsonStream : postJson)({
       model,
       temperature,
       apiKey,
       baseUrl,
       provider,
       strictCredentials: true,
-      maxTokens: 4096,
+      maxTokens: expandOutputBudget(fields, n, thinking),
+      thinking,
+      onProgress,
+      onContentProgress: (text) =>
+        onProgress?.({
+          stage: 'generating',
+          attempt,
+          message: '正在接收候选方案（尚未校验）',
+          received_chars: text.length,
+          received_proposals: receivedProposalCount(text),
+        }),
       messages: [
         { role: 'system', content: buildExpandSystem(preset) },
         {
@@ -268,6 +299,11 @@ export async function expandIntent({
         json.choices[0].message &&
         json.choices[0].message.content) ||
       '';
+    onProgress?.({
+      stage: 'validating',
+      attempt,
+      message: '正在校验数量、锁定字段和方案差异',
+    });
     try {
       const parsed = JSON.parse(stripFences(text));
       const proposals = validateProposals(parsed?.proposals, {
@@ -353,14 +389,17 @@ export function mountExploreRoutes(app) {
   );
   app.post(
     '/api/studio/explore',
-    ah(async (req, res) => {
+    progressRoute(async (req, res) => {
       const b = req.body || {},
         preset = getPreset(b.preset_id);
       if (!preset?.is_active) throw problem('INVALID_PRESET', '请选择服装类目');
       const axes = Array.isArray(b.axes) ? b.axes : defaultAxesFor(preset),
         count = b.count ?? 6;
-      if (!Number.isInteger(count) || count < 2 || count > 8)
-        throw problem('INVALID_COUNT', '候选数量须为 2..8 的整数');
+      if (!Number.isInteger(count) || count < 1 || count > MAX_EXPLORE_COUNT)
+        throw problem(
+          'INVALID_COUNT',
+          `候选数量须为 1..${MAX_EXPLORE_COUNT} 的整数`
+        );
       const locked = b.locked_fields || {};
       validateLocks(locked, fieldsOf(preset), axes);
       if (
@@ -369,6 +408,27 @@ export function mountExploreRoutes(app) {
       )
         throw problem('INVALID_AXES', '请选择有效发散轴');
       const model = resolveExploreModel(req, b.expand_model_id, 'chat');
+      if (b.thinking !== undefined && typeof b.thinking !== 'boolean')
+        throw problem('INVALID_THINKING', '思考开关必须为布尔值');
+      const thinking =
+        model.thinking_control === 'forced_on'
+          ? true
+          : model.thinking_control === 'unsupported'
+            ? false
+            : b.thinking === true;
+      const timings = { started_at: new Date().toISOString(), attempts: 0 };
+      const started = Date.now();
+      const onProgress = (data) => {
+        timings.attempts = Math.max(timings.attempts, data.attempt || 0);
+        if (
+          data.stage === 'receiving' &&
+          timings.first_response_ms === undefined
+        )
+          timings.first_response_ms = Date.now() - started;
+        if (data.received_chars > 0 && timings.first_content_ms === undefined)
+          timings.first_content_ms = Date.now() - started;
+        req.exploreProgress?.(data);
+      };
       const requestKey = b.request_key || randomUUID();
       if (!/^[A-Za-z0-9_-]{8,100}$/.test(requestKey))
         throw problem('INVALID_REQUEST_KEY', '需要有效请求标识');
@@ -382,6 +442,7 @@ export function mountExploreRoutes(app) {
         locked,
         intent,
         model_id: model.id,
+        thinking,
       });
       const prior = db
         .prepare('SELECT * FROM explore_expansions WHERE id=?')
@@ -443,13 +504,16 @@ export function mountExploreRoutes(app) {
               1,
               Math.ceil(
                 (inputBudget * model.pricing.input_per_1m +
-                  4096 * model.pricing.output_per_1m) /
+                  expandOutputBudget(preset.fields, count, thinking) *
+                    model.pricing.output_per_1m) /
                   1e6
               )
             )
           : 0;
       const snapshot = {
         request,
+        thinking,
+        timings,
         preset,
         locked_fields: locked,
         expand_model: publicModel(model),
@@ -503,6 +567,8 @@ export function mountExploreRoutes(app) {
           apiKey: model.apiKey,
           baseUrl: model.baseUrl,
           provider: model.provider,
+          thinking,
+          onProgress: req.exploreProgress ? onProgress : undefined,
           onUsage: (usage) => {
             usedInput += usage?.input || 0;
             usedOutput += usage?.output || 0;
@@ -545,6 +611,7 @@ export function mountExploreRoutes(app) {
         db.transaction(() => {
           // Product policy: unsuccessful/schema-invalid expansion is refunded; upstream cost is retained in audit.
           const charged = complete ? spent : 0;
+          timings.total_ms = Date.now() - started;
           snapshot.usage = { input: usedInput, output: usedOutput };
           if (complete && model.billable)
             addLedger(
@@ -604,6 +671,11 @@ export function mountExploreRoutes(app) {
           );
         })();
       }
+      req.exploreProgress?.({
+        stage: 'complete',
+        message: '方案校验通过，已保存',
+        received_proposals: count,
+      });
       res.json({
         ok: true,
         id: result.lastInsertRowid,
@@ -953,7 +1025,7 @@ export function mountExploreRoutes(app) {
   // GET /api/studio/explore → 列表
   app.get(
     '/api/studio/explore',
-    ah(async (req, res) => {
+    progressRoute(async (req, res) => {
       const uid = uidOf(req);
       const inc = req.query && req.query.include_archived === '1';
       const limit = Math.min(

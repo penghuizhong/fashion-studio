@@ -14,7 +14,7 @@ function DnaCard({ dna, rationale, checked, onToggle, fields }) {
       className={`explore-dna-card${checked ? ' checked' : ''}`}
       onClick={onToggle}
     >
-      <label className="explore-check" onClick={e=>e.stopPropagation()}>
+      <label className="explore-check" onClick={(e) => e.stopPropagation()}>
         <input
           type="checkbox"
           checked={!!checked}
@@ -159,7 +159,9 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
           (r.models || []).find((x) => x.id === renderId) ||
           (r.models || []).find((x) => x.price_per_call !== null);
         setRenderId(m?.id || '');
-        setSize(previous=>m?.sizes?.includes(previous)?previous:m?.sizes?.[0] || '');
+        setSize((previous) =>
+          m?.sizes?.includes(previous) ? previous : m?.sizes?.[0] || ''
+        );
       })
       .catch(fail);
     return () => {
@@ -215,7 +217,31 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     setAxes(defaultAxes(p?.fields || []));
     setLocked({});
   };
+  const [thinking, setThinking] = useState(false),
+    [progress, setProgress] = useState(null),
+    [elapsed, setElapsed] = useState(0);
+  const thinkingMode =
+    expandModels.find((m) => m.id === expandId)?.thinking_control ||
+    'best_effort';
+  const effectiveThinking =
+    thinkingMode === 'forced_on' ||
+    (thinkingMode !== 'unsupported' && thinking);
+  useEffect(() => {
+    if (!busy || !progress) return;
+    const start = Date.now();
+    const t = setInterval(
+      () => setElapsed(Math.floor((Date.now() - start) / 1000)),
+      1000
+    );
+    return () => clearInterval(t);
+  }, [busy, !!progress]);
   const startExplore = async () => {
+    if (!Number.isInteger(count) || count < 1 || count > 16) {
+      setError('请输入 1–16 的整数候选数量');
+      return;
+    }
+    setProgress({ message: '正在连接发散服务', stage: 'preparing' });
+    setElapsed(0);
     setBusy(true);
     setError('');
     try {
@@ -239,14 +265,18 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
         preset_id: presetId,
         expand_model_id: expandId,
         locked_fields,
+        thinking: effectiveThinking,
       };
       const signature = JSON.stringify(params);
       if (expansionRequest.current.signature !== signature)
         expansionRequest.current = { signature, key: crypto.randomUUID() };
-      const r = await api.studio.exploreCreate({
-        ...params,
-        request_key: expansionRequest.current.key,
-      });
+      const r = await api.studio.exploreCreate(
+        {
+          ...params,
+          request_key: expansionRequest.current.key,
+        },
+        setProgress
+      );
       setRetrySource(null);
       setBatch(r);
       setSelected(r.proposals.map((_, i) => i));
@@ -497,7 +527,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                 )}
               </div>
               {step === 'intent' && (
-                <>
+                <fieldset disabled={busy} className="explore-intent-fields">
                   <label className="key-label">
                     服装类目
                     <select
@@ -584,6 +614,28 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                     ))}
                   </div>
                   <label className="key-label">
+                    自定义数量（1–16）
+                    <input
+                      type="number"
+                      className="text-input"
+                      aria-label="自定义候选数量"
+                      min={1}
+                      max={16}
+                      step={1}
+                      value={Number.isNaN(count) ? '' : count}
+                      disabled={busy}
+                      onChange={(e) =>
+                        setCount(
+                          e.target.value === '' ? NaN : Number(e.target.value)
+                        )
+                      }
+                    />
+                  </label>
+                  <p className="small dim">
+                    数量越多，生成时间和费用通常越高；建议先生成 4–6
+                    个方案再筛选。
+                  </p>
+                  <label className="key-label">
                     发散模型
                     <select
                       aria-label="发散模型"
@@ -598,6 +650,50 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                       ))}
                     </select>
                   </label>
+                  <label className="key-input-row">
+                    <input
+                      type="checkbox"
+                      aria-label="思考模式"
+                      checked={effectiveThinking}
+                      disabled={
+                        busy ||
+                        ['forced_on', 'unsupported'].includes(thinkingMode)
+                      }
+                      onChange={(e) => setThinking(e.target.checked)}
+                    />
+                    思考模式（
+                    {thinkingMode === 'forced_on' ? '模型固定开启' : '默认关闭'}
+                    ）
+                  </label>
+                  <p className="small dim">
+                    {thinkingMode === 'forced_on'
+                      ? '该模型固定使用思考，无法关闭；需要更快响应可换用非推理模型。'
+                      : thinkingMode === 'unsupported'
+                        ? '当前接口未提供可切换的思考模式。'
+                        : thinkingMode === 'best_effort'
+                          ? '自定义供应商可能不支持思考参数，实际行为以供应商为准。'
+                          : '开启可能增加等待时间和 token 用量；关闭优先获得更快反馈。'}
+                  </p>
+                  {busy && progress && (
+                    <div
+                      role="status"
+                      className="explore-estimate"
+                      aria-live="polite"
+                    >
+                      {progress.message} · 已等待{' '}
+                      {Math.max(
+                        elapsed,
+                        Math.floor((progress.elapsed_ms || 0) / 1000)
+                      )}{' '}
+                      秒
+                      {progress.attempt
+                        ? ` · 第 ${progress.attempt} 次调用`
+                        : ''}
+                      {progress.received_chars > 0
+                        ? ` · 已接收 ${progress.received_chars} 字符，${progress.received_proposals || 0}/${count} 个方案待校验`
+                        : ''}
+                    </div>
+                  )}
                   <p className="small dim">
                     只生成文字方案，不调用图片模型。本次选择不会更改全局后台模型。平台按实际
                     token
@@ -638,11 +734,22 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                       </button>
                     )}
                   </div>
-                </>
+                </fieldset>
               )}
               {step === 'proposals' && (
                 <>
                   <p>
+                    {batch?.snapshot?.timings?.total_ms !== undefined && (
+                      <span className="small dim">
+                        本次耗时{' '}
+                        {(batch.snapshot.timings.total_ms / 1000).toFixed(1)} 秒
+                        {batch.snapshot.timings.first_content_ms !== undefined
+                          ? ` · 首段输出 ${(batch.snapshot.timings.first_content_ms / 1000).toFixed(1)} 秒`
+                          : ''}{' '}
+                        · {batch.snapshot.timings.attempts || 1} 次调用
+                        <br />
+                      </span>
+                    )}
                     {selected.length}/{proposals.length} 个已选 · 发散模型：
                     {batch?.snapshot?.expand_model?.name || '历史记录'}
                   </p>
@@ -829,7 +936,10 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                               src={imgUrl(r.thumb_path || r.image_path)}
                               alt={`候选 ${r.proposal_idx + 1}`}
                             />
-                            <label className="explore-check" onClick={e=>e.stopPropagation()}>
+                            <label
+                              className="explore-check"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <input
                                 type="checkbox"
                                 aria-label={`收取候选${r.proposal_idx + 1}`}

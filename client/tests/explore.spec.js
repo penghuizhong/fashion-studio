@@ -145,3 +145,36 @@ test('opening history with another category does not change the next new form sc
     page.locator('.explore-axis').filter({ hasText: '领口' })
   ).toHaveCount(0);
 });
+
+test('custom candidate count and thinking toggle reach the expansion request', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByText('设计台', { exact: true }).first().click();
+  await page.getByRole('button', { name: '创意衍生', exact: true }).click();
+  await page.getByLabel('服装类目', { exact: true }).selectOption('suit');
+  await page
+    .getByLabel('发散模型', { exact: true })
+    .selectOption('browser-chat-two');
+  await expect(page.getByLabel('思考模式', { exact: true })).not.toBeChecked();
+  await page.getByLabel('思考模式', { exact: true }).check();
+  await page.getByLabel('自定义候选数量', { exact: true }).fill('3');
+  const request = page.waitForRequest(
+    (r) => r.url().endsWith('/api/studio/explore') && r.method() === 'POST'
+  );
+  await page.getByRole('button', { name: '开始发散', exact: true }).click();
+  const body = (await request).postDataJSON();
+  expect(body.count).toBe(3);
+  expect(body.thinking).toBe(true);
+  expect(body.stream_progress).toBe(true);
+  await expect(page.locator('.explore-dna-card')).toHaveCount(3);
+});
+
+test('reasoning-only model shows enforced thinking capability instead of an ineffective off switch',async({page})=>{
+  await page.goto('/');await page.getByText('设计台',{exact:true}).first().click();
+  await page.getByRole('button',{name:'创意衍生',exact:true}).click();
+  await page.getByLabel('发散模型',{exact:true}).selectOption('browser-reasoner');
+  await expect(page.getByLabel('思考模式',{exact:true})).toBeChecked();
+  await expect(page.getByLabel('思考模式',{exact:true})).toBeDisabled();
+  await expect(page.getByText(/该模型固定使用思考，无法关闭/)).toBeVisible();
+});

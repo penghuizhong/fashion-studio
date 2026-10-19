@@ -41,6 +41,8 @@ let imageCalls = 0,
   lastRoute = '',
   lastModel = '',
   repairCalls = 0;
+let streamFixture = false,
+  lastTextBody;
 global.fetch = async (url, opts = {}) => {
   const u = String(url);
   if (!u.includes('fixture.invalid')) return realFetch(url, opts);
@@ -53,6 +55,7 @@ global.fetch = async (url, opts = {}) => {
   );
   if (u.endsWith('/chat/completions')) {
     textCalls++;
+    lastTextBody = b;
     if (textMode === 'timeout')
       throw new DOMException('timed out', 'TimeoutError');
     if (textMode === 'auth') return new Response('{}', { status: 401 });
@@ -81,6 +84,41 @@ global.fetch = async (url, opts = {}) => {
       (textMode === 'repair' && repairCalls++ === 0)
     )
       delete proposals[0].dna.lapel;
+    if (streamFixture && b.stream) {
+      const text = JSON.stringify({ proposals });
+      const payload =
+        [
+          {
+            choices: [
+              { delta: { reasoning_content: 'PRIVATE_REASONING_DO_NOT_SEND' } },
+            ],
+          },
+          ...Array.from({ length: Math.ceil(text.length / 101) }, (_, i) => ({
+            choices: [
+              { delta: { content: text.slice(i * 101, (i + 1) * 101) } },
+            ],
+          })),
+          {
+            choices: [{ finish_reason: 'stop', delta: {} }],
+            usage: { prompt_tokens: 120, completion_tokens: 200 },
+          },
+        ]
+          .map((j) => 'data: ' + JSON.stringify(j) + '\n\n')
+          .join('') + 'data: [DONE]\n\n';
+      return new Response(
+        new ReadableStream({
+          async start(controller) {
+            const bytes = new TextEncoder().encode(payload);
+            for (let i = 0; i < bytes.length; i += 173) {
+              controller.enqueue(bytes.slice(i, i + 173));
+              await new Promise((r) => setTimeout(r, 1));
+            }
+            controller.close();
+          },
+        }),
+        { headers: { 'Content-Type': 'text/event-stream' } }
+      );
+    }
     return Response.json({
       choices: [{ message: { content: JSON.stringify({ proposals }) } }],
       usage: { prompt_tokens: 120, completion_tokens: 200 },
@@ -601,6 +639,8 @@ try {
     assert.equal(getBalance(uid), balance);
     textMode = 'repair';
     repairCalls = 0;
+    let streamFixture = false,
+      lastTextBody;
     await create({ count: 2 });
     textMode = 'success';
     assert.equal(repairCalls, 2);
@@ -1034,6 +1074,136 @@ try {
       .get();
     assert.equal(settled.accounting_delta, -c.expand_cost);
     assert.equal(settled.tokens_input, 120);
+  });
+  await test('custom count accepts 1,3,16 and rejects invalid bounds; dynamic output budget', async () => {
+    for (const n of [1, 3, 16]) {
+      const c = await create({ count: n });
+      assert.equal(c.proposals.length, n);
+    }
+    for (const n of [0, -1, 17, 2.5, '3'])
+      assert.equal(
+        (
+          await req(
+            'POST',
+            '/api/studio/explore',
+            {
+              preset_id: 'suit',
+              axes: ['fabric'],
+              count: n,
+              expand_model_id: 'bchat',
+            },
+            cookie
+          )
+        ).json.code,
+        'INVALID_COUNT'
+      );
+    assert.ok(lastTextBody.max_tokens > 4096);
+  });
+  await test('thinking defaults off and explicit on reaches provider; model control is truthful', async () => {
+    const { thinkingParams, thinkingControl } =
+      await import('../src/providers.js');
+    await create({ count: 3, thinking: false });
+    assert.equal(lastTextBody.reasoning.enabled, false);
+    const c = await create({ count: 3, thinking: true });
+    assert.equal(lastTextBody.reasoning.enabled, true);
+    assert.equal(c.snapshot.thinking, true);
+    assert.deepEqual(thinkingParams('dashscope', 'qwen-plus', true), {
+      enable_thinking: true,
+    });
+    assert.deepEqual(thinkingParams('zhipu', 'glm-4.6', false), {
+      thinking: { type: 'disabled' },
+    });
+    assert.equal(thinkingControl('deepseek', 'deepseek-reasoner'), 'forced_on');
+    assert.equal(thinkingControl('custom', 'unlisted-model'), 'best_effort');
+    db.prepare("UPDATE models SET model_id='deepseek-reasoner' WHERE id='bchat'").run();
+    const forced=await create({count:3,thinking:false});assert.equal(forced.snapshot.thinking,true);assert.equal(forced.snapshot.expand_model.thinking_control,'forced_on');
+    db.prepare("UPDATE models SET model_id='b/chat' WHERE id='bchat'").run();
+  });
+  await test('SSE reports real output, validates and completes without leaking reasoning; errors stay structured', async () => {
+    streamFixture = true;
+    const res = await realFetch(base + '/api/studio/explore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        preset_id: 'suit',
+        axes: ['fabric'],
+        count: 3,
+        expand_model_id: 'bchat',
+        thinking: false,
+        stream_progress: true,
+      }),
+    });
+    assert.match(res.headers.get('content-type'), /text\/event-stream/);
+    const text = await res.text();
+    streamFixture = false;
+    assert.ok(!text.includes('PRIVATE_REASONING_DO_NOT_SEND'));
+    const frames = text
+      .split('\n\n')
+      .filter(Boolean)
+      .map((f) => ({
+        event: f.match(/event: (.*)/)?.[1],
+        data: JSON.parse(f.match(/data: (.*)/)[1]),
+      }));
+    assert.ok(
+      frames.some(
+        (f) => f.data.stage === 'generating' && f.data.received_proposals === 3
+      )
+    );
+    assert.ok(frames.some((f) => f.data.stage === 'validating'));
+    const result = frames.find((f) => f.event === 'result').data;
+    assert.equal(result.proposals.length, 3);
+    assert.ok(result.snapshot.timings.first_content_ms >= 0);
+    assert.equal(result.snapshot.timings.attempts, 1);
+    const bad = await realFetch(base + '/api/studio/explore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ count: 0, stream_progress: true }),
+    });
+    const badText = await bad.text();
+    assert.match(badText, /event: error/);
+    assert.ok(!badText.includes('stack'));
+  });
+  await test('frontend stream parser delivers progress and result, and rejects incomplete connection', async () => {
+    const client = await import('../../client/src/api.js');
+    client.setMultiUserMode(true);
+    const upstreamFetch = global.fetch;
+    streamFixture = true;
+    global.fetch = (url, opts) =>
+      String(url).startsWith('/api/')
+        ? realFetch(base + url, {
+            ...opts,
+            headers: { ...opts.headers, Cookie: cookie },
+          })
+        : upstreamFetch(url, opts);
+    try {
+      const updates = [],
+        c = await client.api.studio.exploreCreate(
+          {
+            preset_id: 'suit',
+            axes: ['fabric'],
+            count: 3,
+            expand_model_id: 'bchat',
+          },
+          (p) => updates.push(p)
+        );
+      assert.equal(c.proposals.length, 3);
+      assert.ok(
+        updates.some(
+          (p) => p.stage === 'generating' && p.received_proposals === 3
+        )
+      );
+      global.fetch = async () =>
+        new Response('event: progress\ndata: {"stage":"waiting"}\n\n', {
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      await assert.rejects(
+        () => client.api.studio.exploreCreate({}, () => {}),
+        /连接已中断/
+      );
+    } finally {
+      streamFixture = false;
+      global.fetch = upstreamFetch;
+    }
   });
   console.log(`Explore integration: ${passed}/${passed} passed`);
 } catch (e) {

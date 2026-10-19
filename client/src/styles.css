@@ -4081,3 +4081,6 @@ select.text-input { cursor: pointer; }
   .explore-modal .explore-grid { grid-template-columns: 1fr; }
   .explore-modal .explore-stepbar { gap: 8px; }
 }
+.explore-intent-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.explore-intent-fields > .key-label { display: grid; gap: 8px; margin: 14px 0; }
+.explore-intent-fields .key-label select { width: 100%; }

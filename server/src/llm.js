@@ -120,7 +120,7 @@ const EXTRACT_SYSTEM = `你是记忆整理助手。根据当前 user.md、memory
 // 无可用 Key 时的统一提示（app.js 做上游 401 拦截时复用）
 export const NO_KEY_MESSAGE = '未配置 API Key：请在侧边栏底部「API 设置」中填写你的 Key（或由管理员在「设置 → 模型管理」中配置供应商）';
 
-async function postCompletions({ model, messages, temperature, stream, onToken, apiKey, baseUrl, signal, provider, maxTokens, strictCredentials = false }) {
+async function postCompletions({ model, messages, temperature, stream, onToken, apiKey, baseUrl, signal, provider, maxTokens, strictCredentials = false, thinking }) {
 const cfg = getConfig();
 // v0.2.0: 平台默认 key/address 改读统一注册表（默认供应商）；env 做最终保底（老部署不断）
 // 优先级：调用方个人 Key（BYOK）> 默认供应商 > 服务器 .env
@@ -153,7 +153,7 @@ body: JSON.stringify({
   temperature,
   stream,
   // v1.20.0: 按提供商发对应的关思考参数（providers.js）；custom 回退保留 qwen 猜测
-  ...thinkingParams(provider, model),
+  ...thinkingParams(provider, model, thinking),
   // v1.20.0: 连通性测试用（max_tokens: 1，最小开销）
   ...(maxTokens ? { max_tokens: maxTokens } : {}),
   // 流式时让 OpenRouter 在最后一个 chunk 返回真实用量（计费用）
@@ -709,5 +709,100 @@ export async function detectMentions({ text, members, excludeIds, model, apiKey,
     return candidates.filter((m) => out.includes(m.name)).map((m) => m.id);
   } catch {
     return [];
+  }
+}
+
+// Dedicated structured-output stream. Progress is metadata only, never chain-of-thought text.
+export async function postJsonStream(opts) {
+  const res = await postCompletions({ ...opts, stream: true });
+  opts.onProgress?.({
+    stage: 'receiving',
+    message: '模型已响应，正在接收方案',
+  });
+  if (!(res.headers.get('content-type') || '').includes('text/event-stream')) {
+    const json = await res.json();
+    return {
+      json,
+      usage: json?.usage
+        ? {
+            input: json.usage.prompt_tokens || 0,
+            output: json.usage.completion_tokens || 0,
+          }
+        : null,
+    };
+  }
+  const reader = res.body.getReader(),
+    decoder = new TextDecoder();
+  let buffer = '',
+    content = '',
+    usage = null,
+    done = false,
+    terminal = false,
+    lastEmit = 0;
+  const handle = (line) => {
+    if (!line.startsWith('data:')) return;
+    const raw = line.slice(5).trim();
+    if (!raw) return;
+    if (raw === '[DONE]') {
+      done = true;
+      terminal = true;
+      return;
+    }
+    let json;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      throw Object.assign(new Error('Invalid upstream stream'), {
+        name: 'AbortError',
+      });
+    }
+    if (json.error)
+      throw Object.assign(new Error('Upstream stream interrupted'), {
+        name: 'AbortError',
+      });
+    if (json.usage)
+      usage = {
+        input: json.usage.prompt_tokens || 0,
+        output: json.usage.completion_tokens || 0,
+      };
+    const choice = json.choices?.[0],
+      delta = choice?.delta;
+    if (choice?.finish_reason) done = true;
+    if (typeof delta?.content === 'string') content += delta.content;
+    if (Date.now() - lastEmit > 150) {
+      lastEmit = Date.now();
+      if (content.length) opts.onContentProgress?.(content);
+      else
+        opts.onProgress?.({
+          stage: 'processing',
+          message: '模型处理中，尚未返回候选内容',
+        });
+    }
+    if (content.length > 2000000)
+      throw new Error('Structured output too large');
+  };
+  try {
+    while (true) {
+      const r = await reader.read();
+      if (r.done) break;
+      buffer += decoder.decode(r.value, { stream: true });
+      let i;
+      while ((i = buffer.indexOf('\n')) >= 0) {
+        handle(buffer.slice(0, i).trimEnd());
+        buffer = buffer.slice(i + 1);
+      }
+      if (terminal) break;
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) handle(buffer.trim());
+    if (!done)
+      throw Object.assign(new Error('Stream ended without completion'), {
+        name: 'AbortError',
+      });
+    opts.onContentProgress?.(content);
+    return { json: { choices: [{ message: { content } }] }, usage };
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }
