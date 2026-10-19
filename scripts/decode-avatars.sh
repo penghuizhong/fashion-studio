@@ -11,7 +11,20 @@ count=0
 for b64 in "$SRC_DIR"/*.b64; do
   [ -f "$b64" ] || continue
   name="$(basename "$b64" .b64)"
-  base64 -d "$b64" > "$DST_DIR/$name"
+  # macOS/BSD base64 uses -D; GNU/Linux uses -d.
+  tmp="$DST_DIR/$name.tmp"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    if ! base64 -D -i "$b64" -o "$tmp"; then
+      rm -f "$tmp"
+      exit 1
+    fi
+  else
+    if ! base64 -d < "$b64" > "$tmp"; then
+      rm -f "$tmp"
+      exit 1
+    fi
+  fi
+  mv "$tmp" "$DST_DIR/$name"
   count=$((count + 1))
 done
 # 清理旧 PNG（已由 WebP 替代，留着会进 dist）
