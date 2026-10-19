@@ -24,6 +24,9 @@ jobs:
       - name: Regression (multi-user)
         working-directory: server
         run: CHECK_MODE=multi node scripts/check.js
+      - name: Style versions, billing and migration regression
+        working-directory: server
+        run: npm run check:style
       - name: Build client
         working-directory: client
         run: |

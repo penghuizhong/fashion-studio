@@ -25,6 +25,7 @@ export function availableModels(kind) {
       provider_name: m.provider_name,
       thinking_control: thinkingControl(m.provider_preset, m.model_id),
       pricing: m.pricing,
+      capabilities: {image_edit:m.provider_preset === 'custom' && m.extra.image_edit === true, multi_reference:m.provider_preset === 'custom' && m.extra.image_edit === true && m.extra.multi_reference === true},
       sizes:
         Array.isArray(m.extra.sizes) &&
         m.extra.sizes.some((s) => typeof s === 'string' && s.trim())

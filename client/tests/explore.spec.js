@@ -37,12 +37,14 @@ test('real modal: explicit expansion model, select 2/6, image model only at rend
   await page
     .getByLabel('图片模型', { exact: true })
     .selectOption('browser-image-two');
-  const quoteRequest = page.waitForRequest((r) => r.url().endsWith('/quote') && r.postDataJSON().render_size === '512x512');
+  const quoteRequest = page.waitForRequest((r) => r.url().endsWith('/quote') && r.postDataJSON().render_size === '512x512' && r.postDataJSON().camera?.view === 'back');
+  await page.getByLabel('服装朝向',{exact:true}).selectOption('back');
   await page.getByLabel('图片尺寸', { exact: true }).selectOption('512x512');
   const q = (await quoteRequest).postDataJSON();
   expect(q.indexes).toEqual([0, 2]);
   expect(q.render_model_id).toBe('browser-image-two');
   expect(q.render_size).toBe('512x512');
+  expect(q.camera.view).toBe('back');expect(q.camera.framing).toBe('garment');
   await expect(page.getByText(/服务端报价：2 张/)).toBeVisible();
   await page
     .getByRole('button', { name: '确认费用并生成', exact: true })
@@ -79,9 +81,9 @@ test('real modal: explicit expansion model, select 2/6, image model only at rend
   expect(await card.locator('.studio-card-cover').evaluate(e=>getComputedStyle(e).aspectRatio)).toBe('1 / 1');
   expect(await card.locator('img').evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');
   await card.click();
-  const viewer=page.getByRole('dialog',{name:/原图/});await expect(viewer).toBeVisible();
-  const originalSrc=await viewer.locator('img').getAttribute('src');expect(originalSrc).not.toContain('/thumbs/');
-  await page.getByRole('button',{name:'实际尺寸',exact:true}).click();await expect(viewer.locator('.actual-size')).toBeVisible();
+  const viewer=page.getByRole('dialog',{name:'款式详情',exact:true});await expect(viewer).toBeVisible();
+  const originalSrc=await viewer.locator('.style-preview-image img').getAttribute('src');expect(originalSrc).not.toContain('/thumbs/');
+  await page.getByRole('button',{name:'实际尺寸',exact:true}).click();await expect(viewer.locator('.style-preview.actual')).toBeVisible();
   await page.keyboard.press('Escape');await expect(viewer).toHaveCount(0);
   await card.getByRole('button',{name:'款式属性',exact:true}).click();await expect(page.locator('.original-image-viewer')).toHaveCount(0);
 

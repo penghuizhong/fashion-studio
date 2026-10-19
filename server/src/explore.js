@@ -1033,7 +1033,7 @@ export function mountExploreRoutes(app) {
         100
       );
       const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
-      const conds = [];
+      const conds = ["workflow_kind='explore'"];
       const args = [];
       if (cfg.multiUser) {
         conds.push('user_id=?');

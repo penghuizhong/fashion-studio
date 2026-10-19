@@ -1,3 +1,8 @@
+import { randomUUID } from 'node:crypto';
+import { problem } from './exploreErrors.js';
+import { mountStyleWorkspace } from './styleWorkspace.js';
+import { ensureStyle, saveVersion, setWorking, styleVersion, recordStyleImage } from './styleVersions.js';
+import { normalizeCamera } from '../../shared/photography.js';
 // v0.1.0: 设计台 REST 接口（全部要登录；多用户模式按 user_id 隔离）
 import express from 'express';
 import fs from 'node:fs';
@@ -58,6 +63,7 @@ export function runExploreArchive() {
 }
 
 export function mountStudioRoutes(app) {  const db = getDb();
+  mountStyleWorkspace(app);
   const cfg = getConfig();
   const uidOf = (req) => (req && req.userId) || 'local';
   const requestApiKey = (req) => {
@@ -92,8 +98,9 @@ export function mountStudioRoutes(app) {  const db = getDb();
     const owned=db.prepare(`SELECT 1 FROM dna_generations WHERE user_id=? AND (image_path=? OR thumb_path=?)
       UNION ALL SELECT 1 FROM style_dna_templates WHERE user_id=? AND (source_image_path=? OR source_thumb_path=?)
       UNION ALL SELECT 1 FROM exploration_batches b,json_each(b.renders_json) r WHERE b.user_id=? AND (json_extract(r.value,'$.image_path')=? OR json_extract(r.value,'$.thumb_path')=?)
+      UNION ALL SELECT 1 FROM style_references WHERE user_id=? AND (image_path=? OR thumb_path=?)
       UNION ALL SELECT 1 FROM explore_items i JOIN explore_jobs j ON j.id=i.job_id WHERE j.user_id=? AND (json_extract(i.result_json,'$.image_path')=? OR json_extract(i.result_json,'$.thumb_path')=?) LIMIT 1`)
-      .get(uid,file,file,uid,file,file,uid,file,file,uid,file,file);
+      .get(uid,file,file,uid,file,file,uid,file,file,uid,file,file,uid,file,file);
     if(!owned)return res.status(404).end();
     next();
   },ah(async(req,res,next)=>{
@@ -164,14 +171,18 @@ export function mountStudioRoutes(app) {  const db = getDb();
     const { name, source_image_path, source_image_base64, category, preset_id, dna_json, gen_params_json } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: '模板名称必填' });
     if (!dna_json || typeof dna_json !== 'object') return res.status(400).json({ error: 'dna_json 必填' });
+    if(source_image_path!=null && typeof source_image_path!=='string')throw problem('INVALID_SOURCE_IMAGE','来源路径格式不正确');
+    if(source_image_base64!=null && (typeof source_image_base64!=='string'||source_image_base64.length>20*1024*1024))throw problem('INVALID_SOURCE_IMAGE','参考原图格式不正确或超过 15MB');
+    const hasSourceData=typeof source_image_base64==='string' && source_image_base64.length>0;
     let srcPath = source_image_path || '';
+    if(srcPath && !hasSourceData){const owned=db.prepare('SELECT 1 FROM dna_generations WHERE user_id=? AND image_path=? UNION ALL SELECT 1 FROM style_dna_templates WHERE user_id=? AND source_image_path=? LIMIT 1').get(uid,srcPath,uid,srcPath);if(!owned)throw problem('SOURCE_NOT_OWNED','来源图片不存在',404);}
     let srcThumb = '';
     if (source_image_base64 && typeof source_image_base64 === 'string') {
       try {
-        const files = await saveStudioImage(source_image_base64, `src_${Date.now()}.jpg`);
+        const files = await saveStudioImage(source_image_base64, `src_${randomUUID()}.jpg`);
         srcPath = files.image_path;
         srcThumb = files.thumb_path; // P7: 来源图缩略图，卡片预览用
-      } catch { /* 来源图落盘失败不阻塞建模板 */ }
+      } catch { throw problem('INVALID_SOURCE_IMAGE','原始参考图保存失败，请选择有效的位图重试'); }
     }
     const now = new Date().toISOString();
     const r = db.prepare(`INSERT INTO style_dna_templates(user_id,name,source_image_path,source_thumb_path,category,preset_id,dna_json,gen_params_json,status,version,created_at,updated_at)
@@ -184,14 +195,15 @@ export function mountStudioRoutes(app) {  const db = getDb();
   // GET /api/studio/templates → 列表（含生成数量、最新缩略图）
   app.get('/api/studio/templates', ah(async (req, res) => {
     const uid = uidOf(req);
+    for(const t of (cfg.multiUser?db.prepare('SELECT * FROM style_dna_templates WHERE user_id=?').all(uid):db.prepare('SELECT * FROM style_dna_templates').all())) ensureStyle(t);
     const rows = cfg.multiUser
       ? db.prepare(`SELECT t.*, (SELECT COUNT(*) FROM dna_generations g WHERE g.template_id=t.id) AS gen_count,
-          (SELECT thumb_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_thumb,
-          (SELECT image_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_image
+          (SELECT thumb_path FROM dna_generations g WHERE g.id=t.cover_generation_id AND COALESCE(g.user_rating,'')!='deleted') AS last_thumb,
+          (SELECT image_path FROM dna_generations g WHERE g.id=t.cover_generation_id AND COALESCE(g.user_rating,'')!='deleted') AS last_image
         FROM style_dna_templates t WHERE t.user_id=? ORDER BY t.updated_at DESC`).all(uid)
       : db.prepare(`SELECT t.*, (SELECT COUNT(*) FROM dna_generations g WHERE g.template_id=t.id) AS gen_count,
-          (SELECT thumb_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_thumb,
-          (SELECT image_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_image
+          (SELECT thumb_path FROM dna_generations g WHERE g.id=t.cover_generation_id AND COALESCE(g.user_rating,'')!='deleted') AS last_thumb,
+          (SELECT image_path FROM dna_generations g WHERE g.id=t.cover_generation_id AND COALESCE(g.user_rating,'')!='deleted') AS last_image
         FROM style_dna_templates t ORDER BY t.updated_at DESC`).all();
     res.json({ ok: true, templates: rows });
   }));
@@ -209,13 +221,16 @@ export function mountStudioRoutes(app) {  const db = getDb();
     if (!t) return res.status(404).json({ error: '模板不存在' });
     if (t.status === 'final') return res.status(403).json({ error: '已定稿的模板不可修改 DNA，请先解锁定' });
     const { name, category, preset_id, dna_json, gen_params_json } = req.body || {};
+    if((preset_id!=null && preset_id!==(t.preset_id||''))||(category!=null && category!==t.category))throw problem('VERSION_SCHEMA_CONFLICT','类目变更请另存款式，不能混用已有设计版本的字段');
+    const versioned=ensureStyle(t);
+    if(dna_json){const v=saveVersion(versioned,{dna:dna_json,parent_id:versioned.work_version_id,request_key:req.body.request_key||randomUUID()});setWorking(versioned,v.id);}
     const now = new Date().toISOString();
     db.prepare(`UPDATE style_dna_templates SET name=?, category=?, preset_id=?, dna_json=?, gen_params_json=?, version=version+1, updated_at=? WHERE id=?`)
       .run(
         name != null ? String(name).trim() : t.name,
         category != null ? category : t.category,
         preset_id != null ? preset_id : (t.preset_id || ''),
-        dna_json != null ? JSON.stringify(dna_json) : t.dna_json,
+        dna_json != null ? styleVersion(versioned,db.prepare('SELECT work_version_id FROM style_dna_templates WHERE id=?').get(t.id).work_version_id).dna_json : t.dna_json,
         gen_params_json != null ? JSON.stringify(gen_params_json) : t.gen_params_json,
         now, t.id);
     res.json({ ok: true });
@@ -232,10 +247,11 @@ export function mountStudioRoutes(app) {  const db = getDb();
   app.post('/api/studio/templates/:id/unfinalize', setStatus('draft'));
 
   // ---------- 生成 ----------
-  async function doGenerate({ req, template, op, changes, modelId, size, seed, sourceImageBase64 }) {
+  async function doGenerate({ req, template, op, changes, modelId, size, seed, sourceImageBase64, camera }) {
     const uid = uidOf(req);
     const dna = JSON.parse(template.dna_json || '{}');
-    const prompt = changes ? renderDnaPromptWithOverrides(dna, changes) : renderDnaPrompt(dna);
+    const merged=changes?Object.fromEntries(Object.entries({...dna,...Object.fromEntries(Object.entries(changes).map(([k,value])=>[k,{value,confidence:1}]))})):dna;
+    const prompt = renderDnaPrompt({dna:merged,presetId:template.preset_id,camera:normalizeCamera(camera)});
     const genParams = JSON.parse(template.gen_params_json || '{}');
     // 模型优先级：请求指定 > 模板绑定 > 第一个可用图片模型
     let useModel = modelId || genParams.model_id;
@@ -252,11 +268,10 @@ export function mountStudioRoutes(app) {  const db = getDb();
     const result = await generateImage({ userId: uid, modelId: useModel, prompt, size: useSize, seed, sourceImageBase64 });
     const files = await saveStudioImage(result.imageBase64, `t${template.id}_${Date.now()}.jpg`);
     const now = new Date().toISOString();
-    const r = db.prepare(`INSERT INTO dna_generations(template_id,user_id,image_path,thumb_path,prompt_snapshot,seed,model_id,size,op,created_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
-      template.id, uid, files.image_path, files.thumb_path, prompt, result.seed, result.model, useSize, op, now);
+    const versioned=ensureStyle(template),version=styleVersion(versioned,versioned.work_version_id);
+    const generationId=recordStyleImage({template_id:template.id,user_id:uid,version_id:version.id,op,camera:normalizeCamera(camera),legacy:true}, {...files,prompt_snapshot:prompt,seed:result.seed,model:result.model,size:useSize},`legacy_${randomUUID()}`);
     db.prepare('UPDATE style_dna_templates SET version=version+1, updated_at=? WHERE id=?').run(now, template.id);
-    return { id: r.lastInsertRowid, ...files, seed: result.seed, model: result.model, size: useSize, op, price: result.price, prompt };
+    return { id: generationId, ...files, seed: result.seed, model: result.model, size: useSize, op, price: result.price, prompt };
   }
 
   // POST /api/studio/templates/:id/generate { model_id?, size?, seed? } → 一键生图（文生图）
@@ -265,7 +280,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
     if (!t) return res.status(404).json({ error: '模板不存在' });
     const { model_id, size, seed } = req.body || {};
     try {
-      const g = await doGenerate({ req, template: t, op: 'create', modelId: model_id, size, seed });
+      const g = await doGenerate({ req, template: t, op: 'create', modelId: model_id, size, seed, camera:req.body.camera });
       res.json({ ok: true, generation: g });
     } catch (e) {
       res.status(502).json({ error: e.message || '生图失败' });
@@ -286,16 +301,16 @@ export function mountStudioRoutes(app) {  const db = getDb();
       const src = cfg.multiUser
         ? db.prepare('SELECT * FROM dna_generations WHERE id=? AND user_id=?').get(source_generation_id, uid)
         : db.prepare('SELECT * FROM dna_generations WHERE id=?').get(source_generation_id);
-      if (!src) return res.status(404).json({ error: '底图记录不存在' });
+      if (!src || src.template_id!==t.id || src.user_rating==='deleted') return res.status(404).json({ error: '底图记录不存在' });
       const abs = path.join(cfg.dataDir || './data', src.image_path);
       if (fs.existsSync(abs)) {
         sourceImageBase64 = fs.readFileSync(abs).toString('base64');
         if (seed_mode !== 'new') seed = src.seed;
       }
-      // 底图文件丢失 → 退化为文生图同 seed（seed 已取到则用之）
+      if(!sourceImageBase64) return res.status(404).json({error:'底图文件不存在，请重新选择'});
     }
     try {
-      const g = await doGenerate({ req, template: t, op, changes, modelId: model_id, size, seed, sourceImageBase64 });
+      const g = await doGenerate({ req, template: t, op, changes, modelId: model_id, size, seed, sourceImageBase64, camera:req.body.camera });
       res.json({ ok: true, generation: g });
     } catch (e) {
       res.status(502).json({ error: e.message || '变体生成失败' });
@@ -317,7 +332,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
     res.json({ ok: true, generations: rows });
   }));
 
-  // POST /api/studio/generations/:id/rate { rating: liked|deleted }；deleted 同时清文件（DB 留负反馈）
+  // POST /api/studio/generations/:id/rate { rating: liked|deleted }；deleted 兼容为归档，保留被版本引用的原文件
   app.post('/api/studio/generations/:id/rate', ah(async (req, res) => {
     const uid = uidOf(req);
     const g = cfg.multiUser
@@ -327,14 +342,8 @@ export function mountStudioRoutes(app) {  const db = getDb();
     const { rating } = req.body || {};
     if (!['liked', 'deleted'].includes(rating)) return res.status(400).json({ error: 'rating 非法' });
     const now = new Date().toISOString();
-    db.prepare('UPDATE dna_generations SET user_rating=?, rated_at=? WHERE id=?').run(rating, now, g.id);
-    if (rating === 'deleted') {
-      for (const p of [g.image_path, g.thumb_path]) {
-        if (!p) continue;
-        const abs = path.join(cfg.dataDir || './data', p);
-        try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch { /* 删文件失败不影响评价 */ }
-      }
-    }
+    if(rating==='deleted') db.prepare('UPDATE dna_generations SET archived=1 WHERE id=?').run(g.id);
+    else db.prepare('UPDATE dna_generations SET user_rating=?,rated_at=? WHERE id=?').run(rating,now,g.id);
     res.json({ ok: true });
   }));
 
@@ -373,12 +382,8 @@ export function mountStudioRoutes(app) {  const db = getDb();
         ? db.prepare('SELECT * FROM dna_generations WHERE id=? AND user_id=?').get(id, uid)
         : db.prepare('SELECT * FROM dna_generations WHERE id=?').get(id);
       if (!g) continue;
-      db.prepare("UPDATE dna_generations SET user_rating='deleted', rated_at=? WHERE id=?").run(now, g.id);
-      for (const p of [g.image_path, g.thumb_path]) {
-        if (!p) continue;
-        const abs = path.join(cfg.dataDir || './data', p);
-        try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch { /* 忽略 */ }
-      }
+      db.prepare('UPDATE dna_generations SET archived=1,rated_at=? WHERE id=?').run(now,g.id);
+      db.prepare('UPDATE dna_generations SET archived=1 WHERE id=?').run(g.id);
       n++;
     }
     res.json({ ok: true, deleted: n });

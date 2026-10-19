@@ -37,7 +37,7 @@ for (const kind of ['chat', 'image'])
           ? { per_call: 5 }
           : { input_per_1m: 100, output_per_1m: 200 }
       ),
-      JSON.stringify({ sizes: ['512x512', '1024x1024'] }),
+      JSON.stringify({ sizes: ['512x512', '1024x1024'], image_edit:kind==='image',multi_reference:kind==='image',vision:kind==='chat' }),
       1,
       now
     );

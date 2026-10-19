@@ -13,7 +13,7 @@ function AssetDetail({ asset, onClose, onChanged, showToast }) {
     setBusy(true);
     try {
       await api.studio.rate(asset.id, rating);
-      showToast(rating === 'liked' ? '已选用' : '已删除');
+      showToast(rating === 'liked' ? '已选用' : '已归档，原图保留');
       onChanged();
       onClose();
     } catch (e) {
@@ -53,7 +53,7 @@ function AssetDetail({ asset, onClose, onChanged, showToast }) {
         <div className="modal-foot">
           <OriginalImageLink path={asset.image_path} />
           <button className="btn secondary" disabled={busy} onClick={() => doRate('liked')}>选用</button>
-          <button className="btn danger" disabled={busy} onClick={() => doRate('deleted')}>删除</button>
+          <button className="btn danger" disabled={busy} onClick={() => doRate('deleted')}>归档</button>
           <button className="btn primary" disabled={busy} onClick={replicate}>复刻</button>
         </div>
       </div>
@@ -97,14 +97,14 @@ export default function AssetView({ showToast, onOpenSidebar }) {
   };
   const bulkDelete = async () => {
     if (selected.length === 0 || busy) return;
-    if (!window.confirm(`确定删除选中的 ${selected.length} 张吗？`)) return;
+    if (!window.confirm(`确定归档选中的 ${selected.length} 张吗？`)) return;
     setBusy(true);
     try {
       const r = await api.studio.bulkDelete(selected);
-      showToast(`已删除 ${r.deleted} 张`);
+      showToast(`已归档 ${r.deleted} 张`);
       await load();
     } catch (e) {
-      showToast(e.message || '删除失败');
+      showToast(e.message || '归档失败');
     } finally {
       setBusy(false);
     }
@@ -123,7 +123,7 @@ export default function AssetView({ showToast, onOpenSidebar }) {
         </div>
         {selected.length > 0 && (
           <button className="btn danger" disabled={busy} onClick={bulkDelete}>
-            删除选中（{selected.length}）
+            归档选中（{selected.length}）
           </button>
         )}
       </div>
