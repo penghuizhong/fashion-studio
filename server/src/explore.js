@@ -196,6 +196,13 @@ export function mountExploreRoutes(app) {
       ? db.prepare('SELECT * FROM exploration_batches WHERE id=? AND user_id=?').get(id, uid)
       : db.prepare('SELECT * FROM exploration_batches WHERE id=?').get(id);
   };
+  const parseIndexes = (input, length) => {
+    if (!Array.isArray(input) || !input.length) throw new Error('请至少选择一个候选');
+    if (input.some((i) => !Number.isInteger(i) || i < 0 || i >= length)) throw new Error('候选序号必须为有效整数且不能越界');
+    const uniq = [...new Set(input)];
+    if (uniq.length !== input.length) throw new Error('候选序号不可重复');
+    return uniq;
+  };
   const touch = (id) => db.prepare('UPDATE exploration_batches SET updated_at=? WHERE id=?').run(new Date().toISOString(), id);
 
   // GET /api/studio/image-models → 可用的图片模型（公开信息，无密钥）
@@ -278,11 +285,25 @@ export function mountExploreRoutes(app) {
     if (!(req.body || {}).confirm) {
       return res.status(400).json({ error: '请确认费用后重试', cost_estimate: batch.cost_estimate });
     }
-    const selected = JSON.parse(batch.selected_json || '[]');
     const proposals = JSON.parse(batch.proposals_json || '[]');
-    const targets = selected.length ? selected : proposals.map((_, i) => i);
-    if (!targets.length) return res.status(400).json({ error: '没有可渲染的候选' });
-    db.prepare('UPDATE exploration_batches SET status=? WHERE id=?').run('rendering', batch.id);
+    let targets;
+    try {
+      targets = parseIndexes((req.body || {}).indexes, proposals.length);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+    // Compare-and-set: only one confirmation may initiate rendering for a batch.
+    // The database update is synchronous, before any external image calls.
+    const lock = db.prepare("UPDATE exploration_batches SET selected_json=?, status=?, updated_at=? WHERE id=? AND status IN ('expanded','selected')")
+      .run(JSON.stringify(targets), 'rendering', new Date().toISOString(), batch.id);
+    if (!lock.changes) {
+      const current = getBatch(req.params.id, req);
+      if (current && ['rendered', 'adopted'].includes(current.status)) {
+        const previous = JSON.parse(current.renders_json || '[]');
+        return res.json({ ok: true, renders: previous, cost_actual: current.cost_actual, reused: true });
+      }
+      return res.status(409).json({ error: '该批次已进入渲染流程，请勿重复提交' });
+    }
     const uid = uidOf(req);
     const renders = [];
     let costActual = 0;
