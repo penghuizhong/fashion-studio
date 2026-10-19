@@ -49,6 +49,11 @@ test('real modal: explicit expansion model, select 2/6, image model only at rend
     .getByRole('button', { name: '确认费用并生成', exact: true })
     .click();
   await expect(page.locator('.explore-render-card img')).toHaveCount(2);
+  const downloaded=page.waitForEvent('download');
+  await page.getByRole('link',{name:'下载原图',exact:true}).first().click();
+  expect((await downloaded).suggestedFilename()).toMatch(/\.png$/);
+  expect(await page.locator('.explore-render-card img').first().evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');
+
   const images = await page
     .locator('.explore-render-card img')
     .evaluateAll((imgs) => imgs.map((i) => i.getAttribute('src')));
@@ -67,6 +72,17 @@ test('real modal: explicit expansion model, select 2/6, image model only at rend
     .getByRole('button', { name: '收为款式卡（2）', exact: true })
     .click();
   await expect(page.locator('.explore-modal')).toHaveCount(0);
+  const card=page.locator('.studio-card').first();
+  await expect(card).toBeVisible();
+  expect(await card.locator('.studio-card-cover').evaluate(e=>getComputedStyle(e).aspectRatio)).toBe('1 / 1');
+  expect(await card.locator('img').evaluate(e=>getComputedStyle(e).objectFit)).toBe('contain');
+  await card.click();
+  const viewer=page.getByRole('dialog',{name:/原图/});await expect(viewer).toBeVisible();
+  const originalSrc=await viewer.locator('img').getAttribute('src');expect(originalSrc).not.toContain('/thumbs/');
+  await page.getByRole('button',{name:'实际尺寸',exact:true}).click();await expect(viewer.locator('.actual-size')).toBeVisible();
+  await page.keyboard.press('Escape');await expect(viewer).toHaveCount(0);
+  await card.getByRole('button',{name:'款式属性',exact:true}).click();await expect(page.locator('.original-image-viewer')).toHaveCount(0);
+
   expect(errors).toEqual([]);
 });
 

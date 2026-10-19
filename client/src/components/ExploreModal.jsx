@@ -1,3 +1,4 @@
+import OriginalImageLink from './OriginalImageLink.jsx';
 // 创意衍生：发散 → 筛选 → 渲染设置 → 结果收卡，支持历史恢复
 // P5: 类目预设动态字段（废弃旧 11 字段定死）
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -922,8 +923,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                   )}
                   <div className="explore-render-grid">
                     {images.map((r) => (
-                      <div
-                        key={r.proposal_idx}
+                      <div className="explore-render-item" key={r.proposal_idx}><div
                         className={`explore-render-card${adoptSel.includes(r.proposal_idx) ? ' checked' : ''}`}
                         onClick={() =>
                           r.status === 'succeeded' &&
@@ -958,6 +958,8 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                             {r.error}
                           </div>
                         )}
+                      </div>
+                      {r.status==='succeeded'&&<OriginalImageLink path={r.image_path}/> }
                       </div>
                     ))}
                   </div>

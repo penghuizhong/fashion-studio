@@ -210,13 +210,18 @@ export async function saveStudioImage(imageBase64, filename) {
   const thumbDir = path.join(dir, 'thumbs');
   fs.mkdirSync(thumbDir, { recursive: true });
   const buf = Buffer.from(imageBase64, 'base64');
+  const metadata=await sharp(buf).metadata();
+  const extension=metadata.format==='jpeg'?'jpg':metadata.format;
+  const stem=path.parse(path.basename(filename)).name;
+  filename=`${stem}.${extension}`;
+  const thumbFilename=`${stem}.jpg`;
   const rel = path.posix.join('uploads', 'studio', filename);
-  const thumbRel = path.posix.join('uploads', 'studio', 'thumbs', filename);
-  const original=path.join(dir,filename), thumb=path.join(thumbDir,filename);
+  const thumbRel = path.posix.join('uploads', 'studio', 'thumbs', thumbFilename);
+  const original=path.join(dir,filename), thumb=path.join(thumbDir,thumbFilename);
   const token=`.${process.pid}.${Date.now()}.tmp`;
   try {
     fs.writeFileSync(original+token,buf);
-    await sharp(buf).resize({width:600,withoutEnlargement:true}).jpeg({quality:82}).toFile(thumb+token);
+    await sharp(buf).resize({width:600,height:600,fit:'inside',withoutEnlargement:true}).jpeg({quality:82}).toFile(thumb+token);
     fs.renameSync(original+token,original);fs.renameSync(thumb+token,thumb);
   } catch(e) {
     for(const f of [original+token,thumb+token])try{fs.unlinkSync(f);}catch{}

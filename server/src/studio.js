@@ -96,7 +96,18 @@ export function mountStudioRoutes(app) {  const db = getDb();
       .get(uid,file,file,uid,file,file,uid,file,file,uid,file,file);
     if(!owned)return res.status(404).end();
     next();
-  },express.static(studioDir,{setHeaders:res=>{if(cfg.multiUser)res.setHeader('Cache-Control','private, no-store');}}));
+  },ah(async(req,res,next)=>{
+    if(req.query.download!=='1')return next();
+    const file=path.resolve(studioDir,'.'+decodeURIComponent(req.path));
+    if(!file.startsWith(path.resolve(studioDir)+path.sep))return res.status(404).end();
+    let metadata;
+    try{metadata=await sharp(file).metadata();}catch{return res.status(404).end();}
+    const extension=metadata.format==='jpeg'?'jpg':metadata.format;
+    res.setHeader('Cache-Control','private, no-store');
+    res.type(extension);
+    // Header fixes legacy files whose .jpg name actually contains PNG/WebP bytes.
+    res.download(file,`${path.parse(file).name}.${extension}`);
+  }),express.static(studioDir,{setHeaders:res=>{if(cfg.multiUser)res.setHeader('Cache-Control','private, no-store');}}));
 
   // ---------- DNA 提取 ----------
   // GET /api/studio/vision-models → 启用且支持视觉的聊天模型（公开信息，无密钥）
@@ -175,10 +186,12 @@ export function mountStudioRoutes(app) {  const db = getDb();
     const uid = uidOf(req);
     const rows = cfg.multiUser
       ? db.prepare(`SELECT t.*, (SELECT COUNT(*) FROM dna_generations g WHERE g.template_id=t.id) AS gen_count,
-          (SELECT thumb_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_thumb
+          (SELECT thumb_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_thumb,
+          (SELECT image_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_image
         FROM style_dna_templates t WHERE t.user_id=? ORDER BY t.updated_at DESC`).all(uid)
       : db.prepare(`SELECT t.*, (SELECT COUNT(*) FROM dna_generations g WHERE g.template_id=t.id) AS gen_count,
-          (SELECT thumb_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_thumb
+          (SELECT thumb_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_thumb,
+          (SELECT image_path FROM dna_generations g WHERE g.template_id=t.id ORDER BY id DESC LIMIT 1) AS last_image
         FROM style_dna_templates t ORDER BY t.updated_at DESC`).all();
     res.json({ ok: true, templates: rows });
   }));

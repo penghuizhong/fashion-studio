@@ -1205,6 +1205,23 @@ try {
       global.fetch = upstreamFetch;
     }
   });
+  await test('original bytes and dimensions preserved; preview shrinks proportionally and downloads enforce ownership',async()=>{
+    const {saveStudioImage}=await import('../src/image.js');
+    const source=await sharp({create:{width:1000,height:500,channels:3,background:'#2468ac'}}).png().toBuffer();
+    const files=await saveStudioImage(source.toString('base64'),'original-check.jpg');
+    const original=fs.readFileSync(path.join(process.env.DATA_DIR,files.image_path));assert.deepEqual(original,source);assert.ok(files.image_path.endsWith('.png'));
+    const preview=await sharp(path.join(process.env.DATA_DIR,files.thumb_path)).metadata();assert.equal(preview.format,'jpeg');assert.equal(preview.width,600);assert.equal(preview.height,300);
+    const r=await realFetch(base+'/'+job.renders[0].image_path+'?download=1',{headers:{Cookie:cookie}});assert.equal(r.status,200);assert.match(r.headers.get('content-disposition'),/attachment;.*\.png/);assert.deepEqual(Buffer.from(await r.arrayBuffer()),Buffer.from(png,'base64'));
+    assert.equal((await realFetch(base+'/'+job.renders[0].image_path+'?download=1',{headers:{Cookie:other}})).status,404);
+    const legacy='uploads/studio/legacy-wrong.jpg';fs.writeFileSync(path.join(process.env.DATA_DIR,legacy),source);
+    db.prepare('UPDATE dna_generations SET image_path=? WHERE template_id=(SELECT MIN(id) FROM style_dna_templates)').run(legacy);
+    const old=await realFetch(base+'/'+legacy+'?download=1',{headers:{Cookie:cookie}});assert.equal(old.status,200);assert.match(old.headers.get('content-disposition'),/legacy-wrong\.png/);assert.deepEqual(Buffer.from(await old.arrayBuffer()),source);
+  });
+  await test('style card list supplies matching original and thumbnail paths',async()=>{
+    const response=await req('GET','/api/studio/templates',undefined,cookie);assert.equal(response.status,200);
+    const rows=response.json.templates;assert.ok(rows.some(t=>t.last_image&&t.last_thumb));
+    for(const t of rows.filter(t=>t.last_image&&t.last_thumb)){assert.ok(!t.last_image.includes('/thumbs/'));assert.ok(t.last_thumb.includes('/thumbs/'));}
+  });
   console.log(`Explore integration: ${passed}/${passed} passed`);
 } catch (e) {
   console.error(e);
