@@ -33,9 +33,9 @@ export default function OriginalImageViewer({ image, onClose, onProperties }) {
             {actual ? '适应窗口' : '实际尺寸'}
           </button>
           <OriginalImageLink path={image.path} />
-          <button className="btn secondary small" onClick={onProperties}>
+          {onProperties && <button className="btn secondary small" onClick={onProperties}>
             款式属性
-          </button>
+          </button>}
           <button className="icon-btn" aria-label="关闭原图" onClick={onClose}>
             ×
           </button>

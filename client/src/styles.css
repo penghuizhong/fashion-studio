@@ -4100,3 +4100,58 @@ select.text-input { cursor: pointer; }
 .original-image-content.actual-size { display: block; }
 .original-image-content.actual-size img { max-width: none; max-height: none; width: auto; height: auto; }
 @media(max-width:600px) { .original-image-viewer header { flex-wrap: wrap; padding-right: 44px; } .original-image-actions { flex-wrap: wrap; } .original-image-actions .icon-btn { position: absolute; top: 8px; right: 8px; } .original-image-content img { max-height: calc(92dvh - 150px); } }
+
+/* 创意衍生统一布局：头尾固定，仅正文滚动。 */
+.modal-box.studio-modal.explore-modal { width:min(1040px,96vw); max-width:1040px; height: min(880px,94dvh); max-height:94dvh; display:flex; flex-direction:column; overflow:hidden; padding:0; }
+.explore-modal > .modal-head { position:static; flex:none; margin:0; padding:18px 22px; border-bottom:1px solid var(--border); }
+.explore-navigation { display:flex; flex:none; gap:6px; padding:12px 20px; border-bottom:1px solid var(--border); }
+.explore-navigation button { flex:1; min-height:44px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; }
+.explore-navigation button[aria-current] { border-color:var(--text); font-weight:bold; }
+.explore-navigation button:disabled { opacity:.4; }
+.explore-modal > .modal-body { flex:1; min-height:0; overflow-y:auto; padding:20px; overscroll-behavior:contain; }
+.explore-modal .explore-grid,.explore-modal .explore-render-grid { max-height:none; overflow:visible; }
+.explore-footer { flex:none; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:14px 20px; border-top:1px solid var(--border); }
+.explore-footer-actions { margin-left:auto; }
+.explore-footer .save-row { margin:0; display:flex; justify-content:flex-end; gap:8px; }
+.explore-modal .key-label { display:grid; gap:8px; margin:16px 0; }
+.explore-thinking { display:flex; align-items:center; gap:8px; margin:14px 0; }
+.explore-thinking input { flex:none; width:20px; height:20px; }
+.explore-custom-count { display:flex; align-items:center; gap:12px; }
+.explore-custom-count input { width:90px; }
+.explore-modal summary { cursor:pointer; min-height:32px; padding:6px 0; }
+.explore-dna-card.checked { background:var(--bg); outline:2px solid var(--text); }
+.explore-dna-card:focus-visible { outline:3px solid #698bff; }
+.explore-modal .btn { min-height:44px; }
+.explore-render-item p { margin:8px 0; }
+@media(max-width:600px) {
+ .modal-box.studio-modal.explore-modal { width:100vw; height:100dvh; max-height:100dvh; border-radius:0; }
+ .explore-modal > .modal-head { padding:12px; gap:8px; }
+ .explore-navigation { padding:8px; gap:4px; }
+ .explore-navigation button { font-size:12px; padding:4px; }
+ .explore-modal > .modal-body { padding:12px; }
+ .explore-footer { padding:10px 12px calc(10px + env(safe-area-inset-bottom)); }
+ .explore-footer .save-row { flex-wrap:wrap; }
+}
+.explore-modal details .key-input-row { grid-template-columns:90px minmax(0,1fr) auto; }
+.explore-modal .explore-intent-fields { min-width:0; }
+.explore-modal .explore-dna-card { min-width:0; overflow-wrap:anywhere; }
+.explore-modal .explore-render-card img { cursor:zoom-in; }
+.explore-modal .modal-head .icon-btn { min-width:44px; min-height:44px; flex:none; }
+.explore-modal .explore-check { min-width:44px; min-height:44px; display:grid; place-items:center; }
+.explore-modal .explore-intent-fields > .key-input-row { display:inline-flex; vertical-align:middle; }
+.explore-modal .explore-custom-count { display:inline-flex; margin-left:12px; }
+@media(max-width:600px) { .explore-modal details .key-input-row { grid-template-columns:1fr; } }
+.explore-history-thumb { width:56px; height:56px; object-fit:contain; flex:none; }
+.explore-modal .explore-intent-fields legend { font-weight:600; padding:0; }
+.explore-modal .explore-intent-fields h3 { font-size:1rem; border-top:1px solid var(--border); padding-top:16px; }
+.explore-modal .explore-advanced { border:1px solid var(--border); border-radius:10px; padding:8px 12px; }
+.explore-modal .explore-footer-actions { min-width:0; }
+.explore-overlay { animation:none; overflow:hidden; }
+.modal-box.studio-modal.explore-modal { animation:none; background:var(--bg-secondary); }
+.explore-modal .explore-dna-card > strong { display:block; padding-right:40px; }
+.explore-modal .explore-tabs button { min-height:44px; }
+.explore-option { display:inline-flex; align-items:center; gap:6px; margin:12px 16px 12px 0; min-height:44px; }
+.explore-render-card[data-status="running"],.explore-render-card[data-status="queued"] { border-color:#527ab8; }
+.explore-render-card[data-status="failed"] { border-color:var(--danger); }
+.explore-render-card[data-status="uncertain"] { border-color:var(--warning); }
+.explore-modal .explore-footer [role="status"] { font-weight:600; }

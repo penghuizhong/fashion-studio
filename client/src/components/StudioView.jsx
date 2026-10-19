@@ -838,7 +838,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
         <CloneModal onClose={() => setCloneOpen(false)} onSaved={() => { setCloneOpen(false); load(); }} showToast={showToast} />
       )}
       {exploreOpen && (
-        <ExploreModal onClose={() => setExploreOpen(false)} onAdopt={() => { setExploreOpen(false); load(); }} showToast={showToast} />
+        <ExploreModal onClose={() => setExploreOpen(false)} onAdopt={(close) => { if (close) setExploreOpen(false); load(); }} showToast={showToast} />
       )}
       {drawerId && (
         <TemplateDrawer
