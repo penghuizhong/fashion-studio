@@ -73,11 +73,13 @@ export function renderDnaPromptWithOverrides(dna, overrides) {
 // ---------- adapter：dashscope（qwen-image 系列，新 multimodal-generation 同步接口） ----------
 // 官方文档：POST {baseUrl}/api/v1/services/aigc/multimodal-generation/generation
 // qwen-image-3.0 / 2.1-pro 均支持同步调用；旧 text2image/image-synthesis 仅适用 wan2.x
+// 注意：baseUrl 若配的是 compatible-mode/v1（OpenAI 兼容地址），需剥掉后缀再拼原生路径
 async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size, seed, promptExtend = true }) {
+  const nativeBase = String(baseUrl || '').replace(/\/+$/, '').replace(/\/compatible-mode\/v1$/, '');
   const dsSize = String(size || '1024*1024').replace('x', '*');
   const params = { size: dsSize, n: 1, prompt_extend: !!promptExtend, watermark: false };
   if (seed != null) params.seed = seed;
-  const res = await fetch(`${baseUrl}/api/v1/services/aigc/multimodal-generation/generation`, {
+  const res = await fetch(`${nativeBase}/api/v1/services/aigc/multimodal-generation/generation`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
