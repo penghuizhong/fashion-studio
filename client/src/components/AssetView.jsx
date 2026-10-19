@@ -1,3 +1,4 @@
+import { StateTabs,CardMenu,useLifecycleActions } from './StudioLifecycle.jsx';
 import StudioImage from './StudioImage.jsx';
 import OriginalImageLink from './OriginalImageLink.jsx';
 // v0.2.0: 资产库——所有生成图聚合浏览 / 筛选 / 批量删除
@@ -7,7 +8,7 @@ import Icon from './icons.jsx';
 
 const LIMIT = 48;
 
-function AssetDetail({ asset, onClose, onChanged, showToast }) {
+function AssetDetail({ asset, onClose, onChanged, showToast, lifecycleActions }) {
   const [busy, setBusy] = useState(false);
   const doRate = async (rating) => {
     setBusy(true);
@@ -54,12 +55,7 @@ function AssetDetail({ asset, onClose, onChanged, showToast }) {
         <div className="modal-foot">
           {asset.image_available !== false && <OriginalImageLink path={asset.image_path} />}
           <button className="btn secondary" disabled={busy} onClick={() => doRate('liked')}>选用</button>
-          {asset.archived ? <button className="btn secondary" disabled={busy || asset.user_rating === 'deleted'} onClick={async () => {
-            setBusy(true);
-            try { await api.studio.archiveImage(asset.id, false); showToast('已恢复到资产库'); onChanged(); onClose(); }
-            catch(e) { showToast(e.message || '恢复失败'); }
-            finally { setBusy(false); }
-          }}>取消归档</button> : <button className="btn danger" disabled={busy} onClick={() => doRate('deleted')}>归档</button>}
+          {asset.lifecycle==='trash'?<><button className="btn secondary" onClick={()=>lifecycleActions.perform('generations',asset,'restore').then(onClose)}>还原</button><button className="btn danger" onClick={()=>{lifecycleActions.perform('generations',asset,'delete');onClose();}}>永久删除</button></>:<><button className="btn secondary" onClick={()=>lifecycleActions.perform('generations',asset,asset.lifecycle==='archived'?'activate':'archive').then(onClose)}>{asset.lifecycle==='archived'?'恢复使用':'归档'}</button><button className="btn danger" onClick={()=>lifecycleActions.perform('generations',asset,'trash').then(onClose)}>移入回收站</button></>}
           <button className="btn primary" disabled={busy} onClick={replicate}>复刻</button>
         </div>
       </div>
@@ -74,13 +70,14 @@ export default function AssetView({ showToast, onOpenSidebar }) {
   const [templates, setTemplates] = useState([]);
   const [tplFilter, setTplFilter] = useState('');
   const [ratingFilter, setRatingFilter] = useState('');
+  const [lifecycle,setLifecycle]=useState('active');
   const [selected, setSelected] = useState([]);
   const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async (pg = page) => {
     try {
-      const r = await api.studio.assets({ template_id: tplFilter || undefined, rating: ratingFilter || undefined, page: pg, limit: LIMIT });
+      const r = await api.studio.assets({ state:lifecycle, template_id: tplFilter || undefined, rating: ratingFilter || undefined, page: pg, limit: LIMIT });
       setAssets(r.assets || []);
       setTotal(r.total || 0);
       setPage(r.page || 1);
@@ -88,12 +85,13 @@ export default function AssetView({ showToast, onOpenSidebar }) {
     } catch (e) {
       showToast(e.message || '加载失败');
     }
-  }, [page, tplFilter, ratingFilter, showToast]);
+  }, [page, tplFilter, ratingFilter, lifecycle, showToast]);
 
   useEffect(() => {
     api.studio.listTemplates().then((r) => setTemplates(r.templates || [])).catch(() => {});
   }, []);
-  useEffect(() => { load(1); }, [tplFilter, ratingFilter]);
+  const lifecycleActions=useLifecycleActions({onChanged:()=>load(page),showToast});
+  useEffect(() => { load(1); }, [tplFilter, ratingFilter,lifecycle]);
 
   const toggleSelect = (id) => {
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -127,12 +125,10 @@ export default function AssetView({ showToast, onOpenSidebar }) {
           </button>
           <h2>资产库 <span className="dim" style={{ fontSize: 13, fontWeight: 400 }}>共 {total} 张</span></h2>
         </div>
-        {selected.length > 0 && (
-          <button className="btn danger" disabled={busy} onClick={bulkDelete}>
-            归档选中（{selected.length}）
-          </button>
-        )}
       </div>
+      <StateTabs value={lifecycle} onChange={setLifecycle}/>
+      {lifecycleActions.modal}
+      {selected.length>0&&<div className="asset-bulk-actions">{(lifecycle==='trash'?[['restore','批量还原']]:[['archive','批量归档'],['trash','批量移入回收站'],...(lifecycle==='archived'?[['activate','批量恢复使用']]:[])]).map(([action,label])=><button key={action} className="btn secondary small" disabled={busy} onClick={async()=>{setBusy(true);try{await api.studio.bulkLifecycle(selected,action);await load();showToast('批量操作完成');}catch(e){showToast(e.message);}finally{setBusy(false);}}}>{label}（{selected.length}）</button>)}</div>}
       <div className="asset-filters">
         <select className="text-input" value={tplFilter} onChange={(e) => setTplFilter(e.target.value)}>
           <option value="">全部模板</option>
@@ -142,7 +138,6 @@ export default function AssetView({ showToast, onOpenSidebar }) {
           <option value="">全部评价</option>
           <option value="liked">已选用</option>
           <option value="unrated">未评价</option>
-          <option value="archived">已归档</option>
         </select>
         {assets.length > 0 && (
           <button className="btn secondary small" onClick={toggleAll}>
@@ -153,14 +148,22 @@ export default function AssetView({ showToast, onOpenSidebar }) {
       {assets.length === 0 ? (
         <div className="studio-empty">
           <Icon name="sparkles" size={40} />
-          <p>还没有资产</p>
-          <p className="dim">去设计台生成第一张图吧</p>
+          <p>{lifecycle==='trash'?'回收站为空':lifecycle==='archived'?'暂无归档资产':'还没有资产'}</p>
+          <p className="dim">{lifecycle==='active'?'去设计台生成第一张图吧':'归档与回收站保留原图，回收站不会自动清空'}</p>
         </div>
       ) : (
         <div className="studio-grid">
           {assets.map((a) => (
             <div key={a.id} className="studio-card asset-card" onClick={() => setDetail(a)}>
               <div className="studio-card-cover">
+                <CardMenu name={`图片${a.id}`} items={lifecycle==='trash'?[
+                  {label:'还原图片',action:()=>lifecycleActions.perform('generations',a,'restore')},
+                  {label:'永久删除',action:()=>lifecycleActions.perform('generations',a,'delete')},
+                ]:[
+                  {label:lifecycle==='archived'?'恢复使用':'归档',action:()=>lifecycleActions.perform('generations',a,lifecycle==='archived'?'activate':'archive')},
+                  {label:'删除（移入回收站）',action:()=>lifecycleActions.perform('generations',a,'trash')},
+                ]}/>
+
                 {a.thumb_path || a.image_path ? (
                   <StudioImage thumbnail={a.thumb_available === false ? null : a.thumb_path} original={a.image_available === false ? null : a.image_path} loading="lazy" />
                 ) : (
@@ -194,7 +197,7 @@ export default function AssetView({ showToast, onOpenSidebar }) {
         </div>
       )}
       {detail && (
-        <AssetDetail asset={detail} onClose={() => setDetail(null)} onChanged={() => load(page)} showToast={showToast} />
+        <AssetDetail asset={detail} onClose={() => setDetail(null)} onChanged={() => load(page)} showToast={showToast} lifecycleActions={lifecycleActions} />
       )}
     </div>
   );

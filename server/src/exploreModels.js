@@ -1,3 +1,4 @@
+import { imageOptions, modelSignature } from './imageCapabilities.js';
 import { getConfig } from './config.js';
 import { getDb } from './db.js';
 import { getModel, listModels, getProviderCreds } from './registry.js';
@@ -25,12 +26,14 @@ export function availableModels(kind) {
       provider_name: m.provider_name,
       thinking_control: thinkingControl(m.provider_preset, m.model_id),
       pricing: m.pricing,
-      capabilities: {image_edit:m.provider_preset === 'custom' && m.extra.image_edit === true, multi_reference:m.provider_preset === 'custom' && m.extra.image_edit === true && m.extra.multi_reference === true},
+      capabilities: {...imageOptions(m.extra,m.provider_preset),task_status:Object.fromEntries((m.checks||[]).filter(c=>c.status!=='stale').map(c=>[c.task,c.status]))},
+      config_signature: modelSignature(m, db.prepare('SELECT * FROM providers WHERE id=?').get(m.provider_id)),
       sizes:
         Array.isArray(m.extra.sizes) &&
         m.extra.sizes.some((s) => typeof s === 'string' && s.trim())
           ? m.extra.sizes.filter((s) => typeof s === 'string' && s.trim())
           : ['1024x1024'],
+      variable_pricing:Array.isArray(m.pricing.image_rates)&&m.pricing.image_rates.length>0,
       price_per_call:
         Number.isSafeInteger(m.pricing.per_call) &&
         m.pricing.per_call >= 0 &&
@@ -91,7 +94,7 @@ export function resolveExploreModel(req, id, kind) {
     );
   if (
     kind === 'image' &&
-    !['custom', 'dashscope'].includes(model.provider_preset)
+    !listed.capabilities.protocol
   )
     throw problem(
       'UNSUPPORTED_IMAGE_ADAPTER',
@@ -121,6 +124,7 @@ export function resolveExploreModel(req, id, kind) {
   return {
     ...listed,
     kind,
+    pricing,
     provider_id: model.provider_id,
     provider: creds?.preset || 'custom',
     apiKey: creds?.apiKey || '',

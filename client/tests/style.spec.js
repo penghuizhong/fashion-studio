@@ -206,7 +206,7 @@ test("recolor saves design first, detail camera changes and background requests 
     })
     .click();
   await page
-    .getByLabel("本次衍生底图", { exact: true })
+    .getByLabel("添加参考图", { exact: true })
     .selectOption("original");
   await page.getByLabel("目标颜色（名称或色号）", { exact: true }).fill("酒红");
   await expect(
@@ -338,4 +338,105 @@ test('card preview falls back from missing thumbnail and shows missing files exp
   await page.reload();
   await page.getByText('设计台', {exact:true}).first().click();
   await expect(card.getByText('图片文件缺失', {exact:true})).toBeVisible();
+});
+
+for(const width of [1440,390])test(`card menus archive recycle restore and permanent record removal ${width}`,async({page,request})=>{
+  await page.setViewportSize({width,height:900});
+  const name=`生命周期${width}`;
+  const t=await makeStyle(request,name);
+  const original=(await (await request.get(`/api/studio/templates/${t.id}/workspace`)).json()).template.source_image_path;
+  const before=await (await request.get('/'+original)).body();
+  await page.goto('/');
+  if(width<769)await page.getByRole('button',{name:'打开侧边栏',exact:true}).click();
+  await page.getByText('设计台',{exact:true}).first().click();
+  const card=page.locator('.studio-card').filter({hasText:name});
+  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'款式详情'})).toHaveCount(0);
+  await card.getByRole('menuitem',{name:'归档款式',exact:true}).click();
+  await expect(card).toHaveCount(0);
+  const tabs=page.getByRole('group',{name:'内容状态'});
+  await tabs.getByRole('button',{name:'已归档',exact:true}).click();
+  await expect(card).toBeVisible();
+  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
+  await card.getByRole('menuitem',{name:'删除（移入回收站）',exact:true}).click();
+  await expect(card).toHaveCount(0);
+  await tabs.getByRole('button',{name:'回收站',exact:true}).click();
+  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
+  await card.getByRole('menuitem',{name:'还原款式',exact:true}).click();
+  await tabs.getByRole('button',{name:'已归档',exact:true}).click();
+  await expect(card).toBeVisible();
+  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
+  await card.getByRole('menuitem',{name:'删除（移入回收站）',exact:true}).click();
+  await tabs.getByRole('button',{name:'回收站',exact:true}).click();
+  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
+  await card.getByRole('menuitem',{name:'永久删除',exact:true}).click();
+  const confirm=page.getByRole('dialog',{name:'永久移除确认'});
+  await expect(confirm.getByRole('button',{name:'永久移除此记录'})).toBeDisabled();
+  await confirm.getByLabel('永久删除确认').fill('永久删除');
+  await confirm.getByRole('button',{name:'永久移除此记录'}).click();
+  await expect(confirm).toContainText('记录已永久移除');
+  await confirm.getByRole('button',{name:'关闭',exact:true}).click();
+  await expect(card).toHaveCount(0);
+  expect(await (await request.get('/'+original)).body()).toEqual(before);
+});
+
+test('unified references, custom native output, quality and saved text design version',async({page,request})=>{
+ const t=await makeStyle(request,'统一参考与输出');
+ await openStyle(page,'统一参考与输出',true);
+ const dialog=page.getByRole('dialog',{name:'款式详情'});
+ await dialog.locator('nav').getByRole('button',{name:'款式衍生',exact:true}).click();
+ await expect(page.getByLabel('生成方式',{exact:true})).toHaveCount(0);
+ await page.getByLabel('款式图片模型').selectOption('browser-image-two');
+ await page.getByLabel('添加参考图').selectOption('original');
+ const buffer=await sharp({create:{width:512,height:512,channels:3,background:'#678912'}}).png().toBuffer();
+ await page.getByLabel('上传参考图').setInputFiles({name:'sleeve.png',mimeType:'image/png',buffer});
+ await expect(page.getByText('图2',{exact:true})).toBeVisible();
+ await page.getByLabel('前移参考图2').click();
+ await expect(page.locator('.reference-strip article').first()).toContainText('图1 · 款式主体');
+ await page.getByLabel('图片尺寸',{exact:true}).selectOption('custom');
+ await page.getByLabel('自定义宽').fill('800');
+ await page.getByLabel('自定义高').fill('1200');
+ await page.getByLabel('生成质量').selectOption('high');
+ await page.getByLabel('本次要求',{exact:true}).fill('图1的袖子，保留图2领子，改成条纹花色');
+ await page.getByLabel('本次要求包含服装设计变化').check();
+ await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeDisabled();
+ await page.getByRole('button',{name:'保存要求为新版本'}).click();
+ await expect(page.getByLabel('设计版本')).toContainText('V2');
+ await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'确认费用并生成',exact:true}).click();
+ await expect(page.locator('.style-result-grid article')).toHaveCount(1);
+ const ws=await (await request.get(`/api/studio/templates/${t.id}/workspace`)).json();
+ expect(ws.versions[0].design_note).toContain('条纹花色');
+ expect(ws.versions[1].design_note).toBe('');
+ expect(ws.jobs[0].snapshot.quality).toBe('high');
+ expect(ws.jobs[0].snapshot.size).toBe('800x1200');
+ expect(ws.jobs[0].snapshot.style.references[0].path).toBe(ws.template.source_image_path);
+});
+
+test('asset library has independent archive and recycle tabs and safe permanent removal',async({page,request})=>{
+ const t=await makeStyle(request,'资产生命周期');
+ let ws=await (await request.get(`/api/studio/templates/${t.id}/workspace`)).json();
+ const q=await (await request.post(`/api/studio/templates/${t.id}/quote`,{data:{version_id:ws.template.work_version_id,op:'create',mode:'text',model_id:'browser-image-one',size:'512x512',count:1}})).json();
+ expect(q.ok).toBeTruthy();
+ const started=await request.post(`/api/studio/templates/${t.id}/jobs`,{data:{quote_id:q.quote.id,request_key:crypto.randomUUID(),confirm:true}});expect(started.ok()).toBeTruthy();
+ await expect.poll(async()=>{ws=await (await request.get(`/api/studio/templates/${t.id}/workspace`)).json();return ws.images.length;}).toBe(1);
+ const image=ws.images[0],bytes=await (await request.get('/'+image.image_path)).body();
+ await page.goto('/');await page.getByText('资产库',{exact:true}).first().click();
+ const card=page.locator('.asset-card').filter({hasText:'资产生命周期'});
+ await card.getByRole('button',{name:`图片${image.id}操作菜单`,exact:true}).click();
+ await card.getByRole('menuitem',{name:'归档',exact:true}).click();
+ await expect(card).toHaveCount(0);
+ const tabs=page.getByRole('group',{name:'内容状态'});
+ await tabs.getByRole('button',{name:'已归档',exact:true}).click();await expect(card).toBeVisible();
+ await card.getByRole('button',{name:`图片${image.id}操作菜单`,exact:true}).click();
+ await card.getByRole('menuitem',{name:'删除（移入回收站）',exact:true}).click();
+ await tabs.getByRole('button',{name:'回收站',exact:true}).click();await expect(card).toBeVisible();
+ await card.getByRole('button',{name:`图片${image.id}操作菜单`,exact:true}).click();
+ await card.getByRole('menuitem',{name:'永久删除',exact:true}).click();
+ const confirm=page.getByRole('dialog',{name:'永久移除确认'});
+ await confirm.getByLabel('永久删除确认').fill('永久删除');await confirm.getByRole('button',{name:'永久移除此记录'}).click();
+ await expect(confirm).toContainText('记录已永久移除');
+ await confirm.getByRole('button',{name:'清理未引用文件'}).click();
+ await expect(page.getByText('文件仍被其他内容或历史任务引用，已保留',{exact:true})).toBeVisible();
+ expect(await (await request.get('/'+image.image_path)).body()).toEqual(bytes);
 });

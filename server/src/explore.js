@@ -1,3 +1,5 @@
+import { studioFileExists,imageAvailability } from './imageLifecycle.js';
+import { lifecycleState } from './studioLifecycle.js';
 // P4 发散创建：发散引擎（纯函数）+ 渲染复用
 // P5: DNA 字段按类目预设动态（废弃旧 11 字段定死）
 import { randomUUID } from 'node:crypto';
@@ -732,7 +734,7 @@ export function mountExploreRoutes(app) {
         if (['rendered', 'adopted'].includes(batch.status))
           return res.json({
             ok: true,
-            renders: JSON.parse(batch.renders_json),
+            renders: JSON.parse(batch.renders_json).map(imageAvailability),
             cost_actual: batch.cost_actual,
             reused: true,
           });
@@ -795,9 +797,13 @@ export function mountExploreRoutes(app) {
           const image = byIdx.get(idx),
             key = image?.item_id || `proposal_${idx}`;
           if (adopted[key]) {
-            ids.push(adopted[key]);
-            continue;
+            const previous=db.prepare('SELECT * FROM style_dna_templates WHERE id=? AND user_id=?').get(adopted[key],uidOf(req));
+            if(previous && previous.lifecycle!=='deleted'){
+              if(previous.lifecycle!=='active')throw problem('ADOPTED_IN_ARCHIVE','该方案已收卡，请在归档区或回收站恢复原款式',409);
+              ids.push(previous.id);continue;
+            }
           }
+          if(image&&!studioFileExists(image.image_path))throw problem('ORIGINAL_MISSING','原图文件缺失，请先恢复备份；不能用缩略图重新收卡',409);
           const tr = db
             .prepare(
               `INSERT INTO style_dna_templates(user_id,name,preset_id,dna_json,gen_params_json,status,version,created_at,updated_at) VALUES(?,?,?,?,?,'draft',1,?,?)`
@@ -1039,18 +1045,23 @@ export function mountExploreRoutes(app) {
         conds.push('user_id=?');
         args.push(uid);
       }
-      if (!inc) conds.push('archived=0');
+      conds.push('lifecycle=?');args.push(lifecycleState(req.query.state || (inc?'archived':'active')));
       const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
       const rows = db
         .prepare(
-          `SELECT id,user_id,intent_text,preset_id,axes_json,count,selected_json,render_model_id,cost_estimate,cost_actual,status,archived,created_at,updated_at,
+          `SELECT id,user_id,intent_text,preset_id,axes_json,count,selected_json,render_model_id,cost_estimate,cost_actual,status,archived,lifecycle,created_at,updated_at,renders_json,
       json_array_length(proposals_json) AS proposal_count, json_array_length(renders_json) AS render_count,
       (SELECT count(*) FROM json_each(renders_json) WHERE json_extract(value,'$.image_path') IS NOT NULL AND json_extract(value,'$.error') IS NULL) AS success_count,
       (SELECT json_extract(value,'$.thumb_path') FROM json_each(renders_json) WHERE json_extract(value,'$.image_path') IS NOT NULL LIMIT 1) AS thumb_path
       FROM exploration_batches ${where} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`
         )
         .all(...args, limit, offset);
-      res.json({ ok: true, batches: rows });
+      res.json({ ok: true, batches: rows.map(row=>{
+        const renders=JSON.parse(row.renders_json),available=renders.filter(r=>!r.error&&studioFileExists(r.image_path));
+        const preview=available[0]||renders.find(r=>studioFileExists(r.thumb_path));
+        const {renders_json,...rest}=row;
+        return {...rest,available_count:available.length,missing_count:Math.max(0,row.success_count-available.length),thumb_path:preview?.thumb_path||null,image_path:preview?.image_path||null};
+      }) });
     })
   );
 
@@ -1062,7 +1073,9 @@ export function mountExploreRoutes(app) {
       batchJobs(Number(req.params.id));
       const batch = getBatch(req.params.id, req);
       if (!batch) return res.status(404).json({ error: '批次不存在' });
-      res.json({ ok: true, batch });
+      const adopted=JSON.parse(batch.adopted_json||'{}');
+      const adopted_templates=Object.fromEntries(Object.entries(adopted).map(([key,id])=>[key,db.prepare('SELECT id,lifecycle FROM style_dna_templates WHERE id=?').get(id)||{id,lifecycle:'deleted'}]));
+      res.json({ ok: true, batch:{...batch,renders_json:JSON.stringify(JSON.parse(batch.renders_json||'[]').map(imageAvailability)),adopted_templates} });
     })
   );
 }
