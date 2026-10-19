@@ -74,10 +74,12 @@ export function renderDnaPromptWithOverrides(dna, overrides) {
 // 官方文档：POST {baseUrl}/api/v1/services/aigc/multimodal-generation/generation
 // qwen-image-3.0 / 2.1-pro 均支持同步调用；旧 text2image/image-synthesis 仅适用 wan2.x
 // 注意：baseUrl 若配的是 compatible-mode/v1（OpenAI 兼容地址），需剥掉后缀再拼原生路径
-async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size, seed, promptExtend = true }) {
+export async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size, seed, promptExtend = true }) {
   const nativeBase = String(baseUrl || '').replace(/\/+$/, '').replace(/\/compatible-mode\/v1$/, '');
   const dsSize = String(size || '1024*1024').replace('x', '*');
   const params = { size: dsSize, n: 1, prompt_extend: !!promptExtend, watermark: false };
+  // 官方文档：enable_thinking 默认 true 且要求 prompt_extend=true；显式声明避免 prompt_extend=false 时 400
+  params.enable_thinking = !!promptExtend;
   if (seed != null) params.seed = seed;
   const res = await fetch(`${nativeBase}/api/v1/services/aigc/multimodal-generation/generation`, {
     method: 'POST',
@@ -90,7 +92,9 @@ async function dashscopeText2Image({ baseUrl, apiKey, model, prompt, size, seed,
     signal: AbortSignal.timeout(180000),
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok || !json || json.status_code !== 200) {
+  // 注意：同步接口成功响应体只有 {output, usage, request_id}，没有 status_code 字段
+  // （status_code 是 DashScope SDK 的封装概念）；仅以 HTTP 状态 + 响应体是否可解析判定
+  if (!res.ok || !json) {
     const msg = (json && (json.message || json.code)) || `HTTP ${res.status}`;
     throw new Error(`DashScope 生图失败: ${msg}`);
   }
