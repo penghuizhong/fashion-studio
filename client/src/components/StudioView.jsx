@@ -370,6 +370,44 @@ function TemplateDrawer({ templateId, onClose, onChanged, showToast, onCompare }
   const [showArchived, setShowArchived] = useState(false);
   // P5: 模板关联的类目预设字段（动态渲染）
   const [presetFields, setPresetFields] = useState([]);
+  // 生成设置：模型 / 尺寸 / 质量（与 CloneModal 一致；抽屉独立维护）
+  const [imgModels, setImgModels] = useState([]);
+  const [genModelId, setGenModelId] = useState('');
+  const [genSize, setGenSize] = useState('1024x1024');
+  const [genQuality, setGenQuality] = useState('std'); // std=标准 hd=高清(2x分辨率)
+  useEffect(() => {
+    api.studio.imageModels().then((r) => {
+      const ms = r.models || [];
+      setImgModels(ms);
+      if (ms.length) {
+        setGenModelId(ms[0].model_id);
+        const ss = ms[0].sizes;
+        if (Array.isArray(ss) && ss.length) setGenSize(String(ss[0]).replace('*', 'x'));
+      }
+    }).catch(() => {});
+  }, []);
+  // 当前选中图片模型的尺寸档
+  const curImgModel = imgModels.find((m) => m.model_id === genModelId) || imgModels[0];
+  const sizeOptions = (() => {
+    const ss = curImgModel && curImgModel.sizes;
+    if (Array.isArray(ss) && ss.length) return ss.map((s) => String(s).replace('*', 'x'));
+    return ['1024x1024', '1024x1536', '1536x1024'];
+  })();
+  const onImgModelChange = (mid) => {
+    setGenModelId(mid);
+    const m = imgModels.find((x) => x.model_id === mid);
+    const ss = m && m.sizes;
+    if (Array.isArray(ss) && ss.length) setGenSize(String(ss[0]).replace('*', 'x'));
+  };
+  // 质量=高清时分辨率翻倍（单边上限 2048，qwen-image 上限）
+  const finalGenSize = (() => {
+    if (genQuality !== 'hd') return genSize;
+    const m = String(genSize).match(/(\d+)\s*[x*×]\s*(\d+)/);
+    if (!m) return genSize;
+    const w = Math.min(2048, parseInt(m[1], 10) * 2);
+    const h = Math.min(2048, parseInt(m[2], 10) * 2);
+    return `${w}x${h}`;
+  })();
 
   const load = useCallback(async () => {
     try {

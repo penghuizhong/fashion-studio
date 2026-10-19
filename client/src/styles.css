@@ -3932,7 +3932,7 @@ textarea {
 }
 
 /* ============ 设计台 v0.1.0 ============ */
-.studio-view { padding: 24px 28px; max-width: 1200px; margin: 0 auto; position: relative; }
+.studio-view { padding: 24px 28px; max-width: 1200px; margin: 0 auto; position: relative; flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 /* 桌面端布局优化：内容区铺满不再限宽 1200px 居中；汉堡按钮只在移动端出现 */
 @media (min-width: 769px) {
   .studio-view { max-width: none; margin: 0; }
