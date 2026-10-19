@@ -45,11 +45,41 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -eu
             if [ ! -d /opt/fashion-studio/.git ]; then
               git clone https://github.com/penghuizhong/fashion-studio.git /opt/fashion-studio
             fi
             cd /opt/fashion-studio
             git fetch origin main
+            # Resolve the running service's actual DATA_DIR; do not guess a backup source.
+            deploy_pid=$(systemctl show fashion-studio --property=MainPID --value)
+            deploy_data=$(node --input-type=module - "$deploy_pid" <<'NODE'
+            import fs from 'node:fs';
+            import path from 'node:path';
+            const pid = process.argv[2];
+            if (!/^[1-9][0-9]*$/.test(pid)) throw new Error('Running service required for upgrade snapshot');
+            const cwd = fs.readlinkSync(`/proc/${pid}/cwd`);
+            const env = Object.fromEntries(fs.readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean).map(entry => { const i = entry.indexOf('='); return [entry.slice(0,i),entry.slice(i+1)]; }));
+            const envFile = '/opt/fashion-studio/server/.env';
+            if (fs.existsSync(envFile)) for (const line of fs.readFileSync(envFile,'utf8').split('\n')) {
+              const text = line.trim(), i = text.indexOf('=');
+              if (!text || text.startsWith('#') || i <= 0) continue;
+              const key = text.slice(0,i).trim();
+              if (!(key in env)) env[key] = text.slice(i+1).trim();
+            }
+            const data = path.resolve(cwd, env.DATA_DIR || './data');
+            if (!fs.statSync(path.join(data,'fashion-studio.db')).isFile()) throw new Error('Service database missing');
+            console.log(data);
+            NODE
+            )
+            git show origin/main:server/scripts/backup-style-upgrade.js > server/scripts/.deploy-backup.mjs
+            deploy_backup="/opt/fashion-studio-upgrade-backups/$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short origin/main)"
+            systemctl stop fashion-studio
+            if ! node server/scripts/.deploy-backup.mjs "$deploy_data" "$deploy_backup"; then
+              systemctl start fashion-studio
+              exit 1
+            fi
+            rm server/scripts/.deploy-backup.mjs
             git reset --hard origin/main
             cd server && npm ci --omit=dev
             cd ../client && npm ci && npm run build
