@@ -31,12 +31,26 @@ const DNA_FIELD_ORDER = [
 ];
 const PROMPT_SUFFIX = 'high fashion photography, studio lighting, ultra detailed';
 
-export function renderDnaPrompt(dna) {
+const SUIT_TERMS = {
+  lapel: { '戗驳头': 'peak lapels with upward-pointing tips', '平驳头': 'notch lapels', '青果领': 'shawl collar' },
+  buttons: { '双排六扣': 'double-breasted six-button front', '单排两扣': 'single-breasted two-button front', '单排一扣': 'single-breasted one-button front' },
+  vent: { '双开衩': 'double rear vents', '单开衩': 'single rear vent', '无开衩': 'ventless back' },
+  fabric: { '羊毛质感': 'visible wool-like suiting texture' },
+};
+function mappedDnaValue(presetId, key, value) {
+  const term = presetId === 'suit' ? SUIT_TERMS[key]?.[String(value)] : undefined;
+  return term || String(value).replace(/_/g, ' ').trim();
+}
+
+export function renderDnaPrompt(input) {
+  // Backwards compatible with template generation that passes bare DNA.
+  const context = input && Object.hasOwn(input, 'dna') ? input : { dna: input };
+  const { dna, presetId = '', intentText = '' } = context;
   const v = (k) => (dna && dna[k] && dna[k].value) || '';
   const parts = [];
   const seen = new Set();
   for (const [key, suffix] of DNA_FIELD_ORDER) {
-    const val = String(v(key) || '').replace(/_/g, ' ').trim();
+    const val = mappedDnaValue(presetId, key, v(key) || '');
     if (val && val !== 'null') parts.push(suffix ? `${val} ${suffix}` : val);
     seen.add(key);
   }
@@ -46,7 +60,7 @@ export function renderDnaPrompt(dna) {
       if (seen.has(key) || key === 'details') continue;
       const val = v(key);
       const s = Array.isArray(val) ? val.join(', ') : String(val || '');
-      const clean = s.replace(/_/g, ' ').trim();
+      const clean = mappedDnaValue(presetId, key, s);
       if (clean && clean !== 'null') parts.push(clean);
     }
   }
@@ -57,6 +71,7 @@ export function renderDnaPrompt(dna) {
       if (s) parts.push(s);
     }
   }
+  if (String(intentText || '').trim()) parts.push(`Design requirements from client: ${String(intentText).slice(0, 500).trim()}`);
   parts.push(PROMPT_SUFFIX);
   return parts.filter(Boolean).join(', ');
 }
