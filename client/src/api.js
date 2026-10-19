@@ -427,7 +427,7 @@ export const api = {
     exploreGet: (id) => get(`/api/studio/explore/${id}`),
     exploreList: (params = {}) => get(`/api/studio/explore${params.include_archived ? '?include_archived=1' : ''}`),
     exploreSelect: (id, indexes) => post(`/api/studio/explore/${id}/select`, { indexes }),
-    exploreRender: (id, confirm) => post(`/api/studio/explore/${id}/render`, { confirm: !!confirm }),
+    exploreRender: (id, confirm, indexes) => post(`/api/studio/explore/${id}/render`, { confirm: !!confirm, indexes }),
     exploreAdopt: (id, indexes) => post(`/api/studio/explore/${id}/adopt`, { indexes }),
     imageModels: () => get('/api/studio/image-models'),
     visionModels: () => get('/api/studio/vision-models'),
