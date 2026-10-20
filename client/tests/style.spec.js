@@ -59,8 +59,8 @@ test('same dialog, immutable edits, branches, persistent drafts and independent 
 });
 
 test('saved recolor/detail versions and scene presentation keep design boundaries',async({page,request})=>{
- const t=await makeStyle(request,'换色与场景');await openStyle(page,'换色与场景');await page.getByRole('button',{name:'基于此版本修改',exact:true}).click();await page.getByLabel('属性主色',{exact:true}).fill('酒红');await page.getByRole('button',{name:'保存为新版本',exact:true}).click();await derive(page);await page.getByLabel('本次衍生方向').selectOption('recolor');await analyze(page);await render(page);
- await page.locator('.wizard-footer .wizard-primary').click();await page.getByLabel('本次衍生方向').selectOption('scene');await page.getByLabel('生成要求').fill('简洁的室内场景，服装颜色不变');await analyze(page);await render(page);const ws=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(ws.versions).toHaveLength(2);expect(ws.jobs).toHaveLength(2);expect(ws.jobs[0].snapshot.style.version_id).toBe(ws.jobs[1].snapshot.style.version_id);
+ const t=await makeStyle(request,'换色与场景');await openStyle(page,'换色与场景');await page.getByRole('button',{name:'基于此版本修改',exact:true}).click();await page.getByLabel('属性主色',{exact:true}).fill('酒红');await page.getByRole('button',{name:'保存为新版本',exact:true}).click();await derive(page);await analyze(page);await render(page);
+ await page.locator('.wizard-footer .wizard-primary').click();await page.getByLabel('生成要求').fill('简洁的室内场景，服装颜色不变');await analyze(page);await render(page);const ws=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(ws.versions).toHaveLength(2);expect(ws.jobs).toHaveLength(2);expect(ws.jobs[0].snapshot.style.version_id).toBe(ws.jobs[1].snapshot.style.version_id);
 });
 
 test('retired layout stays absent and original downloads stay exact',async({page,request})=>{

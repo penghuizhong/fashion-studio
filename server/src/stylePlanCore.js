@@ -3,11 +3,15 @@ import {
   DETAIL_MODULES,
   PLAN_LIMITS,
   DEFAULT_STANDARD,
+  GLOBAL_MODULE_RULES,
+  SPEC_FIELDS,
   REFERENCE_ROLES,
   EDITABLE_PROMPT_PARTS,
   PROMPT_PARTS,
   defaultPlanCamera,
+  isNoTextLanguage,
   moduleCounts,
+  normalizeStandard,
 } from "../../shared/stylePlan.js";
 import {
   normalizeCamera,
@@ -55,17 +59,19 @@ export function normalizePlanInput(b = {}) {
   if (!Array.isArray(refs) || refs.length > 16)
     throw problem("INVALID_REFERENCE", "参考图最多16张");
   const references = refs.map((r, i) => {
+    // Legacy scene-style references fold into the model group (role retired).
+    const role = r?.role === "scene" ? "model" : r?.role;
     if (
       !object(r) ||
       !idPattern.test(r.id || "") ||
-      !Object.hasOwn(REFERENCE_ROLES, r.role) ||
+      !Object.hasOwn(REFERENCE_ROLES, role) ||
       typeof r.source !== "string" ||
       !/^(original|\d+|ref:\d+)$/.test(r.source)
     )
       throw problem("INVALID_REFERENCE", "参考图角色或来源无效");
-    if (i === 0 && r.role !== "garment")
+    if (i === 0 && role !== "garment")
       throw problem("INVALID_REFERENCE", "图1必须是款式主体");
-    return { id: r.id, source: r.source, role: r.role };
+    return { id: r.id, source: r.source, role };
   });
   if (
     new Set(references.map((r) => r.id)).size !== references.length ||
@@ -142,6 +148,8 @@ export function normalizePlanInput(b = {}) {
 export function seedItems(input, old = []) {
   const result = [];
   for (const m of DETAIL_MODULES) {
+    // Transition cards are text-only; a no-text language skips the module.
+    if (m.id === "transition" && isNoTextLanguage(input.language)) continue;
     const count = input.modules[m.id] || 0,
       previous = old.filter((i) => i.module_id === m.id);
     for (let n = 0; n < count; n++)
@@ -152,6 +160,7 @@ export function seedItems(input, old = []) {
           title: `${m.name}${count > 1 ? ` ${n + 1}` : ""}`,
           requirement: `${m.description}。${n ? `采用第${n + 1}种构图，区别于本组其他图片。` : ""}`,
           copy: "",
+          spec: {},
           camera:
             m.id === "main" && input.camera
               ? input.camera
@@ -197,14 +206,17 @@ export function normalizeContent(raw, input, old) {
     raw.items.length > PLAN_LIMITS.total
   )
     throw problem("INVALID_PLAN", "规划内容格式无效");
-  const standard = {};
-  for (const k of Object.keys(DEFAULT_STANDARD))
-    standard[k] = text(
-      raw.standard[k] ?? DEFAULT_STANDARD[k],
-      k === "language" ? 40 : 4000,
-    );
+  const rawStandard = {};
+  for (const [k, v] of Object.entries(raw.standard))
+    if (typeof v === "string") rawStandard[k] = text(v, 4000);
+  const standard = normalizeStandard(rawStandard);
   const existing = new Map((old?.items || []).map((i) => [i.id, i]));
-  const items = raw.items.map((i) => {
+  const sourceItems =
+    isNoTextLanguage(input.language) &&
+    raw.items.some((i) => i?.module_id !== "transition")
+      ? raw.items.filter((i) => i?.module_id !== "transition")
+      : raw.items;
+  const items = sourceItems.map((i) => {
     if (
       !object(i) ||
       !idPattern.test(i.id || "") ||
@@ -232,12 +244,18 @@ export function normalizeContent(raw, input, old) {
         );
       overrides[k] = text(v, 6000);
     }
+    if (i.spec && !object(i.spec))
+      throw problem("INVALID_PLAN", "图片规格格式无效");
+    const spec = {};
+    for (const [k] of SPEC_FIELDS)
+      spec[k] = i.spec?.[k] === undefined ? "" : text(i.spec[k], 2000);
     const item = {
       id: i.id,
       module_id: i.module_id,
       title: text(i.title || "", 200),
       requirement: text(i.requirement || "", 3000),
       copy: text(i.copy || "", 3000),
+      spec,
       camera: normalizeCamera(i.camera),
       reference_ids,
       size: text(i.size || "", 40),
@@ -261,7 +279,8 @@ export function normalizeContent(raw, input, old) {
     standard,
     standard_edited:
       raw.standard_edited === true ||
-      canonical(standard) !== canonical(old?.standard || DEFAULT_STANDARD),
+      canonical(standard) !==
+        canonical(old ? normalizeStandard(old.standard) : DEFAULT_STANDARD),
     items,
   };
 }
@@ -299,9 +318,24 @@ export function compilePlanItem(plan, item, t) {
   const refs = input.references.filter((r) =>
     item.reference_ids.includes(r.id),
   );
+  const spec = item.spec || {};
+  const specLine = (key, label) => (spec[key] ? `${label}：${spec[key]}` : "");
+  const worn = module.subject === "worn";
   const base = {
-    goal: `模块：${module.name}\n图片目标：${item.requirement}\n任务：${input.op}；风格：${input.style}`,
-    design: `设计版本：V${v.number}\n已保存属性：${v.dna_json}\n已保存设计说明：${v.design_note || "无"}\n${standard.garment}\n必须保留：${input.keep || "保存版本的设计特征"}\n保持服装本身配色和结构；展示风格不能改写设计。`,
+    goal: `模块：${module.name}\n模块画面指引：${module.guide}\n图片目标：${item.requirement}\n任务：${input.op}；风格：${input.style}`,
+    design: [
+      `设计版本：V${v.number}`,
+      `已保存属性：${v.dna_json}`,
+      `已保存设计说明：${v.design_note || "无"}`,
+      `服装基础特征：${standard.garment}`,
+      `主体识别摘要：${standard.subject}`,
+      specLine("garment", "本图服装识别"),
+      specLine("subject", "本图主体识别"),
+      `必须保留：${input.keep || "保存版本的设计特征"}`,
+      "保持服装本身配色和结构；展示风格不能改写设计。",
+    ]
+      .filter(Boolean)
+      .join("\n"),
     references: refs.length
       ? refs
           .map(
@@ -310,9 +344,56 @@ export function compilePlanItem(plan, item, t) {
           )
           .join("\n")
       : "无参考图片，使用已保存属性。",
-    composition: `${standard.photography}\n${standard.layout}\n${item.module_id === "transition" ? "纯文字与装饰元素的章节过渡卡；允许无服装、无人物，不要求全身或露脸。" : photographyPrompt(camera, v.preset_id)}${item.module_id === "hanger" ? "\n服装悬挂于衣架，完整显示轮廓，不使用真人。" : ""}${item.delivery_slot === "side_right" ? "\n展示服装另一侧（右侧）。" : ""}`,
-    copy: `新增文字使用${standard.language}。管理标题不是图内文字。\n本图文案：${item.copy || "不添加未经确认的文字"}\n商品资料：${JSON.stringify(input.facts)}\n商品原有logo、标识及技术单位保持原样。`,
-    limits: `${standard.facts}\n${["buyer", "blogger"].includes(item.module_id) ? "AI模拟穿搭，不代表真实买家评价或人物背书。" : ""}\n${input.op === "white" ? "纯白商品背景，不添加促销文字或图形。" : ""}\n完整单品图不得裁断服装；局部图仅按明确部位取景。`,
+    composition: [
+      `核心视觉基调：${standard.tone}`,
+      `全局摄影参数：${standard.photography}`,
+      specLine("strategy", "试穿策略"),
+      specLine("composition", "构图方案"),
+      specLine("lighting", "光影方案"),
+      specLine("background", "背景描述"),
+      specLine("palette", "配色方案"),
+      specLine("mood", "视觉氛围关键词"),
+      module.subject === "text"
+        ? "纯文字与装饰元素的章节过渡卡；允许无服装、无人物，不要求全身或露脸。"
+        : "",
+      item.delivery_slot
+        ? photographyPrompt(camera, v.preset_id)
+        : "",
+      item.delivery_slot === "side_right" ? "展示服装另一侧（右侧）。" : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    copy: [
+      standard.typography
+        ? `文字系统规范：${standard.typography}`
+        : "本图不叠加成段文字；如需少量标签，简洁清晰，不遮挡服装。",
+      `新增文字使用${input.language}。管理标题不是图内文字。`,
+      `本图文案：${item.copy || spec.text || "不添加未经确认的文字"}`,
+      `商品资料：${JSON.stringify(input.facts)}`,
+      "商品原有logo、标识及技术单位保持原样。",
+    ].join("\n"),
+    limits: [
+      ...(worn
+        ? [
+            GLOBAL_MODULE_RULES.mandatory,
+            GLOBAL_MODULE_RULES.subjectFirst,
+            GLOBAL_MODULE_RULES.detailContext,
+          ]
+        : [
+            module.subject === "text"
+              ? "本模块为纯文字过渡卡，不出现模特与商品。"
+              : "本模块为展示型画面，不出现模特；服装完整、轮廓清楚。",
+          ]),
+      GLOBAL_MODULE_RULES.antiCopy,
+      standard.facts,
+      ["buyer", "blogger"].includes(item.module_id)
+        ? "AI模拟穿搭，不代表真实买家评价或人物背书。"
+        : "",
+      input.op === "white" ? "纯白商品背景，不添加促销文字或图形。" : "",
+      worn ? "完整单品图不得裁断服装；局部图仅按明确部位取景。" : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
     output: `尺寸：${item.size || input.size || "待选择"}；质量：${item.quality || input.quality || "模型默认"}。`,
   };
   const parts = { ...base, ...item.prompt_overrides };
@@ -349,6 +430,10 @@ export function readPlan(row, t) {
   const issues = [];
   plan.content = {
     ...content,
+    standard: normalizeStandard(content.standard),
+  };
+  plan.content = {
+    ...plan.content,
     items: (content.items || []).map((i) => {
       try {
         return { ...i, ...compilePlanItem(plan, i, t) };
