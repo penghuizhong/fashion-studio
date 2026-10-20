@@ -86,15 +86,14 @@ export default function StyleDerivationWizard(props) {
         const exact = r.items.filter(
           (i) => i.design_version_id === w.versionId,
         );
-        setPreview((current) =>
-          exact.some(
-            (i) => i.image_path === (current?.path || current?.image_path),
-          )
-            ? current
-            : exact[0]
-              ? { ...exact[0], path: exact[0].image_path }
-              : null,
-        );
+        setPreview((current) => {
+          const path = current?.path || current?.image_path;
+          const image =
+            exact.find((i) => i.image_path === path) ||
+            exact[0] ||
+            r.items.find((i) => !i.design_version_id && i.image_path === path);
+          return image ? { ...image, path: image.image_path } : null;
+        });
       })
       .catch((e) => {
         if (!c.signal.aborted) setImageError(e.message);

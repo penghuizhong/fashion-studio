@@ -59,6 +59,7 @@ const sign = (input, content) =>
 export default function useStylePlanWizard({
   templateId,
   initialVersionId,
+  initialStep,
   initialImage,
   onChanged,
   enablePlanning = true,
@@ -70,7 +71,7 @@ export default function useStylePlanWizard({
     [plan, setPlan] = useState(null),
     [input, setInput] = useState(defaultPlanInput),
     [content, setContent] = useState(null),
-    [step, setStep] = useState(1),
+    [step, setStep] = useState(initialStep ?? 1),
     [analysis, setAnalysis] = useState(null),
     [job, setJob] = useState(null),
     [busy, setBusy] = useState(false),
@@ -192,11 +193,12 @@ export default function useStylePlanWizard({
             if (live.current) {
               setJob(j.job);
               setStep(
-                ["running", "queued"].includes(j.job.status)
-                  ? 4
-                  : cache.step === 5
-                    ? 5
-                    : cache.step || 3,
+                initialStep ??
+                  (["running", "queued"].includes(j.job.status)
+                    ? 4
+                    : cache.step === 5
+                      ? 5
+                      : cache.step || 3),
               );
             }
           } else {
@@ -208,12 +210,13 @@ export default function useStylePlanWizard({
               if (live.current) {
                 setJob(full.job);
                 setStep(
-                  ["running", "queued"].includes(full.job.status)
-                    ? 4
-                    : cache.step || 1,
+                  initialStep ??
+                    (["running", "queued"].includes(full.job.status)
+                      ? 4
+                      : cache.step || 1),
                 );
               }
-            } else setStep(cache.step || 1);
+            } else setStep(initialStep ?? cache.step ?? 1);
           }
         } else {
           let legacy;
@@ -265,7 +268,8 @@ export default function useStylePlanWizard({
             const full = await api.studio.styleJob(templateId, r.jobs[0].id);
             if (live.current) {
               setJob(full.job);
-              if (["running", "queued"].includes(full.job.status)) setStep(4);
+              if (["running", "queued"].includes(full.job.status))
+                setStep(initialStep ?? 4);
             }
           }
           if (legacy?.draft)

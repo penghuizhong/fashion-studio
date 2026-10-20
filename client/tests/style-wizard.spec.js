@@ -157,6 +157,34 @@ for (const width of [1440, 390])
         await request.get("/" + ws.template.source_image_path + "?download=1")
       ).body(),
     ).toEqual(t.bytes);
+    let submissions = 0;
+    page.on("request", (r) => {
+      if (
+        r.method() === "POST" &&
+        /\/(analyze|jobs)$/.test(new URL(r.url()).pathname)
+      )
+        submissions++;
+    });
+    await page.getByLabel("关闭款式详情").click();
+    const card = page
+      .locator(".studio-card")
+      .filter({ hasText: `五步操作${width}` });
+    await card.focus();
+    await card.press(width === 1440 ? "Enter" : "Space");
+    await expect(
+      page.getByText("正在加载款式资料…", { exact: true }),
+    ).toHaveCount(0);
+    await expect(page.locator(".wizard-steps button").first()).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
+    await expect(page.getByText("基础属性", { exact: true })).toBeVisible();
+    await expect(page.locator(".wizard-image-only")).toHaveCount(0);
+    await page.locator(".wizard-steps button").nth(4).click();
+    await expect(
+      page.locator(".wizard-result-grid").first().locator("article"),
+    ).toHaveCount(2);
+    expect(submissions).toBe(0);
   });
 test("version edits stay immutable, no-image labeling and drafts survive reopening", async ({
   page,
