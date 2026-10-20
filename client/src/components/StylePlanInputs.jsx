@@ -1,5 +1,3 @@
-import CameraSettings from "./CameraSettings.jsx";
-import { DEFAULT_CAMERA } from "../../../shared/photography.js";
 import { useState } from "react";
 import {
   DETAIL_MODULES,
@@ -483,47 +481,6 @@ export default function StylePlanInputs({
             onChange={(e) => update({ keep: e.target.value })}
           />
         </label>
-        <h4>视角与取景（全局默认）</h4>
-        <p className="dim small">
-          模块画面指引优先；这里是整套图的默认取景，分析生成整体规范与主图时采用，不再逐图设置。
-        </p>
-        <label className="inline-check">
-          <input
-            type="checkbox"
-            checked={!!input.camera}
-            onChange={(e) =>
-              update({
-                camera: e.target.checked ? { ...DEFAULT_CAMERA } : undefined,
-              })
-            }
-          />
-          指定全局默认取景
-        </label>
-        {input.camera && (
-          <>
-            <CameraSettings
-              value={input.camera}
-              onChange={(camera) => update({ camera })}
-              disabled={disabled}
-            />
-            <button
-              className="btn secondary small"
-              disabled={!content || disabled}
-              onClick={() =>
-                setContent((c) => ({
-                  ...c,
-                  items: c.items.map((i) =>
-                    i.module_id === "main"
-                      ? { ...i, camera: input.camera }
-                      : i,
-                  ),
-                }))
-              }
-            >
-              应用到本计划主图
-            </button>
-          </>
-        )}
         <p className="dim small">
           分析与生成图片分别确认费用。看图、修改规划和构图示意不调用模型。
         </p>
