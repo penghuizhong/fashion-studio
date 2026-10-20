@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   DETAIL_MODULES,
   PLAN_LIMITS,
@@ -11,6 +11,64 @@ import {
 import { imageTaskAllowed } from "../../../shared/imageOptions.js";
 import ImageOutputOptions from "./ImageOutputOptions.jsx";
 import StudioImage from "./StudioImage.jsx";
+const STATUS_BADGE = {
+  ready: ["OK", "可生成"],
+  needs_info: ["待补充", "待补充资料"],
+  invalid: ["需调整", "需要调整"],
+  needs_analysis: ["待分析", "待分析或确认"],
+};
+function assembleSpecText(item) {
+  const module = DETAIL_MODULES.find((m) => m.id === item.module_id),
+    spec = item.spec || {};
+  const line = [
+    "图片类型",
+    module?.name || "",
+    ...SPEC_FIELDS.map(
+      ([key, label]) => `${label}：${spec[key] || ""}`,
+    ),
+  ].join(" | ");
+  return `- 模块画面指引：${module?.guide || ""}\n\n${line}`;
+}
+function parseSpecText(textValue, fallback) {
+  const spec = { ...(fallback || {}) };
+  for (const segment of String(textValue || "").split("|")) {
+    const trimmed = segment.trim();
+    for (const [key, label] of SPEC_FIELDS) {
+      const match = trimmed.match(
+        new RegExp(`^${label}[:：]\\s*([\\s\\S]*)$`),
+      );
+      if (match) spec[key] = match[1].trim();
+    }
+  }
+  return spec;
+}
+function SpecText({ item, index, disabled, onCommit }) {
+  const [draft, setDraft] = useState(() => assembleSpecText(item)),
+    [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) setDraft(assembleSpecText(item));
+  }, [item.spec, item.module_id]);
+  return (
+    <label className="style-field">
+      画面规格
+      <textarea
+        aria-label={`图片${index + 1}画面规格`}
+        rows={9}
+        disabled={disabled}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setDirty(true);
+        }}
+        onBlur={() => {
+          if (!dirty) return;
+          setDirty(false);
+          onCommit(parseSpecText(draft, item.spec));
+        }}
+      />
+    </label>
+  );
+}
 export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
   const { content, setContent, input, setInput } = w;
   const [view, setView] = useState("plan"),
@@ -76,48 +134,17 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
         input.references.find((r) => r.id === current.reference_ids[0])
           ?.source === c.key,
     );
+  const quote = w.quote,
+    generateCount = quote?.indexes.length ?? w.selected?.length ?? 0,
+    generateDisabled =
+      disabled || !quote || w.quoteBusy || w.changed || w.busy;
   return (
     <div className="wizard-plan-editor">
-      <details className="wizard-section wizard-standard">
-        <summary>
-          <strong>整体设计规范</strong>
-          <span className="dim small">
-            {content.standard.tone?.slice(0, 55)} ·{" "}
-            {content.standard.photography?.slice(0, 40)}
-          </span>
-        </summary>
-        <p className="dim small">
-          按所选模块动态生成，用于本计划每一张图；每图不同的内容在各自的画面规格里，模块指引与全局约束由系统统一注入。商品原配色和已确认事实保持不变。
-        </p>
-        <fieldset disabled={disabled}>
-          {STANDARD_SECTIONS.map(([key, label]) => (
-            <label className="style-field" key={key}>
-              {label}
-              <textarea
-                aria-label={label}
-                rows={3}
-                maxLength={4000}
-                value={content.standard[key] || ""}
-                onChange={(e) =>
-                  setContent((c) => ({
-                    ...c,
-                    standard: { ...c.standard, [key]: e.target.value },
-                    standard_edited: true,
-                  }))
-                }
-              />
-            </label>
-          ))}
-        </fieldset>
-        <p className="dim small">
-          更新公共规范会重新编译提示词并使旧报价失效，手工段保持原样。字体为生成指导，实际文字需核对。
-        </p>
-      </details>
       <div className="wizard-section-head">
         <div>
           <h3>图片规划</h3>
           <p className="dim small">
-            共{content.items.length}张 · 每张图可独立编辑
+            共{content.items.length}张图片，点击可编辑标题和描述
           </p>
         </div>
         <div className="wizard-inline">
@@ -170,7 +197,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
             <div>
               <strong>{current.title}</strong>
               <p>{current.requirement}</p>
-              <span>图内文案：{current.copy || "未添加"}</span>
+              <span>图内文案：{current.copy || current.spec?.text || "未添加"}</span>
             </div>
           </div>
           <p>
@@ -189,10 +216,10 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
         </section>
       ) : (
         content.items.map((item, index) => {
-          const name = DETAIL_MODULES.find(
-              (m) => m.id === item.module_id,
-            )?.name,
+          const module = DETAIL_MODULES.find((m) => m.id === item.module_id),
+            name = module?.name,
             status = item.status,
+            badge = STATUS_BADGE[status] || STATUS_BADGE.needs_analysis,
             open = expanded === item.id;
           return (
             <article
@@ -222,14 +249,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                   <span>
                     <strong>{item.title || name}</strong>
                     <small>
-                      {name} · {item.size || input.size} ·{" "}
-                      {status === "ready"
-                        ? "可生成"
-                        : status === "needs_info"
-                          ? "待补充资料"
-                          : status === "invalid"
-                            ? "需要调整"
-                            : "待分析或确认"}
+                      {name} · {item.size || input.size} · {badge[1]}
                     </small>
                     <small>{item.requirement.slice(0, 110)}</small>
                   </span>
@@ -239,6 +259,9 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
               {open && (
                 <div className="wizard-plan-content">
                   <fieldset disabled={disabled}>
+                    <p className="dim small">
+                      改过的内容会作为这张图的要求一起生成。
+                    </p>
                     <label className="style-field">
                       图片标题
                       <input
@@ -251,7 +274,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                       />
                     </label>
                     <label className="style-field">
-                      画面要求
+                      画面描述
                       <textarea
                         aria-label={`图片${index + 1}画面要求`}
                         rows={4}
@@ -262,18 +285,14 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                         }
                       />
                     </label>
-                    <label className="style-field">
-                      图内文案
-                      <textarea
-                        aria-label={`图片${index + 1}图内文案`}
-                        rows={2}
-                        maxLength={3000}
-                        value={item.copy}
-                        onChange={(e) =>
-                          patch(item.id, { copy: e.target.value })
-                        }
-                      />
-                    </label>
+                    <SpecText
+                      item={item}
+                      index={index}
+                      disabled={disabled}
+                      onCommit={(spec) =>
+                        patch(item.id, { spec, copy: "" })
+                      }
+                    />
                     {item.missing?.length > 0 && (
                       <p className="wizard-pending">
                         待补充：
@@ -289,33 +308,38 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                         图片观察：{item.observation}；观察不等于真实商品参数。
                       </p>
                     )}
-                    <details>
-                      <summary>画面规格</summary>
-                      <p className="dim small">
-                        模块画面指引：
-                        {DETAIL_MODULES.find((m) => m.id === item.module_id)
-                          ?.guide || ""}
-                      </p>
-                      {SPEC_FIELDS.map(([key, label]) => (
-                        <label className="style-field" key={key}>
-                          {label}
-                          <textarea
-                            aria-label={`图片${index + 1}${label}`}
-                            rows={2}
-                            maxLength={2000}
-                            value={item.spec?.[key] || ""}
-                            onChange={(e) =>
-                              patch(item.id, {
-                                spec: {
-                                  ...(item.spec || {}),
-                                  [key]: e.target.value,
-                                },
-                              })
-                            }
-                          />
-                        </label>
-                      ))}
-                    </details>
+                    <div className="wizard-spec-head">
+                      <strong>提示词</strong>
+                      <span
+                        className={`wizard-spec-status${status === "ready" ? " ok" : ""}`}
+                      >
+                        {badge[0]}
+                      </span>
+                    </div>
+                    <label className="style-field">
+                      <textarea
+                        aria-label={`图片${index + 1}完整提示词`}
+                        rows={7}
+                        readOnly
+                        value={item.prompt || "正在编译，保存后显示"}
+                      />
+                    </label>
+                    <button
+                      className="btn secondary small"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(
+                            item.prompt || "",
+                          );
+                          setCopyStatus("提示词已复制");
+                        } catch {
+                          setCopyStatus("复制不可用，请从文本框手动复制");
+                        }
+                      }}
+                    >
+                      复制完整提示词
+                    </button>
+                    {copyStatus && <p role="status">{copyStatus}</p>}
                     <details>
                       <summary>参考图</summary>
                       <div className="wizard-inline">
@@ -427,31 +451,6 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                           )}
                         </div>
                       ))}
-                      <label className="style-field">
-                        实际提交的完整提示词
-                        <textarea
-                          aria-label={`图片${index + 1}完整提示词`}
-                          rows={7}
-                          readOnly
-                          value={item.prompt || "正在编译，保存后显示"}
-                        />
-                      </label>
-                      <button
-                        className="btn secondary small"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(
-                              item.prompt || "",
-                            );
-                            setCopyStatus("提示词已复制");
-                          } catch {
-                            setCopyStatus("复制不可用，请从文本框手动复制");
-                          }
-                        }}
-                      >
-                        复制完整提示词
-                      </button>
-                      {copyStatus && <p role="status">{copyStatus}</p>}
                     </details>
                     <div className="wizard-inline">
                       <button
@@ -519,6 +518,59 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
           );
         })
       )}
+      <details className="wizard-section wizard-standard wizard-module-card">
+        <summary>
+          <strong>整体设计规范</strong>
+          <span className="dim small">所有图片遵循的统一视觉标准</span>
+        </summary>
+        <p className="dim small">
+          按所选模块动态生成，用于本计划每一张图；每图不同的内容在各自的画面规格里，模块指引与全局约束由系统统一注入。商品原配色和已确认事实保持不变。
+        </p>
+        <fieldset disabled={disabled}>
+          {STANDARD_SECTIONS.map(([key, label]) => (
+            <label className="style-field" key={key}>
+              {label}
+              <textarea
+                aria-label={label}
+                rows={2}
+                maxLength={4000}
+                value={content.standard[key] || ""}
+                onChange={(e) =>
+                  setContent((c) => ({
+                    ...c,
+                    standard: { ...c.standard, [key]: e.target.value },
+                    standard_edited: true,
+                  }))
+                }
+              />
+            </label>
+          ))}
+        </fieldset>
+        <p className="dim small">
+          更新公共规范会重新编译提示词并使旧报价失效，手工段保持原样。字体为生成指导，实际文字需核对。
+        </p>
+      </details>
+      <section className="wizard-section wizard-module-card wizard-gen-card">
+        <div>
+          <h3>生成图片</h3>
+          <p className="dim small">
+            {quote
+              ? `继续生成 ${generateCount} 张图需消耗 ${quote.total} 积分`
+              : w.quoteBusy
+                ? "正在计算生成费用…"
+                : generateCount
+                  ? `已选 ${generateCount} 张图，费用待重新报价`
+                  : "先在上方选择可生成的图片"}
+          </p>
+        </div>
+        <button
+          className="btn primary wizard-gen-button"
+          disabled={generateDisabled}
+          onClick={() => w.startGeneration()}
+        >
+          生成图片
+        </button>
+      </section>
     </div>
   );
 }
