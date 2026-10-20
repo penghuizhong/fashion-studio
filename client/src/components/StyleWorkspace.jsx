@@ -575,6 +575,7 @@ export default function StyleWorkspace({
           {fileAvailability!==false&&<OriginalImageLink path={file} />}
           <button
             className="btn secondary small"
+            aria-expanded={!!panel}
             onClick={() => {
               setPanel((p) => (p ? null : "derive"));
               if (!panel) setTab("derive");
@@ -584,6 +585,7 @@ export default function StyleWorkspace({
           </button>
           <button
             className="btn secondary small"
+            aria-pressed={!!panel && tab === "attributes"}
             onClick={() => {
               setPanel("attributes");
               setTab("attributes");

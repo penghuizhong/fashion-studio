@@ -347,7 +347,7 @@ export default function AccountView({ onOpenSidebar, showToast }) {
                 </button>
               </div>
               {pointsInfo && !pointsInfo.platform_ready && (
-                <p className="key-desc small" style={{ color: 'var(--danger, #e5484d)' }}>
+                <p className="key-desc small" style={{ color: 'var(--danger)' }}>
                   平台模型服务暂未开通，积分模式不可用，请联系管理员。
                 </p>
               )}

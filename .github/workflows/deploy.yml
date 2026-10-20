@@ -37,6 +37,7 @@ jobs:
         working-directory: client
         run: |
           npm ci
+          npm run check:theme
           npm run build
 
   deploy:

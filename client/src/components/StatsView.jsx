@@ -28,8 +28,8 @@ function TrendChart({ data }) {
           strokeWidth="1"
         />
       ))}
-      <path d={area} fill="#5b8def" opacity="0.15" />
-      <path d={line} fill="none" stroke="#5b8def" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d={area} fill="var(--chart-primary)" opacity="var(--chart-area-opacity)" />
+      <path d={line} fill="none" stroke="var(--chart-primary)" strokeWidth="2.5" strokeLinejoin="round" />
       {data.map((d, i) =>
         i % step === 0 ? (
           <text

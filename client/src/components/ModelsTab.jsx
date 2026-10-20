@@ -297,7 +297,7 @@ export default function ModelsTab({ showToast }) {
               <div>
                 <b>{p.name}</b>{' '}
                 <span className="key-desc small">{presetName(p.preset)} · {KIND_LABEL[p.kind] || p.kind} · {p.has_key ? '已配 Key' : '未配 Key'}</span>{' '}
-                {p.is_default ? <span className="pm-off-tag" style={{ background: '#e8f5e9', color: '#2e7d32' }}>默认</span> : null}
+                {p.is_default ? <span className="pm-off-tag pm-default-tag">默认</span> : null}
               </div>
               <div className="key-desc small">{p.base_url || '（未填地址）'}{p.is_active ? '' : '（已停用）'}</div>
             </div>

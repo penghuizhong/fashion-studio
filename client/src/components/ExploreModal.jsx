@@ -693,7 +693,8 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                     {[2, 4, 6, 8].map((n) => (
                       <button
                         key={n}
-                        className={`btn small ${count === n ? 'primary' : 'secondary'}`}
+                        className="btn small secondary explore-count-choice"
+                        aria-pressed={count === n}
                         onClick={() => setCount(n)}
                       >
                         {n} 个方案

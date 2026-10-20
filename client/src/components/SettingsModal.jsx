@@ -85,9 +85,9 @@ function TrendChart({ data }) {
           strokeWidth="1"
         />
       ))}
-      <path d={area} fill="#5b8def" opacity="0.15" />
-      <path d={line} fill="none" stroke="#5b8def" strokeWidth="2.5" strokeLinejoin="round" />
-      <path d={lineApi} fill="none" stroke="#34c77b" strokeWidth="2" strokeDasharray="5 3" strokeLinejoin="round" />
+      <path d={area} fill="var(--chart-primary)" opacity="var(--chart-area-opacity)" />
+      <path d={line} fill="none" stroke="var(--chart-primary)" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d={lineApi} fill="none" stroke="var(--chart-secondary)" strokeWidth="2" strokeDasharray="5 3" strokeLinejoin="round" />
       {data.map((d, i) =>
         i % step === 0 ? (
           <text
@@ -106,9 +106,9 @@ function TrendChart({ data }) {
         max {max}
       </text>
       {/* 图例 */}
-      <circle cx={P + 4} cy={34} r="4" fill="#5b8def" />
+      <circle cx={P + 4} cy={34} r="4" fill="var(--chart-primary)" />
       <text x={P + 12} y={38} fontSize="11" fill="var(--text-secondary)">积分消耗</text>
-      <circle cx={P + 90} cy={34} r="4" fill="#34c77b" />
+      <circle cx={P + 90} cy={34} r="4" fill="var(--chart-secondary)" />
       <text x={P + 98} y={38} fontSize="11" fill="var(--text-secondary)">API 调用{maxApi > 1 ? `（max ${maxApi}）` : ''}</text>
     </svg>
   );
@@ -598,7 +598,7 @@ export default function SettingsModal({ initialTab = 'points', onClose, showToas
                     <button className="btn secondary" onClick={refreshPoints} disabled={loading}>刷新</button>
                   </div>
                   {pointsInfo && !pointsInfo.platform_ready && (
-                    <p className="key-desc small" style={{ color: 'var(--danger, #e5484d)' }}>
+                    <p className="key-desc small" style={{ color: 'var(--danger)' }}>
                       平台模型服务暂未开通，积分模式不可用，请联系管理员。
                     </p>
                   )}

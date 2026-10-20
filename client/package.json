@@ -6,7 +6,8 @@
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "postcss": "^8.5.28"
   },
   "name": "fashion-studio-client",
   "private": true,
@@ -15,8 +16,9 @@
     "dev": "vite",
     "preview": "vite preview",
     "prebuild": "sh ../scripts/decode-avatars.sh",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test",
+    "check:theme": "node scripts/check-theme.mjs"
   },
   "type": "module",
-  "version": "0.11.0"
+  "version": "0.11.1"
 }
