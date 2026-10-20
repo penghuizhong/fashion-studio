@@ -247,8 +247,10 @@ export default function StylePlanAttributes({ w, onDirty, onSaved }) {
         </p>
         <div className="wizard-attribute-fields">
           {Object.entries(dna).map(([key, field]) => (
-            <label className="style-field" key={key}>
-              {fields.find((f) => f.key === key)?.label || key}
+            <label className="style-field wizard-attribute-row" key={key}>
+              <span className="wizard-attribute-name">
+                {fields.find((f) => f.key === key)?.label || key}
+              </span>
               {draft ? (
                 <textarea
                   rows={Array.isArray(field.value) ? 2 : 1}
@@ -267,8 +269,8 @@ export default function StylePlanAttributes({ w, onDirty, onSaved }) {
             </label>
           ))}
         </div>
-        <label className="style-field">
-          设计变化说明
+        <label className="style-field wizard-attribute-row">
+          <span className="wizard-attribute-name">设计变化说明</span>
           {draft ? (
             <textarea
               rows={3}

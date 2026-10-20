@@ -244,6 +244,35 @@
   padding-top: 8px;
   margin-top: 12px;
 }
+/* 基础属性：左边参数名、右边值，两列对齐排版 */
+.wizard-attribute-fields {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.style-wizard .wizard-attribute-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 120px) minmax(0, 1fr);
+  gap: 4px 14px;
+  align-items: start;
+  margin: 0;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.wizard-attribute-name {
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.wizard-attribute-row .style-value {
+  font-size: 14px;
+  line-height: 1.6;
+  min-width: 0;
+}
+.wizard-attribute-row:has(textarea) .wizard-attribute-name {
+  padding-top: 10px;
+}
 .wizard-property-preview {
   display: flex;
   flex-direction: column;
