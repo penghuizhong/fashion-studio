@@ -22,20 +22,20 @@ async function generate(request,t,count=1){
  await expect.poll(async()=>{const p=await(await request.get(`/api/studio/templates/${t.id}/workspace/progress?known=${encodeURIComponent(JSON.stringify({[job.id]:''}))}`)).json();return p.jobs[0]?.status;}).toBe('succeeded');
 }
 
-test('thumbnail paints while workspace is pending; pure viewing makes no auxiliary or original requests',async({page,request})=>{
+test('step one opens immediately with a thumbnail; models and originals stay lazy',async({page,request})=>{
  const t=await makeStyle(request,'立即预览4K',4096,4096);let release;const gate=new Promise(r=>release=r);let workspaceDone=false;
  await page.route('**/workspace?*',async route=>{await gate;workspaceDone=true;await route.continue();});
  await page.route('**/api/studio/preview?*',async route=>{await gate;await route.continue();});
  await page.goto('/');await page.getByText('设计台',{exact:true}).first().click();await page.locator('.studio-card').filter({hasText:'立即预览4K'}).waitFor();
  const requests=[];page.on('request',r=>requests.push(new URL(r.url()).pathname));
  await page.locator('.studio-card').filter({hasText:'立即预览4K'}).click();
- await expect(page.locator('.style-preview-image img')).toBeVisible();expect(workspaceDone).toBe(false);
- await expect(page.locator('.style-preview-image img')).toHaveAttribute('src','/'+t.ws.template.source_thumb_path);
- release();await expect(page.locator('.style-preview-footer')).toBeVisible();
+ await expect(page.locator('.wizard-property-preview img')).toBeVisible();expect(workspaceDone).toBe(false);
+ await expect(page.locator('.wizard-property-preview img')).toHaveAttribute('src','/'+t.ws.template.source_thumb_path);
+ await expect(page.locator('.wizard-steps button')).toHaveCount(5);await expect(page.locator('.wizard-image-only')).toHaveCount(0);release();await expect(page.getByLabel('设计版本',{exact:true})).not.toHaveValue('');
  await expect(page.locator('.progressive-studio-image')).toHaveAttribute('data-preview-ready','true');
  expect(requests.filter(p=>/\/studio\/(image-models|assets|references)$|\/quote$/.test(p))).toEqual([]);
  expect(requests.filter(p=>p==='/'+t.ws.template.source_image_path)).toEqual([]);
- await page.getByRole('button',{name:'实际尺寸',exact:true}).click();await expect.poll(()=>requests.filter(p=>p==='/'+t.ws.template.source_image_path).length).toBe(1);
+ await page.getByRole('button',{name:'放大原图',exact:true}).click();await page.getByRole('button',{name:'实际尺寸',exact:true}).click();await expect.poll(()=>requests.filter(p=>p==='/'+t.ws.template.source_image_path).length).toBe(1);
 });
 
 for(const [width,edge] of [[1440,4096],[390,4096],[1440,1024]])test(`cold/warm progressive timings and complete preview ${width}-${edge}`,async({page,request},info)=>{
@@ -46,11 +46,11 @@ for(const [width,edge] of [[1440,4096],[390,4096],[1440,1024]])test(`cold/warm p
  for(let run=0;run<2;run++){
   await page.evaluate(()=>performance.clearResourceTimings());
   const start=Date.now();await page.locator('.studio-card').filter({hasText:`性能测量${width}-${edge}`}).click();
-  await page.getByRole('dialog',{name:'款式详情',exact:true}).waitFor();const shell=Date.now()-start;
-  await page.locator('.style-preview-image img').waitFor();await page.locator('.style-preview-image img').evaluate(img=>img.decode());const first=Date.now()-start;
+  await page.getByRole('dialog',{name:'款式详情',exact:true}).waitFor();const shell=Date.now()-start;if(width<700)await page.getByRole('button',{name:'预览',exact:true}).click();
+  await page.locator('.wizard-property-preview img').waitFor();await page.locator('.wizard-property-preview img').evaluate(img=>img.decode());const first=Date.now()-start;
   await expect(page.locator('.progressive-studio-image')).toHaveAttribute('data-preview-ready','true');
-  const element=page.locator('.style-preview-image img');const clear=Date.now()-start;const decodeMs=await element.evaluate(async img=>{const start=performance.now();await img.decode();return performance.now()-start;});
-  const box=await element.boundingBox(),frame=await page.locator('.style-preview-image').boundingBox();expect(box.y+box.height).toBeLessThanOrEqual(frame.y+frame.height+1);
+  const element=page.locator('.wizard-property-preview img');const clear=Date.now()-start;const decodeMs=await element.evaluate(async img=>{const start=performance.now();await img.decode();return performance.now()-start;});
+  const box=await element.boundingBox(),frame=await page.locator('.wizard-property-preview>.progressive-studio-image').boundingBox();expect(box.y+box.height).toBeLessThanOrEqual(frame.y+frame.height+1);
   const resources=await page.evaluate(()=>performance.getEntriesByType('resource').filter(r=>r.name.includes('/api/studio/preview')).map(r=>({bytes:r.transferSize,download_ms:r.responseEnd-r.responseStart,total_ms:r.duration})));
   metrics.push({run:run?'warm':'cold',shell_ms:shell,first_preview_ms:first,clear_preview_ms:clear,decode_ms:decodeMs,resources});
   await page.getByRole('button',{name:'关闭款式详情',exact:true}).click();
@@ -126,9 +126,9 @@ test('restricted network keeps a decoded thumbnail visible while clear preview d
  const t=await makeStyle(request,'受限网络4K',4096,4096);
  const cdp=await context.newCDPSession(page);await cdp.send('Network.enable');
  await cdp.send('Network.emulateNetworkConditions',{offline:false,latency:150,downloadThroughput:160*1024,uploadThroughput:128*1024});
- await openStyle(page,'受限网络4K');await expect(page.locator('.style-preview-image img')).toBeVisible();
+ await openStyle(page,'受限网络4K');await expect(page.locator('.wizard-property-preview img')).toBeVisible();
  await expect(page.locator('.progressive-studio-image')).toHaveAttribute('data-preview-ready','true');
- const image=page.locator('.style-preview-image img');expect(await image.evaluate(img=>img.naturalWidth)).toBe(1600);
+ const image=page.locator('.wizard-property-preview img');expect(await image.evaluate(img=>img.naturalWidth)).toBe(1600);
  expect(await image.evaluate(img=>getComputedStyle(img).objectFit)).toBe('contain');
  expect((await(await request.get('/'+t.ws.template.source_image_path)).body()).equals(t.image)).toBe(true);
 });
@@ -136,10 +136,10 @@ test('restricted network keeps a decoded thumbnail visible while clear preview d
 test('closing a pending detail cancels the read and cannot overwrite the next card',async({page,request})=>{
  const a=await makeStyle(request,'过期响应甲'),b=await makeStyle(request,'过期响应乙');let release;const gate=new Promise(r=>release=r);
  await page.route(`**/templates/${a.id}/workspace?*`,async route=>{await gate;try{await route.continue();}catch{}});
- await openStyle(page,'过期响应甲');await expect(page.locator('.style-preview-image img')).toBeVisible();await page.getByRole('button',{name:'关闭款式详情'}).click();
+ await openStyle(page,'过期响应甲');await expect(page.locator('.wizard-property-preview img')).toBeVisible();await page.getByRole('button',{name:'关闭款式详情'}).click();
  await page.locator('.studio-card').filter({hasText:'过期响应乙'}).click();await expect(page.locator('.style-workspace-head strong')).toHaveText('过期响应乙');release();
- await expect(page.locator('.style-preview-image img')).toHaveAttribute('alt','过期响应乙');
- const path=await page.locator('.style-preview-image img').getAttribute('src');expect(path.includes(encodeURIComponent(b.ws.template.source_image_path))||path.includes(b.ws.template.source_thumb_path)).toBe(true);
+ await expect(page.locator('.wizard-property-preview img')).toHaveAttribute('alt','款式预览图');
+ const path=await page.locator('.wizard-property-preview img').getAttribute('src');expect(path.includes(encodeURIComponent(b.ws.template.source_image_path))||path.includes(b.ws.template.source_thumb_path)).toBe(true);
 });
 
 

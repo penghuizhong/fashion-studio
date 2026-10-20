@@ -306,7 +306,7 @@ export default function StudioView({ showToast, onOpenSidebar, onGoSample, onGoP
   const [cloneOpen, setCloneOpen] = useState(false);
   const [exploreOpen, setExploreOpen] = useState(false);
   const [viewImage,setViewImage]=useState(null);
-  const openCard=t=>setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,thumbnail:t.last_thumb||t.source_thumb_path,image_available:t.image_available,panel:null});
+  const openCard=t=>setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,thumbnail:t.last_thumb||t.source_thumb_path,image_available:t.image_available,panel:'attributes',step:1});
 
   const load = useCallback(async () => {
     if(!hasLoaded.current)setLoading(true);
@@ -359,7 +359,7 @@ export default function StudioView({ showToast, onOpenSidebar, onGoSample, onGoP
       ) : (
         <div className="studio-grid">
           {templates.map((t) => (
-            <div key={t.id} className="studio-card" data-style-id={t.id} role="button" tabIndex={0} aria-label={`查看${t.name}原图`} onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openCard(t);}}} onClick={() => openCard(t)}>
+            <div key={t.id} className="studio-card" data-style-id={t.id} role="button" tabIndex={0} aria-label={`打开${t.name}款式详情`} onKeyDown={e=>{if(e.target===e.currentTarget&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openCard(t);}}} onClick={() => openCard(t)}>
               <div className="studio-card-cover">
                 <CardMenu name={t.name} items={lifecycle==='trash'?[
                   {label:'还原款式',action:()=>lifecycleActions.perform('templates',t,'restore')},
@@ -393,7 +393,7 @@ export default function StudioView({ showToast, onOpenSidebar, onGoSample, onGoP
         </div>
       )}
 
-      {viewImage&&<StyleWorkspace onGoSample={onGoSample} onGoPattern={onGoPattern} key={viewImage.id} templateId={viewImage.id} initialVersionId={viewImage.versionId} initialImage={viewImage.path?{path:viewImage.path,thumb_path:viewImage.thumbnail,image_available:viewImage.image_available,name:viewImage.name}:null} initialPanel={viewImage.panel} onClose={()=>setViewImage(null)} onChanged={load} showToast={showToast}/>}
+      {viewImage&&<StyleWorkspace onGoSample={onGoSample} onGoPattern={onGoPattern} key={viewImage.id} templateId={viewImage.id} initialVersionId={viewImage.versionId} initialImage={viewImage.path?{path:viewImage.path,thumb_path:viewImage.thumbnail,image_available:viewImage.image_available,name:viewImage.name}:null} initialPanel={viewImage.panel} initialStep={viewImage.step} onClose={()=>setViewImage(null)} onChanged={load} showToast={showToast}/>}
       {cloneOpen && (
         <CloneModal onClose={() => setCloneOpen(false)} onSaved={() => { setCloneOpen(false); load(); }} showToast={showToast} />
       )}
