@@ -3,7 +3,7 @@ import { imageAvailability,studioFileExists } from './imageLifecycle.js';
 import { chooseOutput } from './imageCapabilities.js';
 import fs from "node:fs";
 import path from "node:path";
-import { recordStyleImage } from "./styleVersions.js";
+import { recordStyleImage, saveVersion, styleVersion } from "./styleVersions.js";
 import {
   normalizeCamera,
   validateCameraIntent,
@@ -464,6 +464,23 @@ export function startJob(batch, req, b) {
       .all(batch.id);
     if (unknown.some((i) => q.indexes.includes(i.proposal_idx)))
       throw problem("RESULT_UNCERTAIN", "生成结果待确认，不能重复生成", 409);
+    if (q.style) {
+      const template = db.prepare('SELECT * FROM style_dna_templates WHERE id=? AND user_id=?').get(q.style.template_id, owner(req));
+      if (!template) throw problem('TEMPLATE_NOT_FOUND', '款式不存在', 404);
+      const parent = styleVersion(template, q.style.version_id);
+      for (const file of [q.style.source_path, ...(q.style.references || []).map(r => r.path)].filter(Boolean))
+        if (!studioFileExists(file)) throw problem('SOURCE_MISSING', '参考图片已失效，请重新选择', 404);
+      // Save inside the job/ledger transaction: failed validation or reservation rolls back the branch too.
+      if (q.style.pending_design) {
+        if (q.style.op !== 'free_design' || !q.style.design_note?.trim())
+          throw problem('INVALID_INSTRUCTION', '请描述本次设计变化');
+        const version = saveVersion(template, {
+          parent_id: parent.id, dna: JSON.parse(parent.dna_json),
+          design_note: q.style.design_note, request_key: `job-${id}`,
+        });
+        q.style = { ...q.style, version_id: version.id, version_number: version.number, pending_design: false };
+      }
+    }
     db.prepare("INSERT INTO explore_jobs VALUES(?,?,?,?,?,?,?,?,?)").run(
       id,
       batch.id,
@@ -471,7 +488,7 @@ export function startJob(batch, req, b) {
       key,
       row.id,
       "running",
-      row.payload_json,
+      JSON.stringify(q),
       Date.now() + 600000,
       stamp(),
     );

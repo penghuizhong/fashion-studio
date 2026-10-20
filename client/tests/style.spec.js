@@ -242,140 +242,19 @@ test("recolor saves design first, detail camera changes and background requests 
   expect(ws.jobs[0].snapshot.style.op).toBe("detail_shot");
 });
 
-test("editable specification layout exports without another model call", async ({
-  page,
-  request,
-}) => {
-  const t = await makeStyle(request, "规格排版");
-  const ws = await (
-    await request.get(`/api/studio/templates/${t.id}/workspace`)
-  ).json();
-  const q = await (
-    await request.post(`/api/studio/templates/${t.id}/quote`, {
-      data: {
-        version_id: ws.versions[0].id,
-        op: "create",
-        mode: "text",
-        model_id: "browser-image-one",
-        size: "512x512",
-        count: 1,
-      },
-    })
-  ).json();
-  await request.post(`/api/studio/templates/${t.id}/jobs`, {
-    data: {
-      quote_id: q.quote.id,
-      request_key: crypto.randomUUID(),
-      confirm: true,
-    },
-  });
-  await openStyle(page, "规格排版", true);
-  await expect
-    .poll(async () => {
-      const ws = await (
-        await request.get(`/api/studio/templates/${t.id}/workspace`)
-      ).json();
-      return ws.images.length;
-    })
-    .toBe(1);
-  await page.getByRole("button", { name: "图文排版", exact: true }).click();
-  await expect(page.locator(".style-layout-images label")).toHaveCount(1);
-  let calls = 0;
-  page.on("request", (r) => {
-    if (r.method() === "POST" && r.url().endsWith("/jobs")) calls++;
-  });
-  await page.getByLabel("排版用途").selectOption("spec");
-  await page.locator(".style-layout-images input").check();
-  await page.getByLabel("测量项目1").fill("衣长");
-  await page.getByLabel("厘米数1").fill("76.2");
-  await page.locator('.style-panel nav').getByRole('button',{name:'版本记录',exact:true}).click();
-  await page.getByRole('button',{name:'图文排版',exact:true}).click();
-  await expect(page.getByLabel('厘米数1')).toHaveValue('76.2');
-  await page.getByText("我已核对图片、文字及尺寸资料", { exact: true }).click();
-  await expect(
-    page.getByRole("img", { name: "可编辑图文排版", exact: true }),
-  ).toContainText("30.00 in");
-  await page
-    .getByRole("button", { name: "保存可编辑排版", exact: true })
-    .click();
-  await expect(
-    page.getByText("已保存排版（1）", { exact: true }),
-  ).toBeVisible();
-  const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "下载 SVG", exact: true }).click();
-  expect((await download).suggestedFilename()).toMatch(/\.svg$/);
-  const pngDownload = page.waitForEvent("download");
-  await page.getByRole("button", { name: "下载 PNG", exact: true }).click();
-  const exported = await pngDownload;
-  expect(exported.suggestedFilename()).toMatch(/\.png$/);
-  const meta = await sharp(await exported.path()).metadata();
-  expect(meta.width).toBe(1000);
-  expect(meta.height).toBe(1000);
-  expect(calls).toBe(0);
-});
-
-test('clone analysis compresses its request but saves the uploaded original bytes',async({page,request})=>{
- const original=await sharp({create:{width:1400,height:900,channels:3,background:'#315274'}}).png().toBuffer();
- await page.goto('/');await page.getByText('设计台',{exact:true}).first().click();await page.getByRole('button',{name:'解析款式',exact:true}).first().click();
- await page.locator('input[type="file"]').setInputFiles({name:'source.png',mimeType:'image/png',buffer:original});
- const extraction=page.waitForRequest(r=>r.url().endsWith('/dna/extract'));await page.getByRole('button',{name:'提取 DNA',exact:true}).click();const uploaded=(await extraction).postDataJSON();const analyzed=await sharp(Buffer.from(uploaded.imageBase64,'base64')).metadata();expect(analyzed.width).toBe(1024);
- await page.getByPlaceholder('模板名称，如：香槟色鱼尾裙').fill('保留上传原始图');await page.getByRole('button',{name:'保存模板',exact:true}).click();await expect(page.locator('.studio-card').filter({hasText:'保留上传原始图'})).toBeVisible();
- const list=await (await request.get('/api/studio/templates')).json();const t=list.templates.find(t=>t.name==='保留上传原始图');const response=await request.get('/'+t.source_image_path);expect(response.ok()).toBeTruthy();expect(Buffer.compare(await response.body(),original)).toBe(0);const metadata=await sharp(await response.body()).metadata();expect(metadata.width).toBe(1400);expect(metadata.height).toBe(900);
-});
-
-test('card preview falls back from missing thumbnail and shows missing files explicitly', async ({page, request}) => {
-  const t = await makeStyle(request, '文件失效测试');
-  const ws = await (await request.get(`/api/studio/templates/${t.id}/workspace`)).json();
-  await page.route('**/' + ws.template.source_thumb_path, route => route.fulfill({status:404, body:''}));
-  await page.goto('/');
-  await page.getByText('设计台', {exact:true}).first().click();
-  const card = page.locator('.studio-card').filter({hasText:'文件失效测试'});
-  await expect(card.locator('.studio-card-cover img')).toHaveAttribute('src', '/' + ws.template.source_image_path);
-  await expect.poll(() => card.locator('.studio-card-cover img').evaluate(el => el.naturalWidth)).toBeGreaterThan(0);
-  await page.route('**/' + ws.template.source_image_path, route => route.fulfill({status:404, body:''}));
-  await page.reload();
-  await page.getByText('设计台', {exact:true}).first().click();
-  await expect(card.getByText('图片文件缺失', {exact:true})).toBeVisible();
-});
-
-for(const width of [1440,390])test(`card menus archive recycle restore and permanent record removal ${width}`,async({page,request})=>{
-  await page.setViewportSize({width,height:900});
-  const name=`生命周期${width}`;
-  const t=await makeStyle(request,name);
-  const original=(await (await request.get(`/api/studio/templates/${t.id}/workspace`)).json()).template.source_image_path;
-  const before=await (await request.get('/'+original)).body();
-  await page.goto('/');
-  if(width<769)await page.getByRole('button',{name:'打开侧边栏',exact:true}).click();
-  await page.getByText('设计台',{exact:true}).first().click();
-  const card=page.locator('.studio-card').filter({hasText:name});
-  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
-  await expect(page.getByRole('dialog',{name:'款式详情'})).toHaveCount(0);
-  await card.getByRole('menuitem',{name:'归档款式',exact:true}).click();
-  await expect(card).toHaveCount(0);
-  const tabs=page.getByRole('group',{name:'内容状态'});
-  await tabs.getByRole('button',{name:'已归档',exact:true}).click();
-  await expect(card).toBeVisible();
-  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
-  await card.getByRole('menuitem',{name:'删除（移入回收站）',exact:true}).click();
-  await expect(card).toHaveCount(0);
-  await tabs.getByRole('button',{name:'回收站',exact:true}).click();
-  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
-  await card.getByRole('menuitem',{name:'还原款式',exact:true}).click();
-  await tabs.getByRole('button',{name:'已归档',exact:true}).click();
-  await expect(card).toBeVisible();
-  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
-  await card.getByRole('menuitem',{name:'删除（移入回收站）',exact:true}).click();
-  await tabs.getByRole('button',{name:'回收站',exact:true}).click();
-  await card.getByRole('button',{name:name+'操作菜单',exact:true}).click();
-  await card.getByRole('menuitem',{name:'永久删除',exact:true}).click();
-  const confirm=page.getByRole('dialog',{name:'永久移除确认'});
-  await expect(confirm.getByRole('button',{name:'永久移除此记录'})).toBeDisabled();
-  await confirm.getByLabel('永久删除确认').fill('永久删除');
-  await confirm.getByRole('button',{name:'永久移除此记录'}).click();
-  await expect(confirm).toContainText('记录已永久移除');
-  await confirm.getByRole('button',{name:'关闭',exact:true}).click();
-  await expect(card).toHaveCount(0);
-  expect(await (await request.get('/'+original)).body()).toEqual(before);
+test('retired layout has no entry or requests; legacy draft is ignored and original download remains',async({page,request})=>{
+ const t=await makeStyle(request,'排版功能下线');
+ await page.goto('/');await page.evaluate(id=>sessionStorage.setItem(`style-draft-layout-v1:local:${id}:1`,JSON.stringify({savedAt:Date.now(),form:{type:'spec'}})),t.id);
+ const calls=[];page.on('request',r=>{if(/layouts|layoutImages/.test(r.url()))calls.push(r.url());});
+ await openStyle(page,'排版功能下线',true);
+ await expect(page.locator('.style-panel nav button')).toHaveCount(3);
+ await expect(page.getByRole('button',{name:'图文排版',exact:true})).toHaveCount(0);
+ await page.locator('.style-panel nav').getByRole('button',{name:'版本记录',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'设计版本',exact:true})).toBeVisible();
+ const download=page.waitForEvent('download');await page.locator('.style-toolbar').getByRole('link',{name:'下载原图',exact:true}).click();
+ expect((await download).suggestedFilename()).toMatch(/\.png$/);expect(calls).toEqual([]);
+ expect((await request.post(`/api/studio/templates/${t.id}/layouts`,{data:{}})).status()).toBe(410);
+ expect((await request.get(`/api/studio/templates/${t.id}/workspace/layouts`)).status()).toBe(410);
 });
 
 test('unified references, custom native output, quality and saved text design version',async({page,request})=>{
@@ -397,11 +276,9 @@ test('unified references, custom native output, quality and saved text design ve
  await page.getByLabel('自定义宽').fill('800');
  await page.getByLabel('自定义高').fill('1200');
  await page.getByLabel('生成质量').selectOption('high');
- await page.getByRole('button',{name:'自由衍生 · 修改设计',exact:true}).click();
+ await page.getByRole('button',{name:'自由衍生 按文字或多张参考图探索新设计',exact:true}).click();
  await page.getByLabel('本次要求',{exact:true}).fill('图1的袖子，保留图2领子，改成条纹花色');
- await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeDisabled();
- await page.getByRole('button',{name:'保存要求为新版本'}).click();
- await expect(page.getByLabel('设计版本')).toContainText('V2');
+ await expect(page.getByRole('button',{name:'保存要求为新版本'})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();
  await page.getByRole('button',{name:'确认费用并生成',exact:true}).click();
  await expect(page.locator('.style-result-grid article')).toHaveCount(1);

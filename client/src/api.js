@@ -408,7 +408,6 @@ export const api = {
     lifecycleImpact: (kind,id) => get(`/api/studio/${kind}/${id}/impact`),
     bulkLifecycle: (ids,action,confirm) => post('/api/studio/assets/lifecycle',{ids,action,confirm}),
     cleanupFiles: id => post(`/api/studio/generations/${id}/cleanup-files`,{confirm:'清理文件'}),
-    saveLayout: (id,body) => post(`/api/studio/templates/${id}/layouts`,body),
     workspace: (id,params={},options) => get(`/api/studio/templates/${id}/workspace?${new URLSearchParams(params)}`,options),
     workspaceItems: (id,collection,params={},options) => get(`/api/studio/templates/${id}/workspace/${collection}?${new URLSearchParams(params)}`,options),
     styleProgress: (id,known,options) => get(`/api/studio/templates/${id}/workspace/progress?${new URLSearchParams({known:JSON.stringify(known)})}`,options),

@@ -14,10 +14,10 @@ const {waitJob}=await import('../src/exploreJobs.js');
 const {imageRateMatch}=await import('../../shared/imagePricing.js');
 const db=getDb(),now=new Date().toISOString(),originalFetch=global.fetch;
 const png=await sharp({create:{width:3072,height:4096,channels:3,background:'#345678'}}).png().toBuffer();
-let calls=0;
+let calls=0,failNext=false;
 global.fetch=async(url,opts)=>{
  if(!String(url).startsWith('https://ux.invalid'))return originalFetch(url,opts);
- calls++;return new Response(JSON.stringify({data:[{b64_json:png.toString('base64')}]}),{headers:{'Content-Type':'application/json'}});
+ calls++;if(failNext){failNext=false;return new Response(JSON.stringify({error:{message:'explicit rejection'}}),{status:400,headers:{'Content-Type':'application/json'}});}return new Response(JSON.stringify({data:[{b64_json:png.toString('base64')}]}),{headers:{'Content-Type':'application/json'}});
 };
 for(const user of ['alice','bob']){
  db.prepare("INSERT INTO users(id,username,password_hash,created_at,points_balance,billing_mode,is_admin) VALUES(?,?,?,?,1000,'points',?)").run(user,user,'unused',now,user==='alice'?1:0);
@@ -73,7 +73,7 @@ try{
   let parent=root.id;for(let i=0;i<42;i++)parent=(await req('POST',`/api/studio/templates/${t.id}/versions`,{parent_id:parent,dna:{...dna,primary_color:{value:'蓝'+i}},request_key:crypto.randomUUID()})).version.id;
   for(let i=0;i<47;i++)imageIds.push(Number(db.prepare("INSERT INTO dna_generations(template_id,user_id,image_path,thumb_path,design_version_id,settings_json,created_at) VALUES(?,'alice',?,?,?,?,?)").run(t.id,file,thumb,root.id,JSON.stringify({prompt:'long '.repeat(1000)}),now).lastInsertRowid));
   const summary=await req('GET',`/api/studio/templates/${t.id}/workspace?view=summary&version_id=${parent}`),full=await req('GET',`/api/studio/templates/${t.id}/workspace`);
-  assert.equal(summary.totals.versions,43);assert.equal(summary.totals.images,47);assert.ok(summary.versions.length<=3);assert.equal(summary.images.length,0);assert.deepEqual(summary.layouts,[]);assert.ok(JSON.stringify(summary).length<JSON.stringify(full).length/8);
+  assert.equal(summary.totals.versions,43);assert.equal(summary.totals.images,47);assert.ok(summary.versions.length<=3);assert.equal(summary.images.length,0);assert.ok(!Object.hasOwn(summary,'layouts'));assert.ok(!Object.hasOwn(summary.totals,'layouts'));assert.ok(JSON.stringify(summary).length<JSON.stringify(full).length/8);
   await req('GET',`/api/studio/templates/${t.id}/workspace?view=summary`,undefined,404,'bob');
  });
  await test('collections paginate and filter lifecycle; saved selected IDs resolve across pages',async()=>{
@@ -99,11 +99,60 @@ try{
   assert.equal(JSON.parse(db.prepare('SELECT dna_json FROM style_versions WHERE id=?').get(root.id).dna_json).scene.value,'海岛度假');
   await req('POST',`/api/studio/templates/${t.id}/quote`,{...body,instruction:'换成海滩背景'},400);
  });
- await test('free design needs saved requirements and keeps structured parent attributes immutable',async()=>{
-  await req('POST',`/api/studio/templates/${t.id}/quote`,{...body,op:'free_design',instruction:'改成条纹面料'},400);
-  const v=(await req('POST',`/api/studio/templates/${t.id}/versions`,{parent_id:root.id,dna,design_note:'改成条纹面料',request_key:crypto.randomUUID()})).version;
-  const q=(await req('POST',`/api/studio/templates/${t.id}/quote`,{...body,op:'free_design',version_id:v.id,instruction:'改成条纹面料'})).quote;
-  assert.equal(q.style.version_id,v.id);assert.equal(v.dna_json,root.dna_json);assert.equal(db.prepare('SELECT design_note FROM style_versions WHERE id=?').get(root.id).design_note,'');
+ const versionCount=()=>db.prepare('SELECT COUNT(*) n FROM style_versions WHERE template_id=?').get(t.id).n;
+ const freeQuote=async(note='改成条纹面料')=>(await req('POST',`/api/studio/templates/${t.id}/quote`,{...body,op:'free_design',instruction:note})).quote;
+ const submit=(q,key=crypto.randomUUID(),status=202,confirm=true)=>req('POST',`/api/studio/templates/${t.id}/jobs`,{quote_id:q.id,request_key:key,confirm},status);
+ await test('free design quotes do not create versions, call providers or charge',async()=>{
+  const before=versionCount(),money=balance(),requests=calls;
+  const q=await freeQuote();await freeQuote();
+  assert.equal(q.style.pending_design,true);assert.equal(q.style.instruction_scope,'design');assert.equal(q.style.version_id,root.id);assert.match(q.prompts[0],/条纹面料/);
+  assert.equal(versionCount(),before);assert.equal(calls,requests);assert.equal(balance(),money);
+  await submit(q,crypto.randomUUID(),400,false);assert.equal(versionCount(),before);assert.equal(balance(),money);
+  await req('POST',`/api/studio/templates/${t.id}/quote`,{...body,op:'free_design',instruction:''},400);
+ });
+ await test('expired and changed price quotes leave no orphan version or debit',async()=>{
+  const before=versionCount(),money=balance(),q=await freeQuote();
+  db.prepare('UPDATE explore_quotes SET expires_at=? WHERE id=?').run(Date.now()-1,q.id);
+  assert.equal((await submit(q,crypto.randomUUID(),409)).code,'QUOTE_EXPIRED');
+  const changed=await freeQuote();db.prepare("UPDATE models SET pricing_json=? WHERE id='ux'").run(JSON.stringify({per_call:6}));
+  assert.equal((await submit(changed,crypto.randomUUID(),409)).code,'QUOTE_CHANGED');
+  db.prepare("UPDATE models SET pricing_json=? WHERE id='ux'").run(JSON.stringify({per_call:5}));
+  assert.equal(versionCount(),before);assert.equal(balance(),money);
+ });
+ await test('insufficient balance rolls back both new version and partial reservation',async()=>{
+  const before=versionCount(),money=balance(),q=(await req('POST',`/api/studio/templates/${t.id}/quote`,{...body,count:2,op:'free_design',instruction:'双色条纹'})).quote;
+  db.prepare("UPDATE users SET points_balance=5 WHERE id='alice'").run();
+  assert.equal((await submit(q,crypto.randomUUID(),402)).code,'INSUFFICIENT_POINTS');
+  assert.equal(versionCount(),before);assert.equal(balance(),5);assert.equal(db.prepare('SELECT COUNT(*) n FROM explore_jobs WHERE quote_id=?').get(q.id).n,0);
+  db.prepare("UPDATE users SET points_balance=? WHERE id='alice'").run(money);
+ });
+ await test('missing reference blocks submission before creating a version',async()=>{
+  const before=versionCount(),money=balance(),q=await freeQuote(),abs=path.join(process.env.DATA_DIR,file);
+  fs.renameSync(abs,abs+'.held');
+  try {assert.equal((await submit(q,crypto.randomUUID(),404)).code,'SOURCE_MISSING');}
+  finally {fs.renameSync(abs+'.held',abs);}
+  assert.equal(versionCount(),before);assert.equal(balance(),money);
+ });
+ await test('confirmation atomically creates one immutable branch with actual next number; network replay reuses it',async()=>{
+  const q=await freeQuote(),money=balance();
+  const concurrent=(await req('POST',`/api/studio/templates/${t.id}/versions`,{parent_id:root.id,dna,design_note:'其他窗口的版本',request_key:crypto.randomUUID()})).version;
+  const before=versionCount(),key=crypto.randomUUID();
+  const [a,b]=await Promise.all([submit(q,key),submit(q,key)]);assert.equal(a.job.id,b.job.id);await waitJob(a.job.id);
+  const v=db.prepare('SELECT * FROM style_versions WHERE id=?').get(a.job.snapshot.style.version_id);
+  assert.equal(v.number,concurrent.number+1);assert.equal(v.parent_id,root.id);assert.equal(v.design_note,'改成条纹面料');assert.equal(v.dna_json,root.dna_json);
+  assert.equal(versionCount(),before+1);assert.equal(balance(),money-5);assert.equal(a.job.snapshot.style.pending_design,false);
+  assert.equal(db.prepare('SELECT design_note FROM style_versions WHERE id=?').get(root.id).design_note,'');
+  assert.equal(db.prepare('SELECT work_version_id FROM style_dna_templates WHERE id=?').get(t.id).work_version_id,root.id);
+  const abs=path.join(process.env.DATA_DIR,file);fs.renameSync(abs,abs+'.held');
+  try {assert.equal((await submit(q,key)).job.id,a.job.id);} finally {fs.renameSync(abs+'.held',abs);}
+  assert.equal((await submit(q,crypto.randomUUID(),409)).code,'QUOTE_USED');assert.equal(versionCount(),before+1);
+ });
+ await test('failed task retains its saved version; retry uses that version without creating another',async()=>{
+  const q=await freeQuote('改成格纹'),money=balance(),before=versionCount();failNext=true;
+  const job=(await submit(q)).job,failed=await waitJob(job.id);assert.equal(failed.status,'failed');assert.equal(versionCount(),before+1);assert.equal(balance(),money);
+  const retry=(await req('POST',`/api/studio/templates/${t.id}/retry-quote`,{job_id:job.id})).quote;
+  assert.equal(retry.style.version_id,job.snapshot.style.version_id);assert.equal(retry.style.pending_design,false);
+  const next=(await submit(retry)).job;await waitJob(next.id);assert.equal(versionCount(),before+1);assert.equal(balance(),money-5);
  });
  await test('progress omits prompts/DNA and returns only changed owned jobs',async()=>{
   const q=(await req('POST',`/api/studio/templates/${t.id}/quote`,{...body,op:'create'})).quote;

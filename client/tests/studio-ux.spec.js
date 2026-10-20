@@ -67,7 +67,7 @@ test('failed model loading is isolated from image and attributes and can retry',
  await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();
 });
 
-test('action drafts persist, white is a primary direction, free design has explicit saved state',async({page,request})=>{
+test('action drafts persist, white is a primary direction, free design saves on confirmation',async({page,request})=>{
  const t=await makeStyle(request,'动作草稿');await openStyle(page,'动作草稿',true);await derive(page);
  expect(await page.getByLabel('本次要求包含服装设计变化').count()).toBe(0);expect(await page.getByRole('button',{name:'从当前属性整理要求'}).count()).toBe(0);
  await page.getByLabel('本次要求',{exact:true}).fill('自然打光');
@@ -78,10 +78,12 @@ test('action drafts persist, white is a primary direction, free design has expli
  await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();
  await page.getByRole('button',{name:'换场景 保留服装，调整背景和展示环境',exact:true}).click();await expect(page.getByLabel('本次要求',{exact:true})).toHaveValue('更换室内背景');await expect(page.getByRole('button',{name:'海岛度假',exact:true})).toHaveAttribute('aria-pressed','true');
  await page.getByRole('button',{name:'生成基础图 按已保存设计生成或参考图片重绘',exact:true}).click();await expect(page.getByLabel('本次要求',{exact:true})).toHaveValue('自然打光');
- await page.getByRole('button',{name:'自由衍生 · 修改设计',exact:true}).click();await page.getByLabel('本次要求',{exact:true}).fill('保留版型，改为条纹面料');
- await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeDisabled();await page.getByRole('button',{name:'保存要求为新版本',exact:true}).click();
- await expect(page.getByRole('button',{name:'要求已保存',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();
- const ws=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(ws.versions).toHaveLength(2);expect(ws.versions.find(v=>v.number===1).design_note).toBe('');
+ await page.getByRole('button',{name:'自由衍生 按文字或多张参考图探索新设计',exact:true}).click();await page.getByLabel('本次要求',{exact:true}).fill('保留版型，改为条纹面料');
+ await expect(page.getByRole('button',{name:'保存要求为新版本',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();
+ let ws=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(ws.versions).toHaveLength(1);
+ await page.getByRole('button',{name:'确认费用并生成',exact:true}).click();await expect(page.locator('.style-result-grid article')).toHaveCount(1);
+ ws=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(ws.versions).toHaveLength(2);expect(ws.versions.find(v=>v.number===1).design_note).toBe('');
  await page.screenshot({path:'/tmp/style-derivation-new.png'});
  await page.getByRole('button',{name:'关闭款式详情'}).click();await page.locator('.studio-card').filter({hasText:'动作草稿'}).getByRole('button',{name:'款式属性',exact:true}).click();await derive(page);await expect(page.getByLabel('本次要求',{exact:true})).toHaveValue('保留版型，改为条纹面料');
 });

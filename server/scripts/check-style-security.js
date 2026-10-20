@@ -255,7 +255,7 @@ try {
       80,
     );
   });
-  await test("cross-user assets and layout image IDs rejected", async () => {
+  await test("cross-user assets and reference IDs rejected", async () => {
     await req(
       "bob",
       "POST",
@@ -286,55 +286,22 @@ try {
       404,
     );
   });
-  await test("editable layouts require real measurement and preserve image references", async () => {
-    const config = {
-      type: "spec",
-      title: "Size",
-      text: "",
-      promotion: "",
-      language: "en",
-      width: 1000,
-      height: 1000,
-      selected: [image.id],
-      measurements: [],
-      labels: {},
-      confirmed: true,
-    };
-    await req(
-      "alice",
-      "POST",
-      url + "/layouts",
-      { version_id, config, request_key: crypto.randomUUID() },
-      400,
-    );
-    config.measurements = [{ label: "Length", cm: "76.2" }];
-    const key = crypto.randomUUID();
-    const r = await req("alice", "POST", url + "/layouts", {
-      version_id,
-      config,
-      request_key: key,
-    });
-    assert.equal(
-      (
-        await req("alice", "POST", url + "/layouts", {
-          version_id,
-          config,
-          request_key: key,
-        })
-      ).id,
-      r.id,
-    );
-    await req("alice", "POST", `/api/studio/generations/${image.id}/archive`, {
-      archived: true,
-    });
-    await req(
-      "alice",
-      "POST",
-      `/api/studio/generations/${image.id}/permanent-delete`,
-      { confirm: "永久删除" },
-      409,
-    );
-    assert.ok(fs.existsSync(path.join(process.env.DATA_DIR, image.image_path)));
+  await test("retired layout reads/writes reject access and preserve historical references", async () => {
+    const config={selected:[image.id]};
+    const historical=Number(db.prepare('INSERT INTO style_layouts(template_id,version_id,request_key,config_json,created_at) VALUES(?,?,?,?,?)').run(id,version_id,crypto.randomUUID(),JSON.stringify(config),new Date().toISOString()).lastInsertRowid);
+    for (const method of ['POST','GET']) {
+      const r=await req('alice',method,url+'/layouts',method==='POST'?{version_id,config}:undefined,410);
+      assert.equal(r.code,'FEATURE_RETIRED');
+    }
+    await req('alice','GET',url+'/workspace/layouts',undefined,410);
+    await req('bob','POST',url+'/layouts',{},404);
+    await req('bob','GET',url+'/workspace/layouts',undefined,404);
+    const ws=await req('alice','GET',url+'/workspace');assert.ok(!Object.hasOwn(ws,'layouts'));
+    const summary=await req('alice','GET',url+'/workspace?view=summary');assert.ok(!Object.hasOwn(summary,'layouts'));assert.ok(!Object.hasOwn(summary.totals,'layouts'));
+    assert.ok(db.prepare('SELECT 1 FROM style_layouts WHERE id=?').get(historical));
+    await req('alice','POST',`/api/studio/generations/${image.id}/archive`,{archived:true});
+    await req('alice','POST',`/api/studio/generations/${image.id}/permanent-delete`,{confirm:'永久删除'},409);
+    assert.ok(fs.existsSync(path.join(process.env.DATA_DIR,image.image_path)));
   });
   const addImage = (imagePath, thumbPath = imagePath, user = "alice") => Number(db.prepare(
     "INSERT INTO dna_generations(template_id,user_id,image_path,thumb_path,created_at) VALUES(?,?,?,?,?)"
