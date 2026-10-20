@@ -322,6 +322,7 @@ async function executeAnalysis(t, req, plan, ctx) {
         title: text(value.title, 200),
         requirement: text(value.requirement, 3000),
         copy: "",
+        prompt_override: "",
         spec,
         observation: text(value.observation || "", 1000),
       };

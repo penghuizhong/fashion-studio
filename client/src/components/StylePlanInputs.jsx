@@ -30,6 +30,7 @@ export function reconcileItems(input, old = []) {
               title: `${m.name}${count > 1 ? ` ${n + 1}` : ""}`,
               requirement: m.description,
               copy: "",
+              prompt_override: "",
               spec: {},
               camera: defaultPlanCamera(m.id, n, input.op),
               reference_ids:

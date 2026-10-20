@@ -1,60 +1,31 @@
 import { useEffect, useState } from "react";
 import {
   DETAIL_MODULES,
-  PLAN_LIMITS,
   FACT_FIELDS,
-  PROMPT_PARTS,
-  EDITABLE_PROMPT_PARTS,
-  SPEC_FIELDS,
   STANDARD_SECTIONS,
 } from "../../../shared/stylePlan.js";
-import { imageTaskAllowed } from "../../../shared/imageOptions.js";
-import ImageOutputOptions from "./ImageOutputOptions.jsx";
 import StudioImage from "./StudioImage.jsx";
-const STATUS_BADGE = {
-  ready: ["OK", "可生成"],
-  needs_info: ["待补充", "待补充资料"],
-  invalid: ["需调整", "需要调整"],
-  needs_analysis: ["待分析", "待分析或确认"],
+const STATUS_TEXT = {
+  ready: "可生成",
+  needs_info: "待补充资料",
+  invalid: "需要调整",
+  needs_analysis: "待分析或确认",
 };
-function assembleSpecText(item) {
-  const module = DETAIL_MODULES.find((m) => m.id === item.module_id),
-    spec = item.spec || {};
-  const line = [
-    "图片类型",
-    module?.name || "",
-    ...SPEC_FIELDS.map(
-      ([key, label]) => `${label}：${spec[key] || ""}`,
-    ),
-  ].join(" | ");
-  return `- 模块画面指引：${module?.guide || ""}\n\n${line}`;
-}
-function parseSpecText(textValue, fallback) {
-  const spec = { ...(fallback || {}) };
-  for (const segment of String(textValue || "").split("|")) {
-    const trimmed = segment.trim();
-    for (const [key, label] of SPEC_FIELDS) {
-      const match = trimmed.match(
-        new RegExp(`^${label}[:：]\\s*([\\s\\S]*)$`),
-      );
-      if (match) spec[key] = match[1].trim();
-    }
-  }
-  return spec;
-}
-function SpecText({ item, index, disabled, onCommit }) {
-  const [draft, setDraft] = useState(() => assembleSpecText(item)),
+function PromptText({ item, index, disabled, onCommit }) {
+  const auto = item.prompt || "",
+    [draft, setDraft] = useState(item.prompt_override || auto),
     [dirty, setDirty] = useState(false);
   useEffect(() => {
-    if (!dirty) setDraft(assembleSpecText(item));
-  }, [item.spec, item.module_id]);
+    if (!dirty) setDraft(item.prompt_override || auto);
+  }, [item.prompt, item.prompt_override]);
   return (
     <label className="style-field">
-      画面规格
+      提示词模块
       <textarea
-        aria-label={`图片${index + 1}画面规格`}
-        rows={9}
+        aria-label={`图片${index + 1}提示词`}
+        rows={10}
         disabled={disabled}
+        placeholder="正在编译，保存后显示"
         value={draft}
         onChange={(e) => {
           setDraft(e.target.value);
@@ -63,18 +34,65 @@ function SpecText({ item, index, disabled, onCommit }) {
         onBlur={() => {
           if (!dirty) return;
           setDirty(false);
-          onCommit(parseSpecText(draft, item.spec));
+          onCommit(draft.trim() === auto.trim() ? "" : draft);
         }}
       />
     </label>
   );
 }
+function assembleStandardText(standard = {}) {
+  return STANDARD_SECTIONS.map(
+    ([key, label]) => `${label}：${standard[key] || ""}`,
+  ).join("\n");
+}
+function parseStandardText(textValue, fallback = {}) {
+  const out = { ...fallback },
+    labels = STANDARD_SECTIONS.map(([key, label]) => [key, label]);
+  let currentKey = null;
+  for (const line of String(textValue || "").split("\n")) {
+    const hit = labels.find(([, label]) => line.startsWith(`${label}：`) || line.startsWith(`${label}:`));
+    if (hit) {
+      currentKey = hit[0];
+      out[currentKey] = line.slice(hit[1].length + 1).trim();
+    } else if (currentKey) {
+      out[currentKey] = `${out[currentKey]}\n${line}`.trim();
+    }
+  }
+  return out;
+}
+function StandardText({ content, setContent, disabled }) {
+  const [draft, setDraft] = useState(() => assembleStandardText(content.standard)),
+    [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (!dirty) setDraft(assembleStandardText(content.standard));
+  }, [content.standard]);
+  return (
+    <textarea
+      aria-label="整体设计规范"
+      rows={10}
+      disabled={disabled}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        setDirty(true);
+      }}
+      onBlur={() => {
+        if (!dirty) return;
+        setDirty(false);
+        setContent((c) => ({
+          ...c,
+          standard: parseStandardText(draft, c.standard),
+          standard_edited: true,
+        }));
+      }}
+    />
+  );
+}
 export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
-  const { content, setContent, input, setInput } = w;
+  const { content, setContent, input } = w;
   const [view, setView] = useState("plan"),
     [focused, setFocused] = useState(null),
-    [expanded, setExpanded] = useState(null),
-    [copyStatus, setCopyStatus] = useState("");
+    [expanded, setExpanded] = useState(null);
   if (!content)
     return <p className="wizard-empty">先分析商品以生成图片规划。</p>;
   const patch = (id, updates) =>
@@ -82,46 +100,8 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
       ...c,
       items: c.items.map((i) => (i.id === id ? { ...i, ...updates } : i)),
     }));
-  const changeItems = (items) => {
-    setContent((c) => ({ ...c, items }));
-    const modules = {};
-    for (const i of items)
-      modules[i.module_id] = (modules[i.module_id] || 0) + 1;
-    setInput((f) => ({ ...f, modules }));
-  };
-  const duplicate = (item) => {
-    if (
-      content.items.length >= PLAN_LIMITS.total ||
-      content.items.filter((i) => i.module_id === item.module_id).length >=
-        PLAN_LIMITS.per_module
-    ) {
-      w.setError("图片数量已达到规划上限");
-      return;
-    }
-    const index = content.items.indexOf(item),
-      items = [...content.items];
-    items.splice(index + 1, 0, {
-      ...structuredClone(item),
-      id: crypto.randomUUID(),
-      title: item.title + "（副本）",
-      analyzed: false,
-      manual_confirmed: false,
-      status: "needs_analysis",
-      selected: false,
-    });
-    changeItems(items);
-  };
-  const reorder = (item, offset) => {
-    const items = [...content.items],
-      n = items.indexOf(item),
-      target = n + offset;
-    if (target < 0 || target >= items.length) return;
-    [items[n], items[target]] = [items[target], items[n]];
-    changeItems(items);
-  };
   const current =
     content.items.find((i) => i.id === focused) || content.items[0];
-  const model = w.models.find((m) => m.id === input.model_id);
   const selectAll = () =>
     setContent((c) => ({
       ...c,
@@ -216,10 +196,10 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
         </section>
       ) : (
         content.items.map((item, index) => {
-          const module = DETAIL_MODULES.find((m) => m.id === item.module_id),
-            name = module?.name,
+          const name = DETAIL_MODULES.find(
+              (m) => m.id === item.module_id,
+            )?.name,
             status = item.status,
-            badge = STATUS_BADGE[status] || STATUS_BADGE.needs_analysis,
             open = expanded === item.id;
           return (
             <article
@@ -249,7 +229,8 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                   <span>
                     <strong>{item.title || name}</strong>
                     <small>
-                      {name} · {item.size || input.size} · {badge[1]}
+                      {name} · {item.size || input.size} ·{" "}
+                      {STATUS_TEXT[status] || STATUS_TEXT.needs_analysis}
                     </small>
                     <small>{item.requirement.slice(0, 110)}</small>
                   </span>
@@ -285,12 +266,12 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                         }
                       />
                     </label>
-                    <SpecText
+                    <PromptText
                       item={item}
                       index={index}
                       disabled={disabled}
-                      onCommit={(spec) =>
-                        patch(item.id, { spec, copy: "" })
+                      onCommit={(prompt_override) =>
+                        patch(item.id, { prompt_override })
                       }
                     />
                     {item.missing?.length > 0 && (
@@ -303,214 +284,6 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                       </p>
                     )}
                     {item.error && <p role="alert">{item.error}</p>}
-                    {item.observation && (
-                      <p className="dim small">
-                        图片观察：{item.observation}；观察不等于真实商品参数。
-                      </p>
-                    )}
-                    <div className="wizard-spec-head">
-                      <strong>提示词</strong>
-                      <span
-                        className={`wizard-spec-status${status === "ready" ? " ok" : ""}`}
-                      >
-                        {badge[0]}
-                      </span>
-                    </div>
-                    <label className="style-field">
-                      <textarea
-                        aria-label={`图片${index + 1}完整提示词`}
-                        rows={7}
-                        readOnly
-                        value={item.prompt || "正在编译，保存后显示"}
-                      />
-                    </label>
-                    <button
-                      className="btn secondary small"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(
-                            item.prompt || "",
-                          );
-                          setCopyStatus("提示词已复制");
-                        } catch {
-                          setCopyStatus("复制不可用，请从文本框手动复制");
-                        }
-                      }}
-                    >
-                      复制完整提示词
-                    </button>
-                    {copyStatus && <p role="status">{copyStatus}</p>}
-                    <details>
-                      <summary>参考图</summary>
-                      <div className="wizard-inline">
-                        {input.references.map((r, n) => (
-                          <label className="inline-check" key={r.id}>
-                            <input
-                              type="checkbox"
-                              checked={item.reference_ids.includes(r.id)}
-                              onChange={(e) =>
-                                patch(item.id, {
-                                  reference_ids: e.target.checked
-                                    ? [...item.reference_ids, r.id]
-                                    : item.reference_ids.filter(
-                                        (id) => id !== r.id,
-                                      ),
-                                })
-                              }
-                            />
-                            图{n + 1}
-                          </label>
-                        ))}
-                      </div>
-                      {!imageTaskAllowed(
-                        model?.capabilities,
-                        item.reference_ids.length,
-                      ) && (
-                        <p className="dim small">
-                          当前模型不支持本图参考数量。
-                        </p>
-                      )}
-                    </details>
-                    <details>
-                      <summary>本图输出规格</summary>
-                      <p className="dim small">
-                        默认沿用整套参数，可单独调整。
-                      </p>
-                      <ImageOutputOptions
-                        model={model}
-                        size={item.size || input.size}
-                        quality={item.quality || input.quality}
-                        onChange={(value) => patch(item.id, value)}
-                      />
-                    </details>
-                    <details className="wizard-prompts">
-                      <summary>
-                        模块化提示词 ·{" "}
-                        {Object.keys(item.prompt_overrides || {}).length
-                          ? "包含手工修改"
-                          : "自动编译"}
-                      </summary>
-                      <p className="dim small">
-                        公共规范和服装版本会参与实际请求。可修改各段并核对最终文本，修改内容会使旧报价失效。
-                      </p>
-                      {Object.entries(PROMPT_PARTS).map(([key, label]) => (
-                        <div className="wizard-prompt-section" key={key}>
-                          <div className="wizard-section-head">
-                            <strong>{label}</strong>
-                            {Object.hasOwn(
-                              item.prompt_overrides || {},
-                              key,
-                            ) && (
-                              <button
-                                className="btn secondary small"
-                                onClick={() => {
-                                  const overrides = {
-                                    ...item.prompt_overrides,
-                                  };
-                                  delete overrides[key];
-                                  patch(item.id, {
-                                    prompt_overrides: overrides,
-                                  });
-                                }}
-                              >
-                                恢复此段自动内容
-                              </button>
-                            )}
-                          </div>
-                          {EDITABLE_PROMPT_PARTS.includes(key) ? (
-                            <textarea
-                              aria-label={`图片${index + 1}${label}提示词`}
-                              rows={3}
-                              maxLength={6000}
-                              value={
-                                item.prompt_overrides?.[key] ??
-                                item.automatic_parts?.[key] ??
-                                ""
-                              }
-                              onChange={(e) =>
-                                patch(item.id, {
-                                  prompt_overrides: {
-                                    ...item.prompt_overrides,
-                                    [key]: e.target.value,
-                                  },
-                                })
-                              }
-                            />
-                          ) : (
-                            <p className="wizard-prompt-readonly">
-                              {item.parts?.[key] || "保存后显示"}
-                            </p>
-                          )}
-                          {Object.hasOwn(item.prompt_overrides || {}, key) && (
-                            <details>
-                              <summary>对照最新自动内容</summary>
-                              <p className="wizard-prompt-readonly">
-                                {item.automatic_parts?.[key]}
-                              </p>
-                            </details>
-                          )}
-                        </div>
-                      ))}
-                    </details>
-                    <div className="wizard-inline">
-                      <button
-                        className="btn secondary small"
-                        onClick={() => w.prepareAnalysis([item.id])}
-                      >
-                        重新分析本图
-                      </button>
-                      {!["ready", "needs_info"].includes(status) && (
-                        <button
-                          className="btn secondary small"
-                          onClick={() =>
-                            patch(item.id, {
-                              manual_confirmed: true,
-                              selected: true,
-                            })
-                          }
-                        >
-                          确认使用手工要求
-                        </button>
-                      )}
-                      <button
-                        className="btn secondary small"
-                        onClick={() => duplicate(item)}
-                      >
-                        复制
-                      </button>
-                      <button
-                        className="btn secondary small"
-                        disabled={disabled || index === 0}
-                        onClick={() => reorder(item, -1)}
-                      >
-                        上移
-                      </button>
-                      <button
-                        className="btn secondary small"
-                        disabled={
-                          disabled || index === content.items.length - 1
-                        }
-                        onClick={() => reorder(item, 1)}
-                      >
-                        下移
-                      </button>
-                      <button
-                        className="btn secondary small"
-                        disabled={disabled || content.items.length === 1}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              "移除此张图片规划？已有生成结果保留。",
-                            )
-                          )
-                            changeItems(
-                              content.items.filter((i) => i.id !== item.id),
-                            );
-                        }}
-                      >
-                        删除规划
-                      </button>
-                    </div>
                   </fieldset>
                 </div>
               )}
@@ -523,32 +296,13 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
           <strong>整体设计规范</strong>
           <span className="dim small">所有图片遵循的统一视觉标准</span>
         </summary>
-        <p className="dim small">
-          按所选模块动态生成，用于本计划每一张图；每图不同的内容在各自的画面规格里，模块指引与全局约束由系统统一注入。商品原配色和已确认事实保持不变。
-        </p>
         <fieldset disabled={disabled}>
-          {STANDARD_SECTIONS.map(([key, label]) => (
-            <label className="style-field" key={key}>
-              {label}
-              <textarea
-                aria-label={label}
-                rows={2}
-                maxLength={4000}
-                value={content.standard[key] || ""}
-                onChange={(e) =>
-                  setContent((c) => ({
-                    ...c,
-                    standard: { ...c.standard, [key]: e.target.value },
-                    standard_edited: true,
-                  }))
-                }
-              />
-            </label>
-          ))}
+          <StandardText
+            content={content}
+            setContent={setContent}
+            disabled={disabled}
+          />
         </fieldset>
-        <p className="dim small">
-          更新公共规范会重新编译提示词并使旧报价失效，手工段保持原样。字体为生成指导，实际文字需核对。
-        </p>
       </details>
       <section className="wizard-section wizard-module-card wizard-gen-card">
         <div>
