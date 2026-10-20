@@ -298,7 +298,7 @@ function CloneModal({ onClose, onSaved, showToast }) {
 }
 
 // ---------- 主视图：卡片流 ----------
-export default function StudioView({ showToast, onOpenSidebar }) {
+export default function StudioView({ showToast, onOpenSidebar, onGoSample, onGoPattern, initialTemplateId, initialVersionId }) {
   const [templates, setTemplates] = useState([]);
   const [lifecycle,setLifecycle]=useState('active');
   const hasLoaded=useRef(false);
@@ -321,6 +321,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
   }, [showToast,lifecycle]);
   const lifecycleActions=useLifecycleActions({onChanged:load,showToast});
   useEffect(() => { load(); }, [load]);
+  useEffect(()=>{if(!initialTemplateId)return;let live=true;api.studio.getTemplate(initialTemplateId).then(r=>{if(!live)return;const t=r.template||r;setViewImage({id:t.id||initialTemplateId,name:t.name,path:t.last_image||t.source_image_path,thumbnail:t.last_thumb||t.source_thumb_path,image_available:t.image_available,panel:'derive',versionId:initialVersionId});}).catch(e=>showToast(e.message));return()=>{live=false;};},[initialTemplateId,initialVersionId]);
 
   return (
     <div className="studio-view">
@@ -392,7 +393,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
         </div>
       )}
 
-      {viewImage&&<StyleWorkspace key={viewImage.id} templateId={viewImage.id} initialImage={viewImage.path?{path:viewImage.path,thumb_path:viewImage.thumbnail,image_available:viewImage.image_available,name:viewImage.name}:null} initialPanel={viewImage.panel} onClose={()=>setViewImage(null)} onChanged={load} showToast={showToast}/>}
+      {viewImage&&<StyleWorkspace onGoSample={onGoSample} onGoPattern={onGoPattern} key={viewImage.id} templateId={viewImage.id} initialVersionId={viewImage.versionId} initialImage={viewImage.path?{path:viewImage.path,thumb_path:viewImage.thumbnail,image_available:viewImage.image_available,name:viewImage.name}:null} initialPanel={viewImage.panel} onClose={()=>setViewImage(null)} onChanged={load} showToast={showToast}/>}
       {cloneOpen && (
         <CloneModal onClose={() => setCloneOpen(false)} onSaved={() => { setCloneOpen(false); load(); }} showToast={showToast} />
       )}

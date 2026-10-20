@@ -5,7 +5,8 @@ import DiscoverView from './components/DiscoverView.jsx';
 import HomeEmpty from './components/HomeEmpty.jsx';
 import StudioView from './components/StudioView.jsx';
 import AssetView from './components/AssetView.jsx';
-import StationPlaceholder from './components/StationPlaceholder.jsx';
+import SampleView from './components/SampleView.jsx';
+import PatternView from './components/PatternView.jsx';
 import CharacterSettingsModal from './components/CharacterSettingsModal.jsx';
 import SettingsModal from './components/SettingsModal.jsx';
 import AuthPage from './components/AuthPage.jsx';
@@ -389,6 +390,10 @@ export default function App() {
         )}
         {view.type === 'studio' && (
           <StudioView
+            initialTemplateId={view.templateId}
+            initialVersionId={view.versionId}
+            onGoSample={projectId=>setView({type:'sample',projectId})}
+            onGoPattern={projectId=>setView({type:'pattern',projectId})}
             showToast={showToast}
             onOpenSidebar={() => setSidebarOpen(true)}
           />
@@ -397,10 +402,10 @@ export default function App() {
           <AssetView showToast={showToast} onOpenSidebar={() => setSidebarOpen(true)} />
         )}
         {view.type === 'sample' && (
-          <StationPlaceholder icon="gift" title="样衣台" desc="样衣管理即将上线，敬请期待" onOpenSidebar={() => setSidebarOpen(true)} />
+          <SampleView showToast={showToast} initialProjectId={view.projectId} onOpenSidebar={()=>setSidebarOpen(true)} onGoPattern={projectId=>setView({type:'pattern',projectId})} onGoStudio={(templateId,versionId)=>setView({type:'studio',templateId,versionId})}/>
         )}
         {view.type === 'pattern' && (
-          <StationPlaceholder icon="pencil" title="制版台" desc="制版功能即将上线，敬请期待" onOpenSidebar={() => setSidebarOpen(true)} />
+          <PatternView showToast={showToast} projectId={view.projectId} onOpenSidebar={()=>setSidebarOpen(true)} onGoSample={projectId=>setView({type:'sample',projectId})} onGoStudio={(templateId,versionId)=>setView({type:'studio',templateId,versionId})}/>
         )}
         {view.type === 'empty' && (
           <HomeEmpty

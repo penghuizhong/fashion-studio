@@ -402,6 +402,13 @@ export const api = {
   // v1.26.2: 模型连通测试
   testChatModel: (model_id) => post('/api/admin/models/test', { model_id }),
 
+  products: {
+    get: (path,params={},options) => get(`/api/products/${path}?${new URLSearchParams(params)}`,options),
+    post: (path,body) => post(`/api/products/${path}`,body),
+    delivery: (id,version_id,options) => get(`/api/studio/templates/${id}/delivery?${new URLSearchParams({version_id})}`,options),
+    adoptView: (id,body) => post(`/api/studio/templates/${id}/delivery/views`,body),
+    deliver: (id,body) => post(`/api/studio/templates/${id}/delivery`,body),
+  },
   // v0.1.0: 设计台
   studio: {
     lifecycle: (kind,id,action,confirm) => post(`/api/studio/${kind}/${id}/lifecycle`,{action,confirm}),

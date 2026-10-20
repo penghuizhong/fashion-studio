@@ -371,7 +371,7 @@ export async function executeJob(id, model) {
       )
         return;
       if (status === "succeeded" && q.style)
-        result.generation_id = recordStyleImage(q.style, result, item.id);
+        result.generation_id = recordStyleImage(q.style.item_contexts?.[item.proposal_idx] ? {...q.style, ...q.style.item_contexts[item.proposal_idx], item_contexts:undefined} : q.style, result, item.id);
       if (status === "failed") release(item, job);
       if (status === "succeeded" && item.reserved > 0)
         addLedger(job.user_id, 0, "explore_settle", "explore_item", item.id, {

@@ -4,6 +4,7 @@ import { imageAvailability,templateAvailability,studioFileExists } from './image
 import { randomUUID } from 'node:crypto';
 import { problem } from './exploreErrors.js';
 import { mountStyleWorkspace } from './styleWorkspace.js';
+import { mountProductRoutes } from './productRoutes.js';
 import { ensureStyle, saveVersion, setWorking, styleVersion, recordStyleImage } from './styleVersions.js';
 import { normalizeCamera } from '../../shared/photography.js';
 // v0.1.0: 设计台 REST 接口（全部要登录；多用户模式按 user_id 隔离）
@@ -69,6 +70,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
   mountStudioLifecycle(app);
   mountStudioPreview(app);
   mountStyleWorkspace(app);
+  mountProductRoutes(app);
   const cfg = getConfig();
   const uidOf = (req) => (req && req.userId) || 'local';
   const requestApiKey = (req) => {

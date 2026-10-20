@@ -1,3 +1,4 @@
+import DesignDelivery from './DesignDelivery.jsx';
 import ProgressiveStudioImage from './ProgressiveStudioImage.jsx';
 import useWorkspaceCollections, { mergeRecords, CollectionMore } from './useWorkspaceCollections.jsx';
 import { imageTaskAllowed,sizeAllowed,imageReferenceLimit } from '../../../shared/imageOptions.js';
@@ -64,8 +65,11 @@ export default function StyleWorkspace({
   templateId,
   initialImage,
   initialPanel,
+  initialVersionId,
   onClose,
   onChanged,
+  onGoSample,
+  onGoPattern,
   showToast,
 }) {
   const { user, multiUser } = useAuth();
@@ -187,7 +191,7 @@ export default function StyleWorkspace({
       setPreview(initialImage||saved.preview||null);
       setDraft(saved.draft||null);setEditParent(saved.editParent||null);
     }
-    load(saved?.versionId,saved?.editParent).catch(e=>{if(e.code==="VERSION_NOT_FOUND")return load(null);throw e;}).then(()=>{if(live.current)restored.current=true;}).catch(e=>{if(live.current&&e.name!=="AbortError")fail(e,"load");});
+    load(initialVersionId||saved?.versionId,saved?.editParent).catch(e=>{if(e.code==="VERSION_NOT_FOUND")return load(null);throw e;}).then(()=>{if(live.current)restored.current=true;}).catch(e=>{if(live.current&&e.name!=="AbortError")fail(e,"load");});
     return()=>{live.current=false;loadController.current?.abort();};
   },[templateId]);
   useEffect(()=>{
@@ -339,7 +343,7 @@ export default function StyleWorkspace({
   const update = (key, value) => {
     setRetryJob(null);
     setQuote(null);
-    setForm((f) => ({ ...f, [key]: value }));
+    setForm((f) => ({ ...f, [key]: value, ...(['op','count','camera'].includes(key)?{delivery_views:null}:{}) }));
   };
   const run = async (fn, section = tab === 'derive' ? 'quote' : tab) => {
     if (busyLock.current) return;
@@ -469,7 +473,7 @@ export default function StyleWorkspace({
     actionDrafts.current[form.op]={instruction:form.instruction,camera:form.camera,visual_style:form.visual_style,keep:form.keep,explore_variation:form.explore_variation,target,part,detailAction};
     const saved=actionDrafts.current[op];
     const camera=saved?.camera||{...form.camera,framing:op==='detail_shot'?'detail':form.camera.framing==='detail'?'garment':form.camera.framing,detail:op==='detail_shot'?form.camera.detail||'':''};
-    setForm(f=>({...f,op,instruction:saved?.instruction||'',instruction_scope:op==='free_design'?'design':'presentation',camera,visual_style:op==='white'?'auto':saved?.visual_style||'auto',purpose:op==='white'?'white':op==='scene'?'scene':op==='detail_shot'?'detail':'free',keep:saved?.keep||'',explore_variation:saved?.explore_variation||false}));
+    setForm(f=>({...f,op,delivery_views:null,instruction:saved?.instruction||'',instruction_scope:op==='free_design'?'design':'presentation',camera,visual_style:op==='white'?'auto':saved?.visual_style||'auto',purpose:op==='white'?'white':op==='scene'?'scene':op==='detail_shot'?'detail':'free',keep:saved?.keep||'',explore_variation:saved?.explore_variation||false}));
     setTarget(saved?.target||'');setPart(saved?.part||'primary_color');setDetailAction(saved?.detailAction||'替换');setRetryJob(null);setQuote(null);setErrors(old=>({...old,quote:'',references:'',instruction:'',camera:'',output:''}));
     if(!['create','free_design'].includes(op)&&!form.source){
       const base=referenceChoices.find(c=>c.image_path===file&&c.available!==false)||referenceChoices.find(c=>c.available!==false);
@@ -1072,7 +1076,7 @@ export default function StyleWorkspace({
                             {quote.style?.camera?.framing}
                           </p>
                           <p>
-                            {quote.model.name} · {quote.size} ·{" "}
+                            {quote.model.name} · {quote.size} · {form.delivery_views?.length?`视角：${form.delivery_views.join(' / ')} · `:''}{" "}
                             {quote.indexes.length} 张 · {quote.total} 积分
                           </p>
                         </div>
@@ -1152,6 +1156,11 @@ export default function StyleWorkspace({
                       </button>
                     </>
                   )}
+                  {tab==='derive'&&<DesignDelivery templateId={templateId} versionId={versionId} sourceAvailable={data.template.source_available} sourceImage={data.template.source_image_path} sourceThumb={data.template.source_thumb_path} disabled={busy||active||!!pendingStart||!!dirty} onGoSample={onGoSample} onGoPattern={onGoPattern} onPrepare={slots=>{
+                    const base=form.mode==='image'&&form.source?form.source:referenceChoices.find(c=>c.available!==false)?.key;
+                    if(!base){fail(new Error('请先选择当前款式基准图'),'references');return;}
+                    setForm(f=>({...f,op:'create',instruction_scope:'presentation',mode:'image',source:base,delivery_views:slots,count:slots.length,purpose:'free',visual_style:'product',camera:{...f.camera,display:f.camera.display==='flat'?'mannequin':f.camera.display,angle:'level',framing:slots.includes('detail')?'detail':'garment',detail:slots.includes('detail')?f.camera.detail||'':''}}));setRetryJob(null);setQuote(null);notify('已准备按位置生成，请核对模型与费用后确认');
+                  }}/>}
                   <section className="style-results">
                     <div className="style-section-title">
                       <h3>生成结果与历史</h3>

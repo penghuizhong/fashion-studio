@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { migrateProducts } from './productSchema.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomInt, randomUUID } from 'node:crypto';
@@ -780,6 +781,7 @@ export function getDb() {
     _db.exec(`CREATE TABLE IF NOT EXISTS model_capability_checks(model_id TEXT NOT NULL,task TEXT NOT NULL,signature TEXT NOT NULL,status TEXT NOT NULL,message TEXT NOT NULL DEFAULT '',preview_path TEXT,created_at TEXT NOT NULL,PRIMARY KEY(model_id,task));
       CREATE TABLE IF NOT EXISTS studio_lifecycle_events(id INTEGER PRIMARY KEY,user_id TEXT NOT NULL,object_type TEXT NOT NULL,object_id TEXT NOT NULL,action TEXT NOT NULL,created_at TEXT NOT NULL);`);
   })();
+  migrateProducts(_db, dataDir);
   return _db;
 }
 

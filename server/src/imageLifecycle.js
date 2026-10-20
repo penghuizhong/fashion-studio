@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { productFileReferenced } from './productReferences.js';
 import path from 'node:path';
 import { getConfig } from './config.js';
 
@@ -6,7 +7,7 @@ import { getConfig } from './config.js';
 // An archive removes a record from active lists, never the shared bytes.
 export function sharedImageFile(db, generation) {
   const files = [...new Set([generation.image_path, generation.thumb_path].filter(Boolean))];
-  return files.some(file => db.prepare(`
+  return files.some(file => productFileReferenced(db,file) || db.prepare(`
     SELECT 1 FROM style_dna_templates WHERE lifecycle!='deleted' AND (source_image_path=? OR source_thumb_path=?)
     UNION ALL SELECT 1 FROM dna_generations WHERE id!=? AND lifecycle!='deleted' AND (image_path=? OR thumb_path=?)
     UNION ALL SELECT 1 FROM style_references WHERE image_path=? OR thumb_path=?
