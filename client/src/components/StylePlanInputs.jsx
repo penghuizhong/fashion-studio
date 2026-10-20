@@ -6,8 +6,8 @@ import {
   PLAN_LIMITS,
   FACT_FIELDS,
   MODULE_SETS,
-  REFERENCE_ROLES,
   defaultPlanCamera,
+  isNoTextLanguage,
 } from "../../../shared/stylePlan.js";
 import {
   imageTaskAllowed,
@@ -19,38 +19,36 @@ import ImageOutputOptions from "./ImageOutputOptions.jsx";
 export function reconcileItems(input, old = []) {
   const result = [];
   for (const m of DETAIL_MODULES) {
+    if (m.id === "transition" && isNoTextLanguage(input.language)) continue;
     const previous = old.filter((i) => i.module_id === m.id),
       count = input.modules[m.id] || 0;
     for (let n = 0; n < count; n++)
       result.push(
-        previous[n] || {
-          id: crypto.randomUUID(),
-          module_id: m.id,
-          title: `${m.name}${count > 1 ? ` ${n + 1}` : ""}`,
-          requirement: m.description,
-          copy: "",
-          camera: defaultPlanCamera(m.id, n, input.op),
-          reference_ids:
-            m.id === "transition" ? [] : input.references.map((r) => r.id),
-          prompt_overrides: {},
-          selected: !m.required || !!input.facts[m.required],
-          analyzed: false,
-          manual_confirmed: false,
-          status: "needs_analysis",
-        },
+        previous[n]
+          ? { spec: {}, ...previous[n] }
+          : {
+              id: crypto.randomUUID(),
+              module_id: m.id,
+              title: `${m.name}${count > 1 ? ` ${n + 1}` : ""}`,
+              requirement: m.description,
+              copy: "",
+              spec: {},
+              camera: defaultPlanCamera(m.id, n, input.op),
+              reference_ids:
+                m.id === "transition" ? [] : input.references.map((r) => r.id),
+              prompt_overrides: {},
+              selected: !m.required || !!input.facts[m.required],
+              analyzed: false,
+              manual_confirmed: false,
+              status: "needs_analysis",
+            },
       );
   }
   return result;
 }
-const OPS = [
-  ["create", "按保存设计生成"],
-  ["free_design", "自由衍生"],
-  ["recolor", "换色"],
-  ["detail_modify", "改细节"],
-  ["detail_shot", "细节特写"],
-  ["scene", "换场景"],
-  ["white", "白底商品图"],
-  ["variant", "再生成"],
+const GARMENT_ROLES = [
+  ["garment", "款式主体"],
+  ["fabric", "面料细节"],
 ];
 export default function StylePlanInputs({
   w,
@@ -104,27 +102,40 @@ export default function StylePlanInputs({
     }
     update({ modules });
   };
-  const setRefs = (keys) => {
-    const previous = input.references.map((r) => r.source);
+  const garmentRefs = input.references.filter(
+      (r) => r.role === "garment" || r.role === "fabric",
+    ),
+    modelRefs = input.references.filter((r) => r.role === "model");
+  const setBoardRefs = (board, keys) => {
+    const isGarment = board === "garment",
+      mine = isGarment ? garmentRefs : modelRefs,
+      others = isGarment ? modelRefs : garmentRefs;
+    if (keys.some((k) => others.some((r) => r.source === k))) {
+      w.setError("同一图片已在另一组参考图中，不能重复添加");
+      return;
+    }
+    const previous = input.references.map((r) => r.source),
+      nextSources = isGarment
+        ? [...keys, ...others.map((r) => r.source)]
+        : [...others.map((r) => r.source), ...keys];
     if (
       previous.length &&
-      previous.some((s, i) => keys[i] !== s) &&
+      previous.some((s, i) => nextSources[i] !== s) &&
       /图\s*\d/.test(input.requirements) &&
       !window.confirm("参考图顺序或数量已改变，请重新核对要求中的图号。继续？")
     )
       return;
-    const refs = keys.map((source, i) => {
-      const old = input.references.find((r) => r.source === source);
-      return {
-        ...(old || { id: crypto.randomUUID(), source, role: "scene" }),
-        role:
-          i === 0
-            ? "garment"
-            : old?.role === "garment"
-              ? "scene"
-              : old?.role || "scene",
-      };
+    const built = keys.map((source) => {
+      const old = mine.find((r) => r.source === source);
+      return (
+        old || {
+          id: crypto.randomUUID(),
+          source,
+          role: isGarment ? "garment" : "model",
+        }
+      );
     });
+    const refs = isGarment ? [...built, ...others] : [...others, ...built];
     update({ references: refs });
     if (content)
       setContent((c) => ({
@@ -137,96 +148,90 @@ export default function StylePlanInputs({
         })),
       }));
   };
+  const setRefRole = (id, role) =>
+    update({
+      references: input.references.map((r) =>
+        r.id === id ? { ...r, role } : r,
+      ),
+    });
   const total = Object.values(input.modules).reduce((n, v) => n + v, 0),
-    required = DETAIL_MODULES.filter((m) => input.modules[m.id] && m.required);
+    required = DETAIL_MODULES.filter((m) => input.modules[m.id] && m.required),
+    noText = isNoTextLanguage(input.language);
+  const referenceLimit = Math.max(
+    0,
+    ...models.map((m) => imageReferenceLimit(m.capabilities)),
+  );
   return (
     <fieldset className="wizard-inputs" disabled={disabled}>
       <section className="wizard-section">
-        <h3>参考图片</h3>
+        <h3>商品图</h3>
+        <p className="dim small">
+          服装本体依据：第一张为款式主体，其余可标注为面料细节。
+        </p>
         <ReferenceImages
           strictLimit
           templateId={w.data.template.id}
-          items={input.references.map((r) => r.source)}
+          items={garmentRefs.map((r) => r.source)}
           choices={choices}
           model={model}
-          availableLimit={Math.max(
-            0,
-            ...models.map((m) => imageReferenceLimit(m.capabilities)),
-          )}
+          availableLimit={referenceLimit}
           onUploaded={onUploaded}
           onResolved={onResolved}
           disabled={disabled}
-          onChange={setRefs}
+          onChange={(keys) => setBoardRefs("garment", keys)}
         />
-        {input.references.map((r, n) => (
+        {garmentRefs.map((r, n) => (
           <label className="style-field" key={r.id}>
-            图{n + 1}用途
+            商品图{n + 1}用途
             <select
-              aria-label={`图${n + 1}用途`}
+              aria-label={`商品图${n + 1}用途`}
               value={r.role}
-              disabled={n === 0 || disabled}
-              onChange={(e) =>
-                update({
-                  references: input.references.map((a) =>
-                    a.id === r.id ? { ...a, role: e.target.value } : a,
-                  ),
-                })
-              }
+              disabled={disabled}
+              onChange={(e) => setRefRole(r.id, e.target.value)}
             >
-              {Object.entries(REFERENCE_ROLES)
-                .filter(([k]) => (n === 0 ? k === "garment" : k !== "garment"))
-                .map(([key, label]) => (
-                  <option value={key} key={key}>
-                    {label}
-                  </option>
-                ))}
+              {GARMENT_ROLES.map(([key, label]) => (
+                <option value={key} key={key}>
+                  {label}
+                </option>
+              ))}
             </select>
           </label>
         ))}
       </section>
       <section className="wizard-section">
+        <h3>模特图</h3>
+        <p className="dim small">
+          主体依据：模特的身份、肤色、体型与发型以这里为准，整体规范的主体识别摘要来自模特图。
+        </p>
+        <ReferenceImages
+          strictLimit
+          templateId={w.data.template.id}
+          items={modelRefs.map((r) => r.source)}
+          choices={choices}
+          model={model}
+          availableLimit={referenceLimit}
+          onUploaded={onUploaded}
+          onResolved={onResolved}
+          disabled={disabled}
+          onChange={(keys) => setBoardRefs("model", keys)}
+        />
+      </section>
+      <section className="wizard-section">
         <h3>生成要求</h3>
-        <label className="style-field">
-          本次方向
-          <select
-            aria-label="本次衍生方向"
-            value={input.op}
-            onChange={(e) => {
-              const op = e.target.value;
-              update({ op });
-              if (content)
-                setContent((c) => ({
-                  ...c,
-                  items: c.items.map((i, n) => ({
-                    ...i,
-                    camera: defaultPlanCamera(i.module_id, n, op),
-                  })),
-                }));
-            }}
-          >
-            {OPS.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {["free_design", "recolor", "detail_modify"].includes(input.op) && (
-          <p className="dim small">
-            颜色、面料和结构变化请先在步骤1另存新版本；本次按该版本执行。
-          </p>
-        )}
         <label className="style-field">
           商品卖点与想要的画面
           <textarea
             aria-label="生成要求"
             rows={4}
             maxLength={3000}
-            placeholder="例如：突出肩线和垂坠感，图1作为款式主体，图2作为模特参考"
+            placeholder="例如：突出肩线和垂坠感，商品图作为款式主体，模特图作为模特参考"
             value={input.requirements}
             onChange={(e) => update({ requirements: e.target.value })}
           />
         </label>
+        <p className="dim small">
+          颜色、面料和结构变化请先在步骤1另存新版本；本次按该版本执行。
+        </p>
       </section>
       <section className="wizard-section">
         <div className="wizard-section-head">
@@ -237,7 +242,7 @@ export default function StylePlanInputs({
           </span>
         </div>
         <p className="dim small">
-          点击未选模块添加1张；每张图会生成独立画面规划。
+          每个模块是一个流水线工位，每张图会按模块指引生成独立画面规格。
         </p>
         <div className="wizard-inline">
           {Object.entries(MODULE_SETS).map(([name, counts]) => (
@@ -327,6 +332,11 @@ export default function StylePlanInputs({
         >
           {all ? "收起其他模块" : "全部19类模块"}
         </button>
+        {noText && (input.modules.transition || 0) > 0 && (
+          <p className="dim small">
+            当前图片文字语言为「无」，章节过渡卡不会生成。
+          </p>
+        )}
         {required.length > 0 && (
           <div className="wizard-facts">
             <h4>补充商品资料</h4>
@@ -417,19 +427,8 @@ export default function StylePlanInputs({
           图片文字语言
           <input
             maxLength={40}
-            value={content?.standard.language || input.language || "简体中文"}
-            onChange={(e) => {
-              update({ language: e.target.value });
-              setContent((c) =>
-                c
-                  ? {
-                      ...c,
-                      standard: { ...c.standard, language: e.target.value },
-                      standard_edited: true,
-                    }
-                  : c,
-              );
-            }}
+            value={input.language || "简体中文"}
+            onChange={(e) => update({ language: e.target.value })}
           />
         </label>
         <label className="style-field">
@@ -475,55 +474,56 @@ export default function StylePlanInputs({
               : "当前分析模型不提供思考切换。"}
           </p>
         )}
-        <details>
-          <summary>高级设置与必须保留</summary>
-          <label className="style-field">
-            必须保留的设计条件
-            <textarea
-              maxLength={1000}
-              rows={2}
-              value={input.keep || ""}
-              onChange={(e) => update({ keep: e.target.value })}
+        <label className="style-field">
+          必须保留的设计条件
+          <textarea
+            maxLength={1000}
+            rows={2}
+            value={input.keep || ""}
+            onChange={(e) => update({ keep: e.target.value })}
+          />
+        </label>
+        <h4>视角与取景（全局默认）</h4>
+        <p className="dim small">
+          模块画面指引优先；这里是整套图的默认取景，分析生成整体规范与主图时采用，不再逐图设置。
+        </p>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            checked={!!input.camera}
+            onChange={(e) =>
+              update({
+                camera: e.target.checked ? { ...DEFAULT_CAMERA } : undefined,
+              })
+            }
+          />
+          指定全局默认取景
+        </label>
+        {input.camera && (
+          <>
+            <CameraSettings
+              value={input.camera}
+              onChange={(camera) => update({ camera })}
+              disabled={disabled}
             />
-          </label>
-          <label className="inline-check">
-            <input
-              type="checkbox"
-              checked={!!input.camera}
-              onChange={(e) =>
-                update({
-                  camera: e.target.checked ? { ...DEFAULT_CAMERA } : undefined,
-                })
+            <button
+              className="btn secondary small"
+              disabled={!content || disabled}
+              onClick={() =>
+                setContent((c) => ({
+                  ...c,
+                  items: c.items.map((i) =>
+                    i.module_id === "main"
+                      ? { ...i, camera: input.camera }
+                      : i,
+                  ),
+                }))
               }
-            />
-            指定主图默认取景
-          </label>
-          {input.camera && (
-            <>
-              <CameraSettings
-                value={input.camera}
-                onChange={(camera) => update({ camera })}
-                disabled={disabled}
-              />
-              <button
-                className="btn secondary small"
-                disabled={!content || disabled}
-                onClick={() =>
-                  setContent((c) => ({
-                    ...c,
-                    items: c.items.map((i) =>
-                      i.module_id === "main"
-                        ? { ...i, camera: input.camera }
-                        : i,
-                    ),
-                  }))
-                }
-              >
-                应用到本计划主图
-              </button>
-            </>
-          )}
-        </details>
+            >
+              应用到本计划主图
+            </button>
+          </>
+        )}
         <p className="dim small">
           分析与生成图片分别确认费用。看图、修改规划和构图示意不调用模型。
         </p>

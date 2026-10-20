@@ -108,7 +108,7 @@ for (const width of [1440, 390])
     await expect(page.getByLabel("图片1完整提示词")).toHaveValue(/人工编辑/);
     await page.getByText("整体设计规范", { exact: true }).click();
     await page
-      .getByLabel("拍摄一致性", { exact: true })
+      .getByLabel("全局摄影参数", { exact: true })
       .fill("统一柔光与中性背景");
     await expect(page.getByLabel("图片1完整提示词")).toHaveValue(/统一柔光/);
     await expect(page.getByLabel("图片1图片目标提示词")).toHaveValue(

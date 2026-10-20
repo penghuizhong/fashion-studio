@@ -5,18 +5,12 @@ import {
   FACT_FIELDS,
   PROMPT_PARTS,
   EDITABLE_PROMPT_PARTS,
+  SPEC_FIELDS,
+  STANDARD_SECTIONS,
 } from "../../../shared/stylePlan.js";
 import { imageTaskAllowed } from "../../../shared/imageOptions.js";
-import CameraSettings from "./CameraSettings.jsx";
 import ImageOutputOptions from "./ImageOutputOptions.jsx";
 import StudioImage from "./StudioImage.jsx";
-const labels = {
-  garment: "服装一致性",
-  photography: "拍摄一致性",
-  layout: "版面一致性",
-  language: "新增文案语言",
-  facts: "商品事实约束",
-};
 export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
   const { content, setContent, input, setInput } = w;
   const [view, setView] = useState("plan"),
@@ -88,21 +82,21 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
         <summary>
           <strong>整体设计规范</strong>
           <span className="dim small">
-            {content.standard.photography.slice(0, 55)} ·{" "}
-            {content.standard.language}
+            {content.standard.tone?.slice(0, 55)} ·{" "}
+            {content.standard.photography?.slice(0, 40)}
           </span>
         </summary>
         <p className="dim small">
-          用于本计划每一张图；局部取景优先于全局默认景别。商品原配色和已确认事实保持不变。
+          按所选模块动态生成，用于本计划每一张图；每图不同的内容在各自的画面规格里，模块指引与全局约束由系统统一注入。商品原配色和已确认事实保持不变。
         </p>
         <fieldset disabled={disabled}>
-          {Object.entries(labels).map(([key, label]) => (
+          {STANDARD_SECTIONS.map(([key, label]) => (
             <label className="style-field" key={key}>
               {label}
               <textarea
                 aria-label={label}
-                rows={key === "language" ? 1 : 3}
-                maxLength={key === "language" ? 40 : 4000}
+                rows={3}
+                maxLength={4000}
                 value={content.standard[key] || ""}
                 onChange={(e) =>
                   setContent((c) => ({
@@ -180,8 +174,8 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
             </div>
           </div>
           <p>
-            {current.camera.view} · {current.camera.framing} ·{" "}
-            {current.size || input.size}
+            {current.spec?.strategy || current.spec?.composition || "待分析"}{" "}
+            · {current.size || input.size}
           </p>
           <button
             className="btn secondary"
@@ -296,7 +290,34 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                       </p>
                     )}
                     <details>
-                      <summary>参考图与视角</summary>
+                      <summary>画面规格</summary>
+                      <p className="dim small">
+                        模块画面指引：
+                        {DETAIL_MODULES.find((m) => m.id === item.module_id)
+                          ?.guide || ""}
+                      </p>
+                      {SPEC_FIELDS.map(([key, label]) => (
+                        <label className="style-field" key={key}>
+                          {label}
+                          <textarea
+                            aria-label={`图片${index + 1}${label}`}
+                            rows={2}
+                            maxLength={2000}
+                            value={item.spec?.[key] || ""}
+                            onChange={(e) =>
+                              patch(item.id, {
+                                spec: {
+                                  ...(item.spec || {}),
+                                  [key]: e.target.value,
+                                },
+                              })
+                            }
+                          />
+                        </label>
+                      ))}
+                    </details>
+                    <details>
+                      <summary>参考图</summary>
                       <div className="wizard-inline">
                         {input.references.map((r, n) => (
                           <label className="inline-check" key={r.id}>
@@ -325,12 +346,6 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                           当前模型不支持本图参考数量。
                         </p>
                       )}
-                      <CameraSettings
-                        scope="item"
-                        value={item.camera}
-                        onChange={(camera) => patch(item.id, { camera })}
-                        disabled={disabled}
-                      />
                     </details>
                     <details>
                       <summary>本图输出规格</summary>

@@ -258,7 +258,7 @@ export default function useStylePlanWizard({
                   ...(old?.references || []).map((r) => ({
                     id: crypto.randomUUID(),
                     source: r.source,
-                    role: "scene",
+                    role: "model",
                   })),
                 ]
               : [],

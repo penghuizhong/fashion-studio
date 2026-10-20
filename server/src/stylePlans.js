@@ -100,7 +100,7 @@ export function mountStylePlans(app) {
           reference_paths: resolvePlanReferences(t, input, req).map(
             (r) => r.path,
           ),
-          standard: { ...DEFAULT_STANDARD, language: input.language },
+          standard: { ...DEFAULT_STANDARD },
           standard_edited: false,
           items: seedItems(input),
         };

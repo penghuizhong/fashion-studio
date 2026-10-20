@@ -66,10 +66,10 @@ test('failed model loading is isolated from image and attributes and can retry',
  fail=false;await page.getByRole('button',{name:'重试加载模型',exact:true}).click();await expect(page.getByLabel('图片模型',{exact:true})).not.toHaveValue('');await analyze(page);await expect(page.locator('.wizard-footer .wizard-primary')).toBeEnabled();
 });
 
-test('directions and requirements persist while design changes save only in attributes',async({page,request})=>{
+test('requirements persist while design changes save only in attributes',async({page,request})=>{
  const t=await makeStyle(request,'方向草稿');await openStyle(page,'方向草稿',true);await derive(page);
- await page.getByLabel('本次衍生方向').selectOption('white');await page.getByLabel('生成要求').fill('纯白背景，完整展示');await attributes(page);
- await page.getByRole('button',{name:'基于此版本修改',exact:true}).click();await page.getByLabel('设计变化说明').fill('衣领改为条纹');await page.getByRole('button',{name:'保存为新版本',exact:true}).click();await derive(page);await page.getByLabel('本次衍生方向').selectOption('free_design');await analyze(page);
+ await page.getByLabel('生成要求').fill('纯白背景，完整展示');await attributes(page);
+ await page.getByRole('button',{name:'基于此版本修改',exact:true}).click();await page.getByLabel('设计变化说明').fill('衣领改为条纹');await page.getByRole('button',{name:'保存为新版本',exact:true}).click();await derive(page);await analyze(page);
  const before=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(before.versions).toHaveLength(2);await render(page);const after=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(after.versions).toHaveLength(2);expect(after.jobs[0].snapshot.style.version_id).not.toBe(after.template.work_version_id);
 });
 
