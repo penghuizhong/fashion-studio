@@ -18,7 +18,6 @@ import StylePlanResults from "./StylePlanResults.jsx";
 import ProgressiveStudioImage from "./ProgressiveStudioImage.jsx";
 import OriginalImageViewer from "./OriginalImageViewer.jsx";
 import OriginalImageLink from "./OriginalImageLink.jsx";
-import DesignDelivery from "./DesignDelivery.jsx";
 import { mergeRecords } from "./useWorkspaceCollections.jsx";
 export default function StyleDerivationWizard(props) {
   const {
@@ -26,8 +25,6 @@ export default function StyleDerivationWizard(props) {
     initialImage,
     onClose,
     onChanged,
-    onGoSample,
-    onGoPattern,
     onViewImage,
   } = props;
   const [viewerOnly, setViewerOnly] = useState(!props.initialPanel),
@@ -189,23 +186,6 @@ export default function StyleDerivationWizard(props) {
       w.setError(e.message);
     }
   };
-  const prepareDelivery = (slots) =>
-    w.work(async () => {
-      const refs = w.input.references.length
-        ? w.input.references
-        : w.data.template.source_available
-          ? [{ id: crypto.randomUUID(), source: "original", role: "garment" }]
-          : [];
-      if (!refs.length) throw new Error("请先选择当前款式的基准参考图");
-      await w.beginNewPlan({
-        ...w.input,
-        references: refs,
-        modules: { main: slots.length },
-        delivery_views: slots,
-        op: "create",
-      });
-      setMobile("settings");
-    });
   const continueImage = (i) =>
     w.work(async () => {
       const generationId = i.generation_id || i.id;
@@ -436,17 +416,6 @@ export default function StyleDerivationWizard(props) {
                     w={w}
                     onDirty={setDirtyAttributes}
                     onSaved={onChanged}
-                  />
-                  <DesignDelivery
-                    templateId={templateId}
-                    versionId={w.versionId}
-                    sourceAvailable={w.data.template.source_available}
-                    sourceImage={w.data.template.source_image_path}
-                    sourceThumb={w.data.template.source_thumb_path}
-                    disabled={w.busy}
-                    onPrepare={prepareDelivery}
-                    onGoSample={onGoSample}
-                    onGoPattern={onGoPattern}
                   />
                 </fieldset>
               ) : w.step === 2 && w.data ? (
