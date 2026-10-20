@@ -487,8 +487,8 @@ export async function runMulti() {
     const noAdopt = await req('POST', '/api/character-cards/adopt', { preset_id: 'luchen' });
     const noGen = await req('POST', '/api/character-cards/generate', { prompt: '测试' });
     ok(
-      'M28. 预设列表未登录 → 200（5 张）；adopt/generate 未登录 → 401',
-      pub.status === 200 && Array.isArray(pub.json.cards) && pub.json.cards.length === 5 &&
+      'M28. 预设列表未登录 → 200（6 张）；adopt/generate 未登录 → 401',
+      pub.status === 200 && Array.isArray(pub.json.cards) && pub.json.cards.length === 6 &&
         noAdopt.status === 401 && noGen.status === 401,
       `pub=${pub.status} n=${pub.json && pub.json.cards && pub.json.cards.length} adopt=${noAdopt.status} gen=${noGen.status}`
     );
@@ -496,14 +496,14 @@ export async function runMulti() {
 
   // M29. 登录后领养：201 且链路完整；其他用户查该角色 → 404（隔离）
   {
-    const ad = await req('POST', '/api/character-cards/adopt', { preset_id: 'sujin' }, { jar: jarC });
+    const ad = await req('POST', '/api/character-cards/adopt', { preset_id: 'suman' }, { jar: jarC });
     const ch = ad.json && ad.json.character;
     const conv = ad.json && ad.json.conversation;
     const msgs = conv ? await req('GET', `/api/conversations/${conv.id}/messages`, undefined, { jar: jarC }) : null;
     const other = ch ? await req('GET', `/api/characters/${ch.id}`, undefined, { jar: jarAdminM }) : null;
     ok(
       'M29. 登录后 adopt → 201：角色/对话/开场白齐全；其他用户查 → 404',
-      ad.status === 201 && ch && ch.name === '苏锦' && conv && conv.id &&
+      ad.status === 201 && ch && ch.name === '苏蔓' && conv && conv.id &&
         Array.isArray(msgs.json) && msgs.json.length === 1 && msgs.json[0].role === 'assistant' &&
         other.status === 404,
       `adopt=${ad.status} name=${ch && ch.name} msgs=${msgs && msgs.json && msgs.json.length} other=${other && other.status}`
