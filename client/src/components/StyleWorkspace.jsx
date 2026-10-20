@@ -982,8 +982,8 @@ export default function StyleWorkspace({
                         </label>
                       )}
                       </details>
-                      {form.op==='white'?<p className="style-notice">纯白商品背景 · 保留服装颜色与结构，视角和尺寸可独立调整</p>:<>
-                      {form.op!=="white"&&<h3>风格预设</h3>}
+                      {form.op!=='white'&&<>
+                      <h3>风格预设</h3>
                       <p className="dim small">{PRESENTATION_STYLES.some(([v])=>v===form.visual_style)?'仅调整画面氛围，保留服装设计':'未指定风格，沿用当前要求'}</p>
                       <div className="style-text-presets">{PRESENTATION_STYLES.slice(0,6).map(([v,label])=><button key={v} aria-pressed={form.visual_style===v} className={form.visual_style===v?'selected':''} onClick={()=>update('visual_style',form.visual_style===v?'auto':v)}>{label}</button>)}</div>
                       <details><summary>更多风格</summary><div className="style-text-presets">{[...PRESENTATION_STYLES.slice(6),['preserve','沿用底图'],['natural','自然实拍'],['product','商品展示'],['editorial','品牌大片']].map(([v,label])=><button key={v} aria-pressed={form.visual_style===v} onClick={()=>update('visual_style',form.visual_style===v?'auto':v)}>{label}</button>)}</div></details>
