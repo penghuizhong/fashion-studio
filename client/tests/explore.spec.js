@@ -238,7 +238,7 @@ for (const viewport of [{width:1440,height:900},{width:1280,height:720},{width:7
     await page.screenshot({path:`/tmp/explore-ux-${viewport.width}.png`,animations:"disabled"});
     await page.evaluate(() => document.documentElement.setAttribute('data-theme','black'));
     await page.screenshot({path:`/tmp/explore-ux-${viewport.width}-dark.png`,animations:'disabled'});
-    expect(await page.locator('.explore-modal').evaluate(e => getComputedStyle(e).color)).toBe('rgb(245, 245, 245)');
+    expect(await page.locator('.explore-modal').evaluate(e => getComputedStyle(e).color)).toBe(await page.locator('body').evaluate(e => getComputedStyle(e).color));
     await page.keyboard.press('Escape');
     await expect(page.locator('.explore-modal')).toHaveCount(0);
     await expect(page.getByRole('button',{name:'创意衍生',exact:true})).toBeFocused();

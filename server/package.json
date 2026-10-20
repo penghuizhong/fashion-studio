@@ -21,5 +21,5 @@
     "check:products": "node scripts/check-products.js"
   },
   "type": "module",
-  "version": "0.11.0"
+  "version": "0.11.1"
 }

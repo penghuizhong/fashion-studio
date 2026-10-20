@@ -20,6 +20,7 @@ jobs:
             client/package-lock.json
       - run: npm ci --prefix server
       - run: npm ci --prefix client
+      - run: npm --prefix client run check:theme
       - run: npm --prefix server run check
       - run: CHECK_MODE=multi npm --prefix server run check
       - run: npm --prefix server run check:explore
