@@ -1,3 +1,4 @@
+import { DESIGN_STANDARD_MAX_LENGTH } from '../../../shared/exploreDesign.js';
 // Only restore fields supported by the current server schema. No credentials or images.
 export function sanitizeExploreDraft(saved, presets, models) {
   const warnings = [];
@@ -12,5 +13,6 @@ export function sanitizeExploreDraft(saved, presets, models) {
   if (model?.id !== saved.expandId) warnings.push('草稿发散模型已不可用，请确认当前模型后提交');
   const count = Number.isInteger(saved.count) && saved.count >= 1 && saved.count <= 16 ? saved.count : 6;
   if (count !== saved.count) warnings.push('草稿方案数量已恢复为 6，请确认');
-  return { draft: {...saved,presetId:preset.id,axes,locked,expandId:model?.id || '',count}, warnings };
+  const designStandard = typeof saved.designStandard === 'string' ? saved.designStandard.slice(0, DESIGN_STANDARD_MAX_LENGTH) : '';
+  return { draft: {...saved,designStandard,presetId:preset.id,axes,locked,expandId:model?.id || '',count}, warnings };
 }

@@ -42,7 +42,7 @@ let imageCalls = 0,
   lastModel = '',
   repairCalls = 0;
 let streamFixture = false,
-  lastTextBody;
+  lastTextBody, lastImageBody;
 global.fetch = async (url, opts = {}) => {
   const u = String(url);
   if (!u.includes('fixture.invalid')) return realFetch(url, opts);
@@ -124,6 +124,7 @@ global.fetch = async (url, opts = {}) => {
       usage: { prompt_tokens: 120, completion_tokens: 200 },
     });
   }
+  lastImageBody = b;
   imageCalls++;
   const callNumber = imageCalls;
   active++;
@@ -332,6 +333,41 @@ try {
         '"per_call":5' +
         "}' WHERE id='bimage'"
     ).run();
+  });
+  await test('overall design standard reaches every frozen prompt and supplier; invalid inputs cost nothing', async () => {
+    const c = await create({count:2});
+    const standard = '# 整体设计规范\n统一暖灰背景与柔和侧光；保留各方案的服装差异。';
+    const q = await quote(c, [0,1], {design_standard:'  '+standard+'  '});
+    assert.equal(q.design_standard, standard);
+    assert.equal(q.prompt_version, 'explore-v3');
+    assert.ok(q.prompts.every(p=>p.includes(standard)));
+    const balance = getBalance(uid), calls = imageCalls;
+    for (const invalid of [null,{},42,'x'.repeat(8001)]) {
+      const r = await req('POST', `/api/studio/explore/${c.id}/quote`, {indexes:[0],render_model_id:'bimage',render_size:'512x512',design_standard:invalid},cookie);
+      assert.equal(r.json.code,'INVALID_DESIGN_STANDARD');
+    }
+    const conflict = await req('POST', `/api/studio/explore/${c.id}/quote`, {indexes:[0],render_model_id:'bimage',render_size:'512x512',design_standard:'必须拍摄背面',camera:{view:'front'}},cookie);
+    assert.equal(conflict.json.code,'INVALID_CAMERA');
+    assert.equal(getBalance(uid),balance);assert.equal(imageCalls,calls);
+    const blank=await quote(c,[0],{design_standard:'   '});
+    assert.equal(blank.design_standard,undefined);
+    assert.ok(!blank.prompts[0].includes('【整体设计规范'));
+    const started=await start(c,q), finished=await waitJob(started.json.job.id);
+    assert.equal(finished.snapshot.design_standard,standard);
+    assert.deepEqual(finished.renders.map(r=>r.prompt_snapshot),q.prompts);
+    assert.ok(lastImageBody.prompt.includes(standard));
+  });
+  await test('retry freezes original design standard and rejects edited standard', async () => {
+    const c=await create({count:2});mode='auth';
+    const original=await quote(c,[0],{design_standard:'统一深灰背景，保留原有配色'});
+    const started=await start(c,original),failed=await waitJob(started.json.job.id);mode='success';
+    const r=await req('POST',`/api/studio/explore/${c.id}/quote`,{indexes:[0],source_job_id:failed.id,design_standard:'改成新规范'},cookie);
+    assert.equal(r.json.code,'INVALID_RETRY');
+    const retry=await quote(c,[0],{source_job_id:failed.id});
+    assert.equal(retry.design_standard,original.design_standard);
+    assert.deepEqual(retry.prompts,original.prompts);assert.deepEqual(retry.seeds,original.seeds);
+    const x=await start(c,retry),done=await waitJob(x.json.job.id);assert.equal(done.status,'succeeded');
+    assert.equal(done.snapshot.design_standard,original.design_standard);
   });
   let job;
   await test('2/6 quote; concurrent identical confirmation calls provider twice and charges once', async () => {

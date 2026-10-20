@@ -1,4 +1,5 @@
 import { imageTaskAllowed } from '../../shared/imageOptions.js';
+import { DESIGN_STANDARD_MAX_LENGTH } from '../../shared/exploreDesign.js';
 import { imageAvailability,studioFileExists } from './imageLifecycle.js';
 import { chooseOutput } from './imageCapabilities.js';
 import fs from "node:fs";
@@ -225,6 +226,11 @@ export function makeQuote(batch, req, b, context = null) {
   const output = chooseOutput(model, size, quality);
   if(source && (size !== source.snapshot.size || quality !== (source.snapshot.quality || ""))) throw problem("INVALID_RETRY", "重试沿用原尺寸和质量，请新建生成");
   const camera = source ? source.snapshot.camera : normalizeCamera(b.camera);
+  if (b.design_standard !== undefined && (typeof b.design_standard !== 'string' || b.design_standard.length > DESIGN_STANDARD_MAX_LENGTH))
+    throw problem('INVALID_DESIGN_STANDARD', `整体设计规范应为不超过${DESIGN_STANDARD_MAX_LENGTH}字的文本`);
+  const designStandard = source ? source.snapshot.design_standard || '' : (b.design_standard || '').trim();
+  if (source && b.design_standard !== undefined && b.design_standard.trim() !== designStandard)
+    throw problem('INVALID_RETRY', '重试沿用原整体设计规范，调整规范请重新生成');
   if (
     source &&
     b.camera &&
@@ -232,7 +238,7 @@ export function makeQuote(batch, req, b, context = null) {
   )
     throw problem("INVALID_RETRY", "重试沿用原取景设置，调整取景请新建生成");
   if (camera && !source && !context)
-    validateCameraIntent(camera, batch.intent_text);
+    validateCameraIntent(camera, `${batch.intent_text || ''}\n${designStandard}`);
   const unit = model.billable ? output.unit : 0;
   const itemOutputs = context?.outputs || source?.snapshot.outputs;
   const outputs = itemOutputs ? Object.fromEntries(indexes.map(i => {
@@ -244,6 +250,7 @@ export function makeQuote(batch, req, b, context = null) {
     indexes,
     ...(context?.style ? { style: context.style } : {}),
     ...(camera ? { camera } : {}),
+    ...(designStandard ? { design_standard: designStandard } : {}),
     model: publicModel(model),
     size,
     quality,
@@ -253,8 +260,8 @@ export function makeQuote(batch, req, b, context = null) {
     pricing_version: JSON.stringify(model.pricing),
     effective_prompt_extend:
       source?.snapshot.effective_prompt_extend ??
-      (camera ? false : model.prompt_extend),
-    prompt_version: source?.snapshot.prompt_version || "explore-v2",
+      (camera || designStandard ? false : model.prompt_extend),
+    prompt_version: source?.snapshot.prompt_version || (designStandard ? "explore-v3" : "explore-v2"),
     source_job_id: source?.id || null,
     seeds: indexes.map(
       (i) =>
@@ -271,7 +278,7 @@ export function makeQuote(batch, req, b, context = null) {
             presetId: batch.preset_id,
             intentText: batch.intent_text,
             camera,
-          }),
+          }) + (designStandard ? `\n\n【整体设计规范：本批所有图片共同遵循】\n${designStandard}` : ''),
       ),
     billing_mode: model.billable ? "platform" : "local_mock",
     expires_at: Date.now() + 5 * 60 * 1000,

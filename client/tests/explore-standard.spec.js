@@ -1,0 +1,65 @@
+import { test, expect } from '@playwright/test';
+
+for (const width of [1440, 390]) test(`explore standard stays collapsed, persists, refreshes quotes and reaches every image ${width}`, async ({ page, request }) => {
+  await page.setViewportSize({ width, height: 950 });
+  await page.goto('/');
+  if (width < 769) await page.getByRole('button', { name: '打开侧边栏', exact: true }).click();
+  await page.getByRole('button', { name: '设计台', exact: true }).first().click();
+  await page.getByRole('button', { name: '创意衍生', exact: true }).click();
+  await page.getByRole('button', { name: '2 个方案', exact: true }).click();
+  let expansions = 0, renders = 0;
+  page.on('request', r => {
+    if (r.method() !== 'POST') return;
+    const path = new URL(r.url()).pathname;
+    if (path === '/api/studio/explore') expansions++;
+    if (path.endsWith('/render')) renders++;
+  });
+  await page.getByRole('button', { name: '开始发散', exact: true }).click();
+  await expect(page.locator('.explore-dna-card')).toHaveCount(2);
+  await page.getByRole('button', { name: '下一步：渲染设置（2 张）', exact: true }).click();
+  const panel = page.locator('.explore-design-standard');
+  const input = page.getByRole('textbox', { name: '整体设计规范', exact: true });
+  await expect(panel).not.toHaveAttribute('open');
+  await expect(input).not.toBeVisible();
+  await panel.locator('summary').click();
+  await expect(input).toHaveValue(/# 整体设计规范/);
+  const standard = '# 整体设计规范\n\n统一柔光和暖灰背景，保留每个方案的颜色与结构差异。';
+  let response = page.waitForResponse(r => r.url().endsWith('/quote') && r.request().postDataJSON()?.design_standard === standard);
+  await input.fill(standard);
+  const quoted = await (await response).json();
+  expect(quoted.quote.prompts.every(p => p.includes(standard))).toBe(true);
+  const batchId = new URL((await response).url()).pathname.split('/').at(-2);
+  response = page.waitForResponse(r => r.url().endsWith('/quote') && r.request().postDataJSON()?.design_standard === '');
+  await input.fill('');
+  const cleared = await (await response).json();
+  expect(cleared.quote.design_standard).toBeUndefined();
+  expect(cleared.quote.prompts.every(p => !p.includes('【整体设计规范'))).toBe(true);
+  response = page.waitForResponse(r => r.url().endsWith('/quote') && r.request().postDataJSON()?.design_standard === standard);
+  await input.fill(standard);await response;
+  await page.locator('.explore-navigation button').nth(1).click();
+  await page.locator('.explore-navigation button').nth(2).click();
+  await expect(panel).not.toHaveAttribute('open');
+  await panel.locator('summary').click();await expect(input).toHaveValue(standard);
+  await page.getByLabel('关闭创意衍生').click();
+  await page.getByRole('button', { name: '创意衍生', exact: true }).click();
+  await expect(page.locator('.explore-navigation button').nth(2)).toHaveAttribute('aria-current', 'step');
+  await expect(panel).not.toHaveAttribute('open');
+  await panel.locator('summary').click();await expect(input).toHaveValue(standard);
+  expect(expansions).toBe(1);expect(renders).toBe(0);
+  for (const theme of ['black', 'white']) {
+    await page.evaluate(t => document.documentElement.dataset.theme = t, theme);
+    expect(await panel.evaluate(e => e.scrollWidth <= e.clientWidth + 1)).toBe(true);
+    await page.screenshot({ path: `/tmp/explore-standard-${width}-${theme}.png`, animations: 'disabled' });
+  }
+  await page.getByRole('button', { name: '确认费用并生成', exact: true }).click();
+  await expect(page.locator('.explore-render-card img')).toHaveCount(2);
+  const { jobs } = await (await request.get(`/api/studio/explore/${batchId}/jobs`)).json();
+  expect(jobs[0].snapshot.design_standard).toBe(standard);
+  expect(jobs[0].renders.every(r => r.prompt_snapshot.includes(standard))).toBe(true);
+  await page.getByLabel('关闭创意衍生').click();
+  await page.getByRole('button', { name: '创意衍生', exact: true }).click();
+  await page.locator('.explore-navigation button').nth(2).click();
+  await expect(panel).not.toHaveAttribute('open');await panel.locator('summary').click();
+  await expect(input).toHaveValue(standard);
+  expect(expansions).toBe(1);expect(renders).toBe(1);
+});
