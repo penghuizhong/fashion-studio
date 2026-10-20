@@ -1,6 +1,6 @@
 # 款式版本化与衍生工作区：统一执行 TODO
 
-后续五步流程与图片规划重构见 [新设计方案](STYLE_DERIVATION_WIZARD_PLAN.md) 和 [新执行TODO](STYLE_DERIVATION_WIZARD_TODO.md)，0.12.0已完成本地实现与自检，待后续推送发布；下文已发布历史与验收保留原样。
+后续五步流程与图片规划重构见 [新设计方案](STYLE_DERIVATION_WIZARD_PLAN.md) 和 [新执行TODO](STYLE_DERIVATION_WIZARD_TODO.md)，0.12.0已完成实现与自检并合并main，发布及线上核验见新执行TODO；下文已发布历史与验收保留原样。
 
 日期：2026-10-19。以下为 0.8.0 实施及讨论历史；0.8.0 已合并 main。讨论结束后的最终执行以 [0.9 执行清单](STUDIO_0.9_EXECUTION_TODO.md)为准；下文旧状态保留作为时点记录。
 

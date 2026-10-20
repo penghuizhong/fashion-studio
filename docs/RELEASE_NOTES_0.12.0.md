@@ -1,6 +1,6 @@
 # 0.12.0 款式衍生五步工作流
 
-日期：2026-10-20。状态：本地实现与自检完成，尚未推送、合并或部署。前后端package及锁文件统一为0.12.0，未增加运行依赖。逐项证据见 [38项执行TODO](STYLE_DERIVATION_WIZARD_TODO.md)，设计依据见 [方案](STYLE_DERIVATION_WIZARD_PLAN.md)。
+日期：2026-10-20。状态：已合并main，随本次发布推送；线上部署结果以GitHub Actions实际执行为准。前后端package及锁文件统一为0.12.0，未增加运行依赖。逐项证据见 [38项执行TODO](STYLE_DERIVATION_WIZARD_TODO.md)，设计依据见 [方案](STYLE_DERIVATION_WIZARD_PLAN.md)。
 
 ## 使用流程
 
@@ -44,3 +44,9 @@ node server/scripts/backup-style-upgrade.js /actual/DATA_DIR /safe/new-backup-di
 - 主题配色约束、77个定义变量及生产构建通过。Vite仍有单JS包超过500kB的非阻断提示，后续可再做资源分包。
 
 本轮使用隔离模拟供应商与合成图片，没有调用真实付费模型。真实供应商视觉理解、服装结构一致性、中文字与字体效果需要实际出图后人工验收；多张参考是否可用以管理员声明和供应商实际能力为准。手机验证采用浏览器视口及缩放，未声称已完成实体设备验收。方案不会替代商品事实核对、精确排版工具或实体样衣验收。
+
+## 发布追踪
+
+功能提交`d3708de`，合并提交`e198f8c`；实现分支`feat/style-derivation-wizard`，版本标签`v0.12.0`。main推送触发既有验证与自动部署流程。
+
+发布时本地288项服务端、72项浏览器及最终26项受影响用例均已通过；合并没有冲突或新增业务改动。当前执行环境的GitHub CLI令牌不可用，Actions API和站点状态请求均被网络代理拒绝（403），因此没有把远端CI、数据库升级或线上部署记录为成功。可在[Actions](https://github.com/penghuizhong/fashion-studio/actions)核对实际结果。
