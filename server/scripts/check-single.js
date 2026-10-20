@@ -467,13 +467,13 @@ export async function runSingle() {
     ok('21. 不存在的对话发消息 → error 事件或 HTTP 404', status === 404 || hasError, `status=${status} events=${events.map((e) => e.event).join(',')}`);
   }
 
-  // 22. 预设角色卡列表：5 张员工卡 + 1 个分类
+  // 22. 预设角色卡列表：6 张员工卡 + 1 个分类
   {
     const r = await req('GET', '/api/character-cards/presets');
     const cats = r.json && r.json.categories;
     ok(
-      '22. GET /api/character-cards/presets → 200，5 张员工卡，1 个分类',
-      r.status === 200 && Array.isArray(r.json.cards) && r.json.cards.length === 5 &&
+      '22. GET /api/character-cards/presets → 200，6 张员工卡，1 个分类',
+      r.status === 200 && Array.isArray(r.json.cards) && r.json.cards.length === 6 &&
         cats && Object.keys(cats).length === 1 &&
         r.json.cards.every((c) => c.id && c.name && c.greeting && c.soul_md && cats[c.category]),
       `status=${r.status} n=${r.json && r.json.cards && r.json.cards.length}`
@@ -482,14 +482,14 @@ export async function runSingle() {
 
   // 23. 一键领养：建角色 + 建对话 + 开场白首条消息
   {
-    const r = await req('POST', '/api/character-cards/adopt', { preset_id: 'shenyan' });
+    const r = await req('POST', '/api/character-cards/adopt', { preset_id: 'shenwan' });
     const ch = r.json && r.json.character;
     const conv = r.json && r.json.conversation;
     const msgs = conv ? await req('GET', `/api/conversations/${conv.id}/messages`) : null;
     const first = msgs && msgs.json && msgs.json[0];
     ok(
       '23. POST adopt 预设卡 → 201：角色/对话/开场白消息齐全',
-      r.status === 201 && ch && ch.name === '沈砚' && conv && conv.id &&
+      r.status === 201 && ch && ch.name === '沈婉' && conv && conv.id &&
         Array.isArray(msgs.json) && msgs.json.length === 1 &&
         first.role === 'assistant' && first.content.length > 60,
       `status=${r.status} name=${ch && ch.name} msgs=${msgs && msgs.json && msgs.json.length}`

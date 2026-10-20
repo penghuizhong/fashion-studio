@@ -458,6 +458,55 @@ function migrateAvatarPngToWebp(db) {
   }
 }
 
+// 旧 8 张通用卡通头像（avatar-gen-1~8）与旧 5 张员工头像已删除：
+// 历史数据里仍引用它们的，按序号/岗位映射到 6 张新员工职业头像，避免头像裂图。幂等。
+function migrateAvatarGenToStaff(db) {
+  const STAFF = [
+    'preset-shenwan', 'preset-suman', 'preset-zhouyun',
+    'preset-linxiao', 'preset-luqing', 'preset-hejing',
+  ];
+  // 旧员工头像 → 同岗位新员工头像
+  const OLD_STAFF = {
+    'preset-shenyan': 'preset-shenwan',
+    'preset-sujin': 'preset-suman',
+    'preset-zhouzheng': 'preset-zhouyun',
+    'preset-linyun': 'preset-linxiao',
+    'preset-lirui': 'preset-luqing',
+  };
+  try {
+    let fixed = 0;
+    const updChar = db.prepare('UPDATE characters SET avatar=? WHERE avatar=?');
+    const updShared = db.prepare(
+      "UPDATE shared_cards SET card_json=REPLACE(card_json,?,?) WHERE card_json LIKE '%'||?||'%' ESCAPE '\\'"
+    );
+    const updSaved = db.prepare(
+      "UPDATE saved_cards SET card_json=REPLACE(card_json,?,?) WHERE card_json LIKE '%'||?||'%' ESCAPE '\\'"
+    );
+    const remap = (oldP, newP) => {
+      fixed += updChar.run(newP, oldP).changes;
+      fixed += updShared.run(oldP, newP, oldP).changes;
+      fixed += updSaved.run(oldP, newP, oldP).changes;
+    };
+    const tx = db.transaction(() => {
+      for (let n = 1; n <= 8; n++) {
+        const staff = STAFF[(n - 1) % STAFF.length];
+        for (const ext of ['webp', 'png']) {
+          remap(`/avatars/avatar-gen-${n}.${ext}`, `/avatars/${staff}.webp`);
+        }
+      }
+      for (const [oldName, newName] of Object.entries(OLD_STAFF)) {
+        for (const ext of ['webp', 'png']) {
+          remap(`/avatars/${oldName}.${ext}`, `/avatars/${newName}.webp`);
+        }
+      }
+    });
+    tx();
+    if (fixed) console.log(`[db] 旧卡通头像迁移：修复 ${fixed} 条历史记录`);
+  } catch (e) {
+    console.warn('[db] 旧卡通头像迁移失败:', e.message);
+  }
+}
+
 export function getDb() {
   if (_db) return _db;
   const { dataDir } = getConfig();
@@ -467,6 +516,7 @@ export function getDb() {
   _db.exec(SCHEMA);
   migrateToUnifiedRegistry(_db);
   migrateAvatarPngToWebp(_db);
+  migrateAvatarGenToStaff(_db);
   // Additive, transactional migrations: preserve all existing preset and batch values.
   _db.transaction(() => {
     for (const [table, columns] of Object.entries({
