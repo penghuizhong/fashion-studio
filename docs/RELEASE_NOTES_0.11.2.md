@@ -25,4 +25,4 @@
 
 具体结果见 [执行清单](MODEL_MANAGEMENT_FIX_TODO.md)。新增服务端检查命令：`npm --prefix server run check:models`，已加入验证与部署前工作流；浏览器交互测试采用接口夹具，服务端另以隔离数据库运行真实 HTTP 权限及生命周期测试。所有测试不调用真实付费模型。
 
-本轮在 `fix/model-registry-deletion` 实施；版本号和锁文件统一为 0.11.2，尚未推送或部署。
+本轮在 `fix/model-registry-deletion` 实施；版本号和锁文件统一为 0.11.2。按用户指令推送功能提交 `8a7169e`，以 `04821b4` 合并到 `main`，并发布版本标签 `v0.11.2`。自动部署结果以 GitHub Actions 实际运行状态为准。
