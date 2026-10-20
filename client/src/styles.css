@@ -4328,3 +4328,14 @@ input[type=checkbox], input[type=radio] { accent-color: var(--selection-indicato
 .pm-default-tag { background: var(--success-bg); color: var(--success); }
 
 .explore-count-choice[aria-pressed=true] { background: var(--surface-selected); border-color: var(--border-selected); color: var(--text); font-weight: 600; }
+
+.explore-design-standard { margin:0 0 18px; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--surface-card); }
+.explore-design-standard > summary { display:flex; align-items:center; justify-content:space-between; gap:12px; list-style:none; }
+.explore-design-standard > summary::-webkit-details-marker { display:none; }
+.explore-design-standard > summary strong { display:block; font-size:1rem; }
+.explore-design-standard > summary small { display:block; margin-top:6px; color:var(--text-secondary); line-height:1.5; }
+.explore-design-standard > summary svg { flex:none; transition:transform .15s; }
+.explore-design-standard[open] > summary svg { transform:rotate(180deg); }
+.explore-design-standard textarea { display:block; box-sizing:border-box; width:100%; min-height:260px; margin-top:14px; padding:14px; resize:vertical; line-height:1.7; color:var(--text); background:var(--surface-control); border:1px solid var(--border-control); border-radius:10px; }
+.explore-design-standard textarea[readonly] { color:var(--text-secondary); }
+.explore-design-standard p { margin:10px 0 0; line-height:1.6; }

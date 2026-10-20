@@ -1,3 +1,4 @@
+import { DEFAULT_EXPLORE_DESIGN_STANDARD, DESIGN_STANDARD_MAX_LENGTH } from '../../../shared/exploreDesign.js';
 import { imageTaskAllowed,sizeAllowed } from '../../../shared/imageOptions.js';
 import { StateTabs,CardMenu,useLifecycleActions } from './StudioLifecycle.jsx';
 import ImageOutputOptions from './ImageOutputOptions.jsx';
@@ -68,8 +69,8 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
   const { user, multiUser } = useAuth();
   const draftKey = `explore-draft-v1:${multiUser ? user?.id || user?.username : 'local'}`;
   const restored = useRef(false), currentTask = useRef(null), batchLoad = useRef(0);
-  const inputDraft = () => ({presetId,intent,axes,count,locked,expandId,thinking,renderId,size,quality,camera});
-  const restoreInputs = c => {setPresetId(c.presetId);setIntent(c.intent);setAxes(c.axes);setCount(c.count);setLocked(c.locked);setLockKeys(Object.keys(c.locked || {}));setExpandId(expandModels.some(m => m.id === c.expandId) ? c.expandId : expandModels[0]?.id || '');setThinking(c.thinking);setRenderId(c.renderId);setSize(c.size);setQuality(c.quality||'');setCamera(c.camera||{...DEFAULT_CAMERA});};
+  const inputDraft = () => ({presetId,intent,axes,count,locked,expandId,thinking,renderId,size,quality,camera,designStandard,retrySource});
+  const restoreInputs = c => {setPresetId(c.presetId);setIntent(c.intent);setAxes(c.axes);setCount(c.count);setLocked(c.locked);setLockKeys(Object.keys(c.locked || {}));setExpandId(expandModels.some(m => m.id === c.expandId) ? c.expandId : expandModels[0]?.id || '');setThinking(c.thinking);setRenderId(c.renderId);setSize(c.size);setQuality(c.quality||'');setCamera(c.camera||{...DEFAULT_CAMERA});setDesignStandard(c.designStandard || '');setRetrySource(c.retrySource || null);};
   const [historyState,setHistoryState]=useState('active'),[historyRefresh,setHistoryRefresh]=useState(0);
   const lifecycleActions=useLifecycleActions({onChanged:()=>setHistoryRefresh(n=>n+1),showToast});
   const [tab, setTab] = useState('new'),
@@ -96,6 +97,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
   const [viewer, setViewer] = useState(null), [adopted, setAdopted] = useState([]);
   const [onlyDiff, setOnlyDiff] = useState(false), [compare, setCompare] = useState(false);
   const [camera, setCamera] = useState({...DEFAULT_CAMERA});
+  const [designStandard, setDesignStandard] = useState(DEFAULT_EXPLORE_DESIGN_STANDARD);
   const [quoteLoading, setQuoteLoading] = useState(false), [quoteVersion, setQuoteVersion] = useState(0);
   const [lockKeys, setLockKeys] = useState([]);
   const bodyRef = useRef(null);
@@ -182,13 +184,13 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     setQuoteLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const r = await api.studio.exploreQuote(batch.id, { indexes: selected, render_model_id: renderId, render_size: size, quality, source_job_id: retrySource, ...(retrySource ? {} : {camera}) });
+        const r = await api.studio.exploreQuote(batch.id, { indexes: selected, render_model_id: renderId, render_size: size, quality, source_job_id: retrySource, ...(retrySource ? {} : {camera, design_standard:designStandard}) });
         if (alive) { setQuote(r.quote); setRequestKey(crypto.randomUUID()); setError(''); }
       } catch (e) { if (alive) fail(e); }
       finally { if (alive) setQuoteLoading(false); }
     }, 350);
     return () => { alive = false; clearTimeout(timer); };
-  }, [step, batch?.id, renderId, size, quality, selected.join(','), retrySource, active, quoteVersion, JSON.stringify(camera)]);
+  }, [step, batch?.id, renderId, size, quality, selected.join(','), retrySource, active, quoteVersion, JSON.stringify(camera), designStandard]);
   useEffect(() => {
     if (tab !== 'history') return;
     let alive = true;
@@ -252,7 +254,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
       if (presets.some(p => p.id === saved.presetId)) { setPresetId(saved.presetId); setAxes(saved.axes || []); setLocked(saved.locked || {});setLockKeys(Object.keys(saved.locked || {})); }
       setIntent(saved.intent || ''); setCount(saved.count || 6); setThinking(!!saved.thinking);
       if (expandModels.some(m => m.id === saved.expandId)) setExpandId(saved.expandId);
-      setRenderId(saved.renderId || ''); setSize(saved.size || '');setQuality(saved.quality||'');setCamera(saved.camera||{...DEFAULT_CAMERA});
+      setRenderId(saved.renderId || ''); setSize(saved.size || '');setQuality(saved.quality||'');setCamera(saved.camera||{...DEFAULT_CAMERA});setDesignStandard(saved.designStandard || '');
       if (saved.batchId) loadBatch(saved.batchId, saved.jobId).then(() => {
         restoreInputs(saved);
         setSelected(saved.selected || []);
@@ -265,10 +267,10 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     if (!restored.current) return;
     try {
       const c = currentTask.current;
-      const saved = c ? {...c.inputs,batchId:c.batch?.id,jobId:c.job?.id,selected:c.selected,adopted:c.adopted,step:c.step} : {presetId,intent,axes,count,locked,expandId,thinking,renderId,size,quality,camera,batchId:batch?.id,jobId:job?.id,selected,adopted,step};
+      const saved = c ? {...c.inputs,batchId:c.batch?.id,jobId:c.job?.id,selected:c.selected,adopted:c.adopted,step:c.step} : {presetId,intent,axes,count,locked,expandId,thinking,renderId,size,quality,camera,designStandard,retrySource,batchId:batch?.id,jobId:job?.id,selected,adopted,step};
       sessionStorage.setItem(draftKey, JSON.stringify({...saved,expansionRequest:expansionRequest.current,savedAt:Date.now()}));
     } catch { /* private browsing may disable storage */ }
-  }, [presetId,intent,axes,count,locked,expandId,thinking,renderId,size,quality,batch?.id,job?.id,selected,adopted,step,busy,JSON.stringify(camera)]);
+  }, [presetId,intent,axes,count,locked,expandId,thinking,renderId,size,quality,batch?.id,job?.id,selected,adopted,step,busy,JSON.stringify(camera),designStandard,retrySource]);
   useEffect(() => {
     if (!quote) return;
     const timer = setTimeout(() => { setQuote(null); setQuoteVersion(v => v + 1); }, Math.max(0, quote.expires_at - Date.now()));
@@ -373,6 +375,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
           ),
         };
       setAdopted([]);
+      setDesignStandard('');
       setPresetId(b.preset_id);setIntent(b.intent_text || '');setAxes(json(b.axes_json, []));setCount(b.count || 6);
       setLocked(Object.fromEntries(Object.entries(snapshot.locked_fields || {}).map(([k,v]) => [k, Array.isArray(v) ? v.join("、") : String(v)])));setLockKeys(Object.keys(snapshot.locked_fields || {}));
       if (snapshot.expand_model?.id) setExpandId(snapshot.expand_model.id);
@@ -384,6 +387,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
       if (latest) {
         setJob(latest);
         setCamera(latest.snapshot?.camera || {...DEFAULT_CAMERA});
+        setDesignStandard(latest.snapshot?.design_standard || '');
         setRenderId(latest.snapshot?.model?.id || '');setSize(latest.snapshot?.size || '');setQuality(latest.snapshot?.quality||'');
         setAdopted(adoptedIndexes(b, latest));
         setStep('results');
@@ -464,6 +468,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
     setter((a) => (a.includes(i) ? a.filter((x) => x !== i) : [...a, i]));
   const retry = () => {
     setRetrySource(job.id);
+    setDesignStandard(job.snapshot?.design_standard || '');
     setRenderId(job.snapshot.model.id);
     setSize(job.snapshot.size);setQuality(job.snapshot.quality||'');
     setSelected(
@@ -899,6 +904,27 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
               )}
               {step === 'render' && (
                 <>
+                  <details className="explore-design-standard">
+                    <summary>
+                      <span><strong>整体设计规范</strong><small>所有图片遵循的统一视觉标准</small></span>
+                      <Icon name="chevronDown" size={20} />
+                    </summary>
+                    <textarea
+                      className="text-input"
+                      aria-label="整体设计规范"
+                      aria-describedby="explore-design-standard-help"
+                      rows={14}
+                      maxLength={DESIGN_STANDARD_MAX_LENGTH}
+                      value={retrySource ? job?.snapshot?.design_standard || '' : designStandard}
+                      readOnly={!!retrySource}
+                      disabled={busy || active}
+                      onChange={e => {setDesignStandard(e.target.value);setQuote(null);setRequestKey('');}}
+                      placeholder="可填写统一的拍摄、色彩、背景、版面和文字要求；留空则按各方案与取景设置生成。"
+                    />
+                    <p id="explore-design-standard-help" className="small dim">
+                      {retrySource ? '重试沿用原任务规范与提示词；修改规范请返回结果并选择方案重新渲染。' : '会加入本批每张图片的提示词。修改后自动更新报价，不会重新发散或立即生成；清空后不添加额外规范。'}
+                    </p>
+                  </details>
                   {retrySource && !job?.snapshot?.camera ? <p>历史任务未记录取景设置，重试沿用原提示词；调整取景请重新生成。</p> : <CameraSettings value={retrySource ? job.snapshot.camera : camera} onChange={setCamera} disabled={busy || active || !!retrySource} />}
                   {retrySource && (
                     <p className="small dim">
@@ -979,6 +1005,7 @@ export default function ExploreModal({ onClose, onAdopt, showToast }) {
                         onChange={(e) => {
                           const next = jobs.find((j) => j.id === e.target.value);
                           setJob(next); setAdopted(adoptedIndexes(batch,next));
+                          setDesignStandard(next.snapshot?.design_standard || '');
                           setAdoptSel([]);
                         }}
                       >
