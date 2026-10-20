@@ -10,6 +10,8 @@
 
 界面支持深浅主题；黑色主题保留纯黑页面与画布，用近黑面板和细边框区分层级。UI 配色统一维护于 `client/src/theme.css`，详见 [0.11.1 主题说明](docs/RELEASE_NOTES_0.11.1.md)。
 
+0.11.2 修复模型管理删除与同名重建：下架可恢复，删除后移出列表并释放同供应商模型 ID，历史记录保留。旧版遗留停用记录可再次删除，详见 [修复与验收清单](docs/MODEL_MANAGEMENT_FIX_TODO.md)。
+
 ## 技术
 
 - 前端：React + Vite（`client/`）

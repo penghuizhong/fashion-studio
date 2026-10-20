@@ -3,7 +3,7 @@ import ImageModelConfig from './ImageModelConfig.jsx';
 import { imageOptions } from '../../../shared/imageOptions.js';
 import ExploreRecoveryPanel from './ExploreRecoveryPanel.jsx';
 // v0.2.0: 统一模型管理（管理员）——供应商 → 模型两层；Key 只写不读
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import Icon from './icons.jsx';
 import ModelPicker from './ModelPicker.jsx';
@@ -17,7 +17,14 @@ const PRESETS = [
   { id: 'custom', name: '自定义' },
 ];
 const presetName = (id) => (PRESETS.find((p) => p.id === id) || {}).name || id;
+const compatibleProvider = (p, kind) => p.kind === 'both' || p.kind === (kind === 'chat' ? 'llm' : 'image');
+const imageConfigFor = p => ({ protocol: p?.preset === 'dashscope' ? 'dashscope' : 'openai_images', edit: false, max_images: 1, text: true });
 const KIND_LABEL = { llm: '仅聊天', image: '仅图片', both: '聊天+图片' };
+const TASK_LABEL = { chat: '聊天', text: '文生图', single: '单图编辑', multi: '多图参考' };
+const checkSummary = (checks = []) => checks.some(c => c.status === 'stale') ? '配置已变化，需复测'
+  : checks.some(c => c.status === 'failed') ? '部分能力验证失败'
+  : checks.some(c => c.status === 'simulated') ? '含模拟结果，未验证真实能力'
+  : checks.length ? `已验证 ${checks.length} 项能力` : '未验证（人工声明）';
 
 const emptyPForm = { name: '', preset: 'custom', kind: 'both', base_url: '', api_key: '', is_active: true };
 const emptyMForm = {
@@ -30,6 +37,8 @@ export default function ModelsTab({ showToast }) {
   const [models, setModels] = useState([]);
   const [pEditing, setPEditing] = useState(null); // 'new' | id | null
   const [pForm, setPForm] = useState(emptyPForm);
+  const [mutationBusy, setMutationBusy] = useState('');
+  const pulledRequest = useRef(0);
   const [pBusy, setPBusy] = useState(false);
   const [pTesting, setPTesting] = useState('');
   const [mEditing, setMEditing] = useState(null);
@@ -98,23 +107,27 @@ export default function ModelsTab({ showToast }) {
     }
   };
   const pDel = async (p) => {
-    if (!window.confirm(`删除供应商「${p.name}」？其下模型会一并停用（不删除历史计费记录）。`)) return;
+    if (!window.confirm(`删除供应商「${p.name}」及其全部模型？它们将从管理列表移除，历史账单、任务和图片保留。如需临时停用，请使用编辑中的启用开关。`)) return;
+    setMutationBusy(p.id);
     try {
       const r = await api.adminProviders.remove(p.id);
-      showToast(r.deactivatedModels ? `已删除，${r.deactivatedModels} 个模型已停用` : '已删除');
+      if (pEditing === p.id) setPEditing(null);
+      if (mForm.provider_id === p.id) { setMEditing(null); setPulledModels([]); pulledRequest.current++; }
+      showToast(r.deletedModels ? `已删除供应商及 ${r.deletedModels} 个模型，历史记录保留` : '供应商已删除');
       await load();
     } catch (e) {
       showToast(e.message || '删除失败');
-    }
+    } finally { setMutationBusy(''); }
   };
   const pSetDefault = async (p) => {
+    setMutationBusy(p.id);
     try {
       await api.adminProviders.setDefault(p.id);
       showToast(`「${p.name}」已设为默认聊天供应商`);
       await load();
     } catch (e) {
       showToast(e.message || '设置失败');
-    }
+    } finally { setMutationBusy(''); }
   };
   const pTest = async (p) => {
     setPTesting(p.id);
@@ -136,11 +149,13 @@ export default function ModelsTab({ showToast }) {
   // v0.2.1: 上架模型时，模型 ID 输入框用该供应商缓存的可用模型列表自动补全
   const [pulledModels, setPulledModels] = useState([]);
   const loadPulledModels = async (providerId) => {
+    const request = ++pulledRequest.current;
+    setPulledModels([]);
     if (!providerId) { setPulledModels([]); return; }
     try {
       const r = await api.adminProviders.models(providerId);
-      setPulledModels(r.models || []);
-    } catch { setPulledModels([]); }
+      if (request === pulledRequest.current) setPulledModels(r.models || []);
+    } catch { if (request === pulledRequest.current) setPulledModels([]); }
   };
 
   // ---- 模型 ----
@@ -165,7 +180,7 @@ export default function ModelsTab({ showToast }) {
   };
   const mStartNew = (kind) => {
     const firstProv = providers.find((p) => p.is_active && (p.kind === 'both' || p.kind === (kind === 'chat' ? 'llm' : 'image')));
-    setMForm({ ...emptyMForm, kind, provider_id: firstProv ? firstProv.id : '' });
+    setMForm({ ...emptyMForm, kind, image_config: imageConfigFor(firstProv), provider_id: firstProv ? firstProv.id : '' });
     setSizeFamily('generic');
     loadPulledModels(firstProv ? firstProv.id : '');
     setMEditing('new');
@@ -185,6 +200,7 @@ export default function ModelsTab({ showToast }) {
       original_extra:m.extra, original_pricing:m.pricing,
     });
     setSizeFamily(guessFamily(m.model_id));
+    loadPulledModels(m.provider_id);
     setMEditing(m.id);
   };
   const mSave = async () => {
@@ -229,22 +245,26 @@ export default function ModelsTab({ showToast }) {
     }
   };
   const mToggle = async (m) => {
+    setMutationBusy(m.id);
     try {
       await api.adminModels.update(m.id, { is_active: !m.is_active });
+      showToast(m.is_active ? '模型已下架，可再次上架' : '模型已上架');
       await load();
     } catch (e) {
       showToast(e.message || '操作失败');
-    }
+    } finally { setMutationBusy(''); }
   };
   const mDel = async (m) => {
-    if (!window.confirm(`删除模型「${m.name || m.model_id}」？历史计费记录不受影响。`)) return;
+    if (!window.confirm(`删除模型「${m.name || m.model_id}」？它将从管理列表移除，可重新添加同 ID 模型；历史账单、任务和图片保留。如需临时停用，请使用下架。`)) return;
+    setMutationBusy(m.id);
     try {
       await api.adminModels.remove(m.id);
-      showToast('已下架，历史关联已保留');
+      if (mEditing === m.id) setMEditing(null);
+      showToast('模型已删除，可重新添加同 ID 模型');
       await load();
     } catch (e) {
       showToast(e.message || '删除失败');
-    }
+    } finally { setMutationBusy(''); }
   };
 
   // ---- 后台模型配置 ----
@@ -261,7 +281,8 @@ export default function ModelsTab({ showToast }) {
       setModelCfgSaving(false);
     }
   };
-  const activeChatIds = chatModels.filter((m) => m.is_active).map((m) => m.model_id);
+  const activeChatIds = [...new Set(chatModels.filter(m => m.is_active && m.provider_active !== false).map(m => m.model_id))];
+  const actionsDisabled = !!mutationBusy || pBusy || mBusy || !!testing || !!pTesting;
 
   const renderModelRow = (m) => (
     <div key={m.id} className={`pm-row${m.is_active ? '' : ' off'}`}>
@@ -271,15 +292,15 @@ export default function ModelsTab({ showToast }) {
           {m.kind === 'chat'
             ? `${m.pricing.input_per_1m ?? '未配置'}/${m.pricing.output_per_1m ?? '未配置'} 积分/1M tokens${m.extra && m.extra.vision ? ' · 支持视觉' : ''}`
             : m.pricing.image_rates?.length ? `按规格分档 · ${m.pricing.image_rates.length} 条价格` : `${m.pricing.per_call ?? '未配置'} 积分/张`}
-          {m.is_active ? '' : '（已停用）'}
+          {!m.is_active ? '（已下架）' : m.provider_active === false ? '（供应商已停用，暂不可用）' : ''}
         </div>
-        {m.kind==='image'&&<div className="key-desc small">{imageOptions(m.extra,m.provider_preset).image_edit?`参考图最多 ${imageOptions(m.extra,m.provider_preset).max_images} 张`:'仅无图生成或未声明参考图能力'} · {imageOptions(m.extra,m.provider_preset).protocol||'图片协议未配置'} · {(m.checks||[]).length?'见分项测试结果':'未验证（人工声明）'}</div>}
-        <details><summary>能力测试与结果</summary><p className="dim small">模型列表连接成功不代表图片功能可用。测试可能收费，请检查测试图片的参考遵从效果。</p><div className="model-test-actions">{(m.kind==='chat'?['chat']:['text','single','multi']).map(task=><button key={task} className="btn secondary small" disabled={!!testing||!m.is_active} onClick={()=>testModel(m,task)}>{testing===m.id+task?'测试中…':({chat:'聊天',text:'文生图',single:'单图编辑',multi:'多图参考'}[task])+'测试'}</button>)}</div>{(m.checks||[]).map(c=><p key={c.task}>{c.task} · {{passed:'已验证',failed:'验证失败',simulated:'仅模拟',stale:'需复测'}[c.status]} · {new Date(c.created_at).toLocaleString()}<br/>{c.message}{c.preview&&<button onClick={()=>setTestPreview(c.preview)}>查看测试结果</button>}</p>)}</details>
+        {m.kind==='image'&&<div className="key-desc small">{imageOptions(m.extra,m.provider_preset).image_edit?`参考图最多 ${imageOptions(m.extra,m.provider_preset).max_images} 张`:'仅无图生成或未声明参考图能力'} · {imageOptions(m.extra,m.provider_preset).protocol||'图片协议未配置'} · {checkSummary(m.checks)}</div>}
+        <details><summary>能力测试与结果</summary><p className="dim small">模型列表连接成功不代表图片功能可用。测试可能收费，请检查测试图片的参考遵从效果。</p><div className="model-test-actions">{(m.kind==='chat'?['chat']:['text','single','multi']).map(task=><button key={task} className="btn secondary small" disabled={actionsDisabled||!m.is_active||m.provider_active===false||(m.kind==='image'&&(task==='text'?!imageOptions(m.extra,m.provider_preset).text:!imageOptions(m.extra,m.provider_preset).image_edit||(task==='multi'&&imageOptions(m.extra,m.provider_preset).max_images<2)))} onClick={()=>testModel(m,task)}>{testing===m.id+task?'测试中…':TASK_LABEL[task]+'测试'}</button>)}</div>{(m.checks||[]).map(c=><p key={c.task}>{TASK_LABEL[c.task] || c.task} · {{passed:'已验证',failed:'验证失败',simulated:'仅模拟',stale:'需复测'}[c.status]} · {new Date(c.created_at).toLocaleString()}<br/>{c.message}{c.preview&&<button onClick={()=>setTestPreview(c.preview)}>查看测试结果</button>}</p>)}</details>
       </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button className="btn secondary small" onClick={() => mToggle(m)}>{m.is_active ? '下架' : '上架'}</button>
-        <button className="btn secondary small" onClick={() => mStartEdit(m)}>编辑</button>
-        <button className="btn secondary small" onClick={() => mDel(m)}>删除</button>
+      <div className="pm-actions">
+        <button className="btn secondary small" disabled={actionsDisabled || (!m.is_active && m.provider_active === false)} onClick={() => mToggle(m)}>{mutationBusy === m.id ? '处理中…' : m.is_active ? '下架' : '上架'}</button>
+        <button className="btn secondary small" disabled={actionsDisabled} onClick={() => mStartEdit(m)}>编辑</button>
+        <button className="btn secondary small" disabled={actionsDisabled} onClick={() => mDel(m)}>删除</button>
       </div>
     </div>
   );
@@ -303,20 +324,20 @@ export default function ModelsTab({ showToast }) {
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {!p.is_default && p.is_active && (p.kind === 'llm' || p.kind === 'both') && (
-                <button className="btn secondary small" onClick={() => pSetDefault(p)}>设为默认</button>
+                <button className="btn secondary small" disabled={actionsDisabled} onClick={() => pSetDefault(p)}>设为默认</button>
               )}
-              <button className="btn secondary small" disabled={pTesting === p.id} onClick={() => pTest(p)}>
+              <button className="btn secondary small" disabled={actionsDisabled || pTesting === p.id} onClick={() => pTest(p)}>
                 {pTesting === p.id ? '拉取中…' : '拉取模型'}
               </button>
-              <button className="btn secondary small" onClick={() => pStartEdit(p)}>编辑</button>
-              <button className="btn secondary small" onClick={() => pDel(p)}>删除</button>
+              <button className="btn secondary small" disabled={actionsDisabled} onClick={() => pStartEdit(p)}>编辑</button>
+              <button className="btn secondary small" disabled={actionsDisabled} onClick={() => pDel(p)}>{mutationBusy === p.id ? '删除中…' : '删除'}</button>
             </div>
           </div>
         ))}
         {providers.length === 0 && <div className="sidebar-hint">还没有供应商</div>}
       </div>
       {!pEditing && (
-        <button className="btn secondary" style={{ marginTop: 12 }} onClick={pStartNew}>
+        <button className="btn secondary" style={{ marginTop: 12 }} disabled={actionsDisabled} onClick={pStartNew}>
           <Icon name="plus" size={16} /> 新增供应商
         </button>
       )}
@@ -341,14 +362,14 @@ export default function ModelsTab({ showToast }) {
             <input type="checkbox" checked={pForm.is_active} onChange={setP('is_active')} /> 启用
           </label>
           <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-            <button className="btn primary small" disabled={pBusy} onClick={pSave}>保存</button>
+            <button className="btn primary small" disabled={actionsDisabled} onClick={pSave}>保存</button>
             <button className="btn secondary small" onClick={() => setPEditing(null)}>取消</button>
           </div>
         </div>
       )}
 
       <div className="card-title" style={{ marginTop: 20 }}>聊天模型</div>
-      <p className="key-desc small">上架后用户可在「积分」tab 选用；单价单位：积分 / 1M tokens。</p>
+      <p className="key-desc small">下架可再次上架；删除会从列表移除并允许重新添加同 ID 模型，历史账单与任务保留。聊天单价：积分 / 1M tokens。</p>
       <div className="pm-list">
         {chatModels.map(renderModelRow)}
         {chatModels.length === 0 && <div className="sidebar-hint">还没有上架聊天模型</div>}
@@ -362,10 +383,10 @@ export default function ModelsTab({ showToast }) {
       </div>
       {!mEditing && (
         <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-          <button className="btn secondary" onClick={() => mStartNew('chat')}>
+          <button className="btn secondary" disabled={actionsDisabled} onClick={() => mStartNew('chat')}>
             <Icon name="plus" size={16} /> 上架聊天模型
           </button>
-          <button className="btn secondary" onClick={() => mStartNew('image')}>
+          <button className="btn secondary" disabled={actionsDisabled} onClick={() => mStartNew('image')}>
             <Icon name="plus" size={16} /> 上架图片模型
           </button>
         </div>
@@ -373,10 +394,10 @@ export default function ModelsTab({ showToast }) {
       {mEditing && (
         <div className="pm-edit" style={{ marginTop: 12 }}>
           <div className="key-input-row">
-            <select value={mForm.provider_id} onChange={(e) => { setM('provider_id')(e); loadPulledModels(e.target.value); }}>
+            <select aria-label="模型供应商" value={mForm.provider_id} onChange={e => { const id = e.target.value; setMForm(f => ({ ...f, provider_id: id, ...(mEditing === 'new' ? {image_config: imageConfigFor(providers.find(p => p.id === id))} : {}) })); loadPulledModels(id); }}>
               <option value="">选择供应商…</option>
-              {providers.filter((p) => p.is_active).map((p) => (
-                <option key={p.id} value={p.id}>{p.name}（{KIND_LABEL[p.kind] || p.kind}）</option>
+              {providers.filter(p => (p.is_active && compatibleProvider(p, mForm.kind)) || p.id === mForm.provider_id).map((p) => (
+                <option key={p.id} value={p.id} disabled={!p.is_active || !compatibleProvider(p, mForm.kind)}>{p.name}（{KIND_LABEL[p.kind] || p.kind}{p.is_active ? '' : ' · 已停用'}）</option>
               ))}
             </select>
           </div>
@@ -432,7 +453,7 @@ export default function ModelsTab({ showToast }) {
             </>
           )}
           <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-            <button className="btn primary small" disabled={mBusy} onClick={mSave}>保存</button>
+            <button className="btn primary small" disabled={actionsDisabled} onClick={mSave}>保存</button>
             <button className="btn secondary small" onClick={() => setMEditing(null)}>取消</button>
           </div>
         </div>

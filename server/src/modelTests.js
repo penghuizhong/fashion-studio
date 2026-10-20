@@ -33,11 +33,14 @@ export async function testRegisteredModel(req) {
       if(!cap.protocol || (task==='text'&&!cap.text) || (task!=='text'&&!cap.image_edit) || (task==='multi'&&cap.max_images<2))throw new Error('所选协议或声明能力不支持此测试，请先配置');
       const fixture=await sharp({create:{width:512,height:512,channels:3,background:'#234567'}}).png().toBuffer();
       const fixture2=await sharp({create:{width:512,height:512,channels:3,background:'#9a3412'}}).png().toBuffer();
+      if (!getModel(model.id)) throw problem('MODEL_NOT_FOUND','模型已删除',404);
       const r=await generateImage({modelId:model.id,prompt:task==='text'?'A simple blue shirt on white background.':'Use image 1 shape. Change its color to orange; if image 2 is provided use its color.',size:cap.sizes[0],sourceImageBase64:task==='text'?null:fixture.toString('base64'),referenceImages:task==='multi'?[fixture2.toString('base64')]:[],executionModel:{...model,...creds,model_id:model.model_id,capabilities:cap,price_per_call:0},deferBilling:true});
+      if (!getModel(model.id)) throw problem('MODEL_NOT_FOUND','模型已删除',404);
       preview=(await saveStudioImage(r.imageBase64,`admin-test-${crypto.randomUUID()}`)).image_path;
     }
     message=status==='simulated'?'仅模拟通过，未验证供应商真实能力':'接口调用成功，请检查参考图遵从效果';
   }catch(e){status='failed'; message=e.status?`上游 HTTP ${e.status}，请核对权限、协议及模型配置`:(['MODEL_NOT_CONFIGURED'].includes(e.code)?'供应商未配置': e.message==='所选协议或声明能力不支持此测试，请先配置'?e.message:'测试失败，请核对接口格式、返回格式或超时');}
+  if (!getModel(model.id)) throw problem('MODEL_NOT_FOUND','模型已删除，测试结果不再保存',404);
   // A concurrent edit invalidates this result rather than blessing the changed config.
   db.prepare('INSERT INTO model_capability_checks(model_id,task,signature,status,message,preview_path,created_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(model_id,task) DO UPDATE SET signature=excluded.signature,status=excluded.status,message=excluded.message,preview_path=excluded.preview_path,created_at=excluded.created_at').run(model.id,task,signature,status,message,preview,new Date().toISOString());
   return {ok:status!=='failed',status,message,latency:Date.now()-started,preview:preview?`/api/admin/models/${model.id}/test-preview?task=${task}`:null};

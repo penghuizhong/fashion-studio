@@ -52,7 +52,7 @@ export default function ModelPicker({ value, onChange, models, placeholder, open
         autoComplete="off"
         disabled={disabled}
       />
-      {open && shown.length > 0 && (
+      {!disabled && open && shown.length > 0 && (
         <ul className="model-dropdown">
           <li className="model-count" onMouseDown={(e) => e.preventDefault()}>
             {q ? `匹配 ${filtered.length} 个` : `共 ${safeModels.length} 个可用模型，输入筛选`}
@@ -72,7 +72,7 @@ export default function ModelPicker({ value, onChange, models, placeholder, open
           ))}
         </ul>
       )}
-      {open && safeModels.length > 0 && shown.length === 0 && (
+      {!disabled && open && safeModels.length > 0 && shown.length === 0 && (
         <ul className="model-dropdown">
           <li className="model-empty" onMouseDown={(e) => e.preventDefault()}>
             无匹配模型，可直接手动输入
