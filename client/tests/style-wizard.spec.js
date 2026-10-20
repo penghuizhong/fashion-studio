@@ -101,19 +101,17 @@ for (const width of [1440, 390])
     await expect(page.locator(".wizard-plan-card")).toHaveCount(2);
     await page.locator(".wizard-plan-title").first().click();
     await page.getByLabel("图片1画面要求").fill("正面完整展示，突出肩部轮廓");
-    await page.getByText("模块化提示词 · 自动编译", { exact: true }).click();
-    await page
-      .getByLabel("图片1图片目标提示词")
-      .fill("人工编辑：服装完整，主体居中");
-    await expect(page.getByLabel("图片1完整提示词")).toHaveValue(/人工编辑/);
     await page.getByText("整体设计规范", { exact: true }).click();
-    await page
-      .getByLabel("全局摄影参数", { exact: true })
-      .fill("统一柔光与中性背景");
-    await expect(page.getByLabel("图片1完整提示词")).toHaveValue(/统一柔光/);
-    await expect(page.getByLabel("图片1图片目标提示词")).toHaveValue(
-      "人工编辑：服装完整，主体居中",
+    const standardBox = page.getByLabel("整体设计规范", { exact: true });
+    await standardBox.fill(
+      "核心视觉基调：高级简约\n全局摄影参数：统一柔光与中性背景\n主体识别摘要：保持参考模特一致\n服装基础特征：保持已保存设计\n文字系统规范：简体中文，清晰易读\n资料真实性：只使用已确认资料",
     );
+    await standardBox.blur();
+    await expect(page.getByLabel("图片1提示词")).toHaveValue(/统一柔光/);
+    const promptBox = page.getByLabel("图片1提示词");
+    await promptBox.fill("人工编辑：服装完整，主体居中");
+    await promptBox.blur();
+    await expect(promptBox).toHaveValue("人工编辑：服装完整，主体居中");
     await expect(page.locator(".wizard-footer .wizard-primary")).toBeEnabled();
     await page.screenshot({
       path: `/tmp/style-wizard-plan-${width}.png`,

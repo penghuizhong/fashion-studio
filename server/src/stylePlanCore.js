@@ -160,6 +160,7 @@ export function seedItems(input, old = []) {
           title: `${m.name}${count > 1 ? ` ${n + 1}` : ""}`,
           requirement: `${m.description}。${n ? `采用第${n + 1}种构图，区别于本组其他图片。` : ""}`,
           copy: "",
+          prompt_override: "",
           spec: {},
           camera:
             m.id === "main" && input.camera
@@ -255,6 +256,10 @@ export function normalizeContent(raw, input, old) {
       title: text(i.title || "", 200),
       requirement: text(i.requirement || "", 3000),
       copy: text(i.copy || "", 3000),
+      prompt_override:
+        i.prompt_override === undefined
+          ? prior?.prompt_override || ""
+          : text(i.prompt_override, 12000),
       spec,
       camera: normalizeCamera(i.camera),
       reference_ids,
@@ -398,9 +403,13 @@ export function compilePlanItem(plan, item, t) {
   };
   const parts = { ...base, ...item.prompt_overrides };
   // Immutable source/reference/output constraints remain visible in the final prompt.
-  const prompt = Object.entries(parts)
+  const assembled = Object.entries(parts)
     .map(([k, value]) => `## ${PROMPT_PARTS[k]}\n${value}`)
     .join("\n\n");
+  // A user-edited full prompt (提示词模块) wins over the assembled parts.
+  const prompt = item.prompt_override?.trim()
+    ? item.prompt_override
+    : assembled;
   return {
     parts,
     automatic_parts: base,
