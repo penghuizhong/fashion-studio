@@ -2,7 +2,7 @@ name: Validate
 on:
   pull_request:
   push:
-    branches: [main, 'feat/**']
+    branches: [main, 'feat/**', 'fix/**']
 permissions:
   contents: read
 jobs:
@@ -26,6 +26,7 @@ jobs:
       - run: npm --prefix server run check:explore
       - run: npm --prefix server run check:style
       - run: npm --prefix server run check:studio
+      - run: npm --prefix server run check:models
       - run: npm --prefix server run check:products
       - run: npm --prefix server run check:studio:ux
       - run: npx playwright install --with-deps chromium

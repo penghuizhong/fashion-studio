@@ -290,7 +290,8 @@ CREATE TABLE IF NOT EXISTS providers(
   sort_order INTEGER DEFAULT 0,
   created_at TEXT NOT NULL,
   models_cache_json TEXT,
-  models_cached_at INTEGER
+  models_cached_at INTEGER,
+  deleted_at TEXT
 );
 CREATE TABLE IF NOT EXISTS models(
   id TEXT PRIMARY KEY,
@@ -302,7 +303,8 @@ CREATE TABLE IF NOT EXISTS models(
   extra_json TEXT DEFAULT '{}',
   is_active INTEGER DEFAULT 1,
   sort_order INTEGER DEFAULT 0,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  deleted_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_models_kind ON models(kind, is_active);
 -- ---- P5: DNA 类目预设（schema + 提示词模板存库，管理后台可编辑） ----
@@ -516,6 +518,15 @@ export function getDb() {
   _db.pragma('journal_mode = WAL');
   _db.exec(SCHEMA);
   migrateToUnifiedRegistry(_db);
+  // Keep historical IDs intact; deletion and reversible deactivation are distinct.
+  _db.transaction(() => {
+    for (const table of ['providers', 'models']) {
+      if (!_db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === 'deleted_at')) {
+        _db.exec(`ALTER TABLE ${table} ADD COLUMN deleted_at TEXT`);
+      }
+    }
+    _db.exec('CREATE INDEX IF NOT EXISTS idx_models_registry_name ON models(provider_id,model_id,deleted_at)');
+  })();
   migrateAvatarPngToWebp(_db);
   migrateAvatarGenToStaff(_db);
   // Additive, transactional migrations: preserve all existing preset and batch values.

@@ -482,21 +482,21 @@ export function mountAuthRoutes(app, authLimiter) {
     try {
       res.json({ ok: true, provider: createProvider(req.body || {}) });
     } catch (e) {
-      res.status(400).json({ error: e.message || '保存失败' });
+      res.status(e.status || 400).json({ error: e.message || '保存失败' });
     }
   });
   app.put('/api/admin/providers/:id', needMulti, needLogin, needAdmin, (req, res) => {
     try {
       res.json({ ok: true, provider: updateProvider(req.params.id, req.body || {}) });
     } catch (e) {
-      res.status(400).json({ error: e.message || '保存失败' });
+      res.status(e.status || 400).json({ error: e.message || '保存失败' });
     }
   });
   app.delete('/api/admin/providers/:id', needMulti, needLogin, needAdmin, (req, res) => {
     try {
       res.json(deleteProvider(req.params.id));
     } catch (e) {
-      res.status(400).json({ error: e.message || '删除失败' });
+      res.status(e.status || 400).json({ error: e.message || '删除失败' });
     }
   });
   app.post('/api/admin/providers/:id/default', needMulti, needLogin, needAdmin, (req, res) => {
@@ -504,7 +504,7 @@ export function mountAuthRoutes(app, authLimiter) {
       setDefaultProvider(req.params.id);
       res.json({ ok: true });
     } catch (e) {
-      res.status(400).json({ error: e.message || '设置失败' });
+      res.status(e.status || 400).json({ error: e.message || '设置失败' });
     }
   });
   // v0.2.1 连通测试 = 拉取上游模型列表（GET /models）：成功即证明 key+地址正确，结果缓存到 providers.models_cache_json
@@ -533,21 +533,21 @@ export function mountAuthRoutes(app, authLimiter) {
     try {
       res.json({ ok: true, model: createModel(req.body || {}) });
     } catch (e) {
-      res.status(400).json({ error: e.message || '保存失败' });
+      res.status(e.status || 400).json({ error: e.message || '保存失败' });
     }
   });
   app.put('/api/admin/models/:id', needMulti, needLogin, needAdmin, (req, res) => {
     try {
       res.json({ ok: true, model: updateModel(req.params.id, req.body || {}) });
     } catch (e) {
-      res.status(400).json({ error: e.message || '保存失败' });
+      res.status(e.status || 400).json({ error: e.message || '保存失败' });
     }
   });
   app.delete('/api/admin/models/:id', needMulti, needLogin, needAdmin, (req, res) => {
     try {
       res.json(deleteModel(req.params.id));
     } catch (e) {
-      res.status(400).json({ error: e.message || '删除失败' });
+      res.status(e.status || 400).json({ error: e.message || '删除失败' });
     }
   });
   // P5: DNA 类目预设管理（schema + 提示词模板存库；单用户模式 400，走 needMulti）
@@ -695,7 +695,7 @@ export function mountAuthRoutes(app, authLimiter) {
   // 发一个最小请求验证模型可用，返回延迟和成功状态
   app.post('/api/admin/models/test', needMulti, needLogin, needAdmin, ah(async (req,res)=>res.json(await testRegisteredModel(req))));
   app.get('/api/admin/models/:id/test-preview',needMulti,needLogin,needAdmin,(req,res)=>{
-    const row=getDb().prepare('SELECT preview_path FROM model_capability_checks WHERE model_id=? AND task=?').get(req.params.id,req.query.task);
+    const row=getDb().prepare('SELECT c.preview_path FROM model_capability_checks c JOIN models m ON m.id=c.model_id JOIN providers p ON p.id=m.provider_id WHERE c.model_id=? AND c.task=? AND m.deleted_at IS NULL AND p.deleted_at IS NULL').get(req.params.id,req.query.task);
     const root=path.resolve(getConfig().dataDir,'uploads/studio'), file=path.resolve(getConfig().dataDir,row?.preview_path||'');
     if(!file.startsWith(root+path.sep)||!fs.existsSync(file))return res.status(404).json({error:'测试图片不存在'});
     res.setHeader('Cache-Control','private, no-store'); res.sendFile(file);

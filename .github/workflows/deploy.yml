@@ -30,6 +30,9 @@ jobs:
       - name: Studio lifecycle and image capability regression
         working-directory: server
         run: npm run check:studio
+      - name: Model registry lifecycle and deletion regression
+        working-directory: server
+        run: npm run check:models
       - name: Design delivery, pattern standards and sample production regression
         working-directory: server
         run: npm run check:products

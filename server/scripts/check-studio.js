@@ -237,7 +237,7 @@ try{
   updateModel(two.id,{extra:{...two.extra,image_config:{...two.extra.image_config,default_for:['single']}}});
   assert.deepEqual(getModel(one.id).extra.image_config.default_for,[]);assert.deepEqual(getModel(two.id).extra.image_config.default_for,['single']);
   await req('DELETE','/api/admin/providers/one');
-  assert.ok(db.prepare("SELECT * FROM providers WHERE id='one'").get());assert.equal(getModel(one.id).is_active,false);
+  assert.ok(db.prepare("SELECT * FROM providers WHERE id='one'").get());assert.equal(getModel(one.id),null);assert.ok(db.prepare('SELECT deleted_at FROM models WHERE id=?').get(one.id).deleted_at);
   assert.ok(!(await req('GET','/api/studio/image-models')).models.some(m=>m.id===one.id));
  });
  await test('0.8 upgrade preserves archived/deleted distinction, original bytes and a single database snapshot',async()=>{
