@@ -120,8 +120,8 @@ export async function fetchModels(baseUrl, key) {
   return Array.isArray(data.models) ? data.models : [];
 }
 
-async function request(method, path, body) {
-  const opts = { method, headers: authHeaders(), credentials: 'same-origin' };
+async function request(method, path, body, options = {}) {
+  const opts = { method, headers: authHeaders(), credentials: 'same-origin', ...options };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -133,8 +133,8 @@ async function request(method, path, body) {
   return text ? JSON.parse(text) : null;
 }
 
-const get = (path) => request('GET', path);
-const post = (path, body) => request('POST', path, body);
+const get = (path, options) => request('GET', path, undefined, options);
+const post = (path, body, options) => request('POST', path, body, options);
 const put = (path, body) => request('PUT', path, body);
 const del = (path) => request('DELETE', path);
 
@@ -359,6 +359,7 @@ export const api = {
     models: (id) => get(`/api/admin/providers/${id}/models`),
   },
   adminModels: {
+    pricePreview: (body,options) => post('/api/admin/image-price-preview',body,options),
     test: body => post('/api/admin/models/test',body),
     list: (kind) => get(`/api/admin/models${kind ? `?kind=${kind}` : ''}`),
     create: (data) => post('/api/admin/models', data),
@@ -408,18 +409,20 @@ export const api = {
     bulkLifecycle: (ids,action,confirm) => post('/api/studio/assets/lifecycle',{ids,action,confirm}),
     cleanupFiles: id => post(`/api/studio/generations/${id}/cleanup-files`,{confirm:'清理文件'}),
     saveLayout: (id,body) => post(`/api/studio/templates/${id}/layouts`,body),
-    workspace: id => get(`/api/studio/templates/${id}/workspace`),
+    workspace: (id,params={},options) => get(`/api/studio/templates/${id}/workspace?${new URLSearchParams(params)}`,options),
+    workspaceItems: (id,collection,params={},options) => get(`/api/studio/templates/${id}/workspace/${collection}?${new URLSearchParams(params)}`,options),
+    styleProgress: (id,known,options) => get(`/api/studio/templates/${id}/workspace/progress?${new URLSearchParams({known:JSON.stringify(known)})}`,options),
     saveVersion: (id,body) => post(`/api/studio/templates/${id}/versions`,body),
     setWorking: (id,body) => post(`/api/studio/templates/${id}/working-version`,body),
     versionStatus: (id,versionId,status) => post(`/api/studio/templates/${id}/versions/${versionId}/status`,{status}),
     setCover: (id,generation_id) => post(`/api/studio/templates/${id}/cover`,{generation_id}),
     forkStyle: (id,body) => post(`/api/studio/templates/${id}/fork`,body),
-    styleQuote: (id,body) => post(`/api/studio/templates/${id}/quote`,body),
+    styleQuote: (id,body,options) => post(`/api/studio/templates/${id}/quote`,body,options),
     styleStart: (id,body) => post(`/api/studio/templates/${id}/jobs`,body),
-    styleRetry: (id,job_id) => post(`/api/studio/templates/${id}/retry-quote`,{job_id}),
+    styleRetry: (id,job_id,options) => post(`/api/studio/templates/${id}/retry-quote`,{job_id},options),
     permanentDelete: (id,confirm) => post(`/api/studio/generations/${id}/permanent-delete`,{confirm}),
     archiveImage: (id,archived) => post(`/api/studio/generations/${id}/archive`,{archived}),
-    references: () => get('/api/studio/references'),
+    references: (params={},options) => get(`/api/studio/references?${new URLSearchParams(params)}`,options),
     uploadReference: body => post('/api/studio/references',body),
     extractDna: (data) => post('/api/studio/dna/extract', data),
     // P6: 带上传进度的识图（onProgress 0-100）
@@ -447,19 +450,19 @@ export const api = {
     exploreSelect: (id, indexes) => post(`/api/studio/explore/${id}/select`, { indexes }),
     exploreRender: (id, confirm, indexes) => post(`/api/studio/explore/${id}/render`, { confirm: !!confirm, indexes }),
     exploreAdopt: (id, indexes, job_id) => post(`/api/studio/explore/${id}/adopt`, { indexes, job_id }),
-    imageModels: () => get('/api/studio/image-models'),
+    imageModels: options => get('/api/studio/image-models',options),
     visionModels: () => get('/api/studio/vision-models'),
     // P5: DNA 类目预设
-    dnaPresets: () => get('/api/studio/dna-presets'),
+    dnaPresets: options => get('/api/studio/dna-presets',options),
     adminDnaPresets: () => get('/api/admin/dna-presets'),
     adminDnaPresetCreate: (data) => post('/api/admin/dna-presets', data),
     adminDnaPresetUpdate: (id, data) => put(`/api/admin/dna-presets/${id}`, data),
     adminDnaPresetDelete: (id) => del(`/api/admin/dna-presets/${id}`),
-    assets: (params = {}) => {
+    assets: (params = {}, options) => {
       const q = new URLSearchParams();
       for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.set(k, v);
       const s = q.toString();
-      return get(`/api/studio/assets${s ? `?${s}` : ''}`);
+      return get(`/api/studio/assets${s ? `?${s}` : ''}`,options);
     },
     bulkDelete: (ids) => post('/api/studio/assets/bulk-delete', { ids }),
   },

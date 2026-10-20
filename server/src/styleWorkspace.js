@@ -1,3 +1,5 @@
+import { previewFile } from './studioPreview.js';
+import { mountWorkspaceReads, workspaceSummary } from './styleWorkspaceReads.js';
 import { changeLifecycle } from './studioLifecycle.js';
 import { imageAvailability,templateAvailability } from './imageLifecycle.js';
 import { PRESENTATION_STYLES } from '../../shared/presentationStyles.js';
@@ -58,7 +60,7 @@ function imageFor(t, ref, req) {
     const g = db
       .prepare("SELECT * FROM dna_generations WHERE id=? AND template_id=?")
       .get(Number(ref), t.id);
-    if (!g || g.user_rating === "deleted")
+    if (!g || g.user_rating === "deleted" || ["trash","deleted"].includes(g.lifecycle))
       throw problem("SOURCE_MISSING", "底图记录不存在", 404);
     localImage(g.image_path);
     return {
@@ -107,10 +109,12 @@ function internalBatch(t) {
 }
 export function mountStyleWorkspace(app) {
   const db = getDb();
+  mountWorkspaceReads(app);
   app.get(
     "/api/studio/templates/:id/workspace",
     ah(async (req, res) => {
       const t = styleTemplate(req.params.id, req);
+      if (req.query.view === "summary") return res.json(workspaceSummary(t, req.query));
       res.json({
         template: templateAvailability(t),
         layouts: db
@@ -249,6 +253,8 @@ export function mountStyleWorkspace(app) {
           "detail_shot",
           "scene",
           "variant",
+          "white",
+          "free_design",
         ].includes(op)
       )
         throw problem("INVALID_OPERATION", "请选择有效的衍生动作");
@@ -260,7 +266,7 @@ export function mountStyleWorkspace(app) {
       const mode = b.mode || "text";
       if (!["text", "image"].includes(mode))
         throw problem("INVALID_MODE", "生成模式无效");
-      if (op !== "create" && mode !== "image")
+      if (!["create", "free_design"].includes(op) && mode !== "image")
         throw problem(
           "SOURCE_REQUIRED",
           "款式修改和展示衍生需要明确选择底图及图片编辑模型",
@@ -286,6 +292,7 @@ export function mountStyleWorkspace(app) {
           throw problem("INVALID_REFERENCE", "请指定参考图作用");
         return { ...imageFor(t, r.source, req), role: r.role };
       });
+      if(new Set([source?.path,...references.map(r=>r.path)].filter(Boolean)).size < (source?1:0)+references.length)throw problem("DUPLICATE_REFERENCE","同一参考图片重复添加，请保留一张并在要求中说明用途");
       let instruction = String(b.instruction || "").trim();
       if (["recolor", "detail_modify"].includes(op)) {
         const delta = parse(v.summary, []);
@@ -306,7 +313,7 @@ export function mountStyleWorkspace(app) {
           )
           .join("; ")].filter(Boolean).join("\n");
       }
-      if(b.instruction_scope==='design' && String(v.design_note||'').trim()!==instruction.trim())throw problem('DESIGN_VERSION_REQUIRED','请先把本次设计要求保存为新版本');
+      if((b.instruction_scope==='design'||op==='free_design') && (!instruction.trim()||String(v.design_note||'').trim()!==instruction.trim()))throw problem('DESIGN_VERSION_REQUIRED','请先把本次设计要求保存为新版本');
       if (instruction.length > 1200)
         throw problem("INVALID_INSTRUCTION", "要求限 1200 字");
       if (["recolor", "detail_modify", "scene"].includes(op) && !instruction)
@@ -319,7 +326,7 @@ export function mountStyleWorkspace(app) {
         op === "recolor"
       )
         throw problem("INVALID_CAMERA", "换色请使用完整单品或全身取景");
-      const requestedVisual = b.visual_style || "product";
+      const requestedVisual = (op === "white" || b.purpose === "white") ? "product" : b.visual_style || "product";
       validateCameraIntent(camera, instruction);
       const visual =
         requestedVisual === "auto"
@@ -329,14 +336,17 @@ export function mountStyleWorkspace(app) {
           : requestedVisual;
       if (typeof visual !== "string" || !Object.hasOwn(styles, visual))
         throw problem("INVALID_STYLE", "呈现风格无效");
-      const purpose = b.purpose || "free";
+      const purpose = op === "white" ? "white" : b.purpose || "free";
       if (!["free", "white", "scene", "detail"].includes(purpose))
         throw problem("INVALID_PURPOSE", "出图用途无效");
       if (purpose === "detail" && camera.framing !== "detail")
         throw problem("INVALID_CAMERA", "细节用途需要局部取景");
+      if(purpose==='white' && /海滩|海岛|街道|森林|沙滩|非白|黑色背景|beach|forest|street|black background/i.test(instruction))throw problem('CONFLICTING_BACKGROUND','白底商品图与本次背景要求冲突，请调整要求或选择换场景');
       const dna = parse(v.dna_json);
       const ops = {
         create: "Generate this saved design accurately.",
+        free_design: "Generate the explicitly saved design changes. Preserve all other garment construction.",
+        white: "Preserve the garment design and colors exactly. Present it against a pure white product background.",
         recolor:
           "Recolor ONLY the requested garment area using the saved version colors; preserve all other construction.",
         detail_modify:
@@ -350,7 +360,7 @@ export function mountStyleWorkspace(app) {
           : "Generate another candidate of the same saved design and presentation.",
       };
       const prompt = [
-        renderDnaPrompt({ dna, presetId: v.preset_id, camera }),
+        renderDnaPrompt({ dna:purpose === "white" ? {...dna,scene:{value:"pure white studio background"}} : dna, presetId: v.preset_id, camera }),
         ops[op],
         v.design_note ? `Saved design change (takes precedence over unchanged structured attributes): ${v.design_note}` : "",
         instruction ? `Specific requested change: ${instruction}` : "",
@@ -559,13 +569,13 @@ export function mountStyleWorkspace(app) {
   app.get(
     "/api/studio/references",
     ah(async (req, res) => {
-      res.json({
-        references: db
-          .prepare(
-            "SELECT id,image_path,thumb_path,created_at FROM style_references WHERE user_id=? ORDER BY id DESC LIMIT 100",
-          )
-          .all(req.userId || "local"),
-      });
+      const page=Math.max(1,parseInt(req.query.page)||1),limit=Math.min(50,Math.max(1,parseInt(req.query.limit)||24));
+      const uid=req.userId||'local',search=String(req.query.search||'').slice(0,100);
+      let where='user_id=? AND CAST(id AS TEXT) LIKE ?';
+      const args=[uid,'%'+search+'%'];
+      if(req.query.ids){const ids=String(req.query.ids).split(',').map(Number);if(ids.length>16||ids.some(n=>!Number.isSafeInteger(n)||n<1))throw problem('INVALID_QUERY','参考图选择无效');where+=` AND id IN (${ids.map(()=>'?').join(',')})`;args.push(...ids);}
+      const rows=db.prepare(`SELECT id,image_path,thumb_path,created_at FROM style_references WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...args,limit,(page-1)*limit);
+      res.json({references:rows.map(imageAvailability),total:db.prepare(`SELECT COUNT(*) n FROM style_references WHERE ${where}`).get(...args).n,page,limit});
     }),
   );
   app.post(
@@ -577,7 +587,7 @@ export function mountStyleWorkspace(app) {
         const g = db
           .prepare("SELECT * FROM dna_generations WHERE id=? AND user_id=?")
           .get(assetId, req.userId || "local");
-        if (!g || g.user_rating === "deleted")
+        if (!g || g.user_rating === "deleted" || ["trash","deleted"].includes(g.lifecycle))
           throw problem("SOURCE_NOT_OWNED", "资产不存在", 404);
         localImage(g.image_path);
         files = {
@@ -596,6 +606,8 @@ export function mountStyleWorkspace(app) {
       const r = db.transaction(()=>{
         if(assetId){const g=db.prepare("SELECT * FROM dna_generations WHERE id=? AND user_id=?").get(assetId,req.userId||'local');if(!g||['trash','deleted'].includes(g.lifecycle)||g.user_rating==='deleted')throw problem('SOURCE_NOT_OWNED','参考资产已失效',404);}
         localImage(files.image_path);
+        const existing=db.prepare('SELECT id FROM style_references WHERE user_id=? AND image_path=?').get(req.userId||'local',files.image_path);
+        if(existing)return {lastInsertRowid:existing.id};
         return db.prepare("INSERT INTO style_references(user_id,image_path,thumb_path,created_at) VALUES(?,?,?,?)").run(req.userId||'local',files.image_path,files.thumb_path,stamp());
       }).immediate();
       res.json({ id: Number(r.lastInsertRowid), ...files });
@@ -657,6 +669,7 @@ export function mountStyleWorkspace(app) {
             fs.renameSync(from, to);
             moves.push([from, to]);
           }
+          if(g.image_path&&fs.existsSync(previewFile(g.image_path))){const from=previewFile(g.image_path),to=path.join(trash,crypto.randomUUID());fs.renameSync(from,to);moves.push([from,to]);}
           db.prepare(
             "UPDATE dna_generations SET user_rating='deleted',archived=1,lifecycle='deleted',rated_at=? WHERE id=?",
           ).run(stamp(), g.id);

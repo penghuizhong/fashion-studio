@@ -16,8 +16,9 @@
     "start": "node src/index.js",
     "check:explore": "node scripts/check-explore.js",
     "check:style": "node scripts/check-style.js && node scripts/check-style-security.js && node scripts/check-style-migration.js",
-    "check:studio": "node scripts/check-studio.js"
+    "check:studio": "node scripts/check-studio.js",
+    "check:studio:ux": "node scripts/check-studio-ux.js"
   },
   "type": "module",
-  "version": "0.9.0"
+  "version": "0.10.0"
 }

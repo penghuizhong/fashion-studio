@@ -1,3 +1,4 @@
+import { ownedStudioFile, mountStudioPreview } from './studioPreview.js';
 import { mountStudioLifecycle,lifecycleState,changeLifecycle } from './studioLifecycle.js';
 import { imageAvailability,templateAvailability,studioFileExists } from './imageLifecycle.js';
 import { randomUUID } from 'node:crypto';
@@ -66,6 +67,7 @@ export function runExploreArchive() {
 
 export function mountStudioRoutes(app) {  const db = getDb();
   mountStudioLifecycle(app);
+  mountStudioPreview(app);
   mountStyleWorkspace(app);
   const cfg = getConfig();
   const uidOf = (req) => (req && req.userId) || 'local';
@@ -97,14 +99,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
     let file;
     try{file=path.posix.normalize('uploads/studio'+decodeURIComponent(req.path));}catch{return res.status(400).end();}
     if(!file.startsWith('uploads/studio/'))return res.status(404).end();
-    const uid=req.userId;
-    const owned=db.prepare(`SELECT 1 FROM dna_generations WHERE user_id=? AND (image_path=? OR thumb_path=?)
-      UNION ALL SELECT 1 FROM style_dna_templates WHERE user_id=? AND (source_image_path=? OR source_thumb_path=?)
-      UNION ALL SELECT 1 FROM exploration_batches b,json_each(b.renders_json) r WHERE b.user_id=? AND (json_extract(r.value,'$.image_path')=? OR json_extract(r.value,'$.thumb_path')=?)
-      UNION ALL SELECT 1 FROM style_references WHERE user_id=? AND (image_path=? OR thumb_path=?)
-      UNION ALL SELECT 1 FROM explore_items i JOIN explore_jobs j ON j.id=i.job_id WHERE j.user_id=? AND (json_extract(i.result_json,'$.image_path')=? OR json_extract(i.result_json,'$.thumb_path')=?) LIMIT 1`)
-      .get(uid,file,file,uid,file,file,uid,file,file,uid,file,file,uid,file,file);
-    if(!owned)return res.status(404).end();
+    if(!ownedStudioFile(file,req.userId))return res.status(404).end();
     next();
   },ah(async(req,res,next)=>{
     if(req.query.download!=='1')return next();
@@ -117,7 +112,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
     res.type(extension);
     // Header fixes legacy files whose .jpg name actually contains PNG/WebP bytes.
     res.download(file,`${path.parse(file).name}.${extension}`);
-  }),express.static(studioDir,{setHeaders:res=>{if(cfg.multiUser)res.setHeader('Cache-Control','private, no-store');}}));
+  }),express.static(studioDir,{setHeaders:res=>{res.setHeader('Cache-Control','private, no-cache');res.vary('Cookie');}}));
 
   // ---------- DNA 提取 ----------
   // GET /api/studio/vision-models → 启用且支持视觉的聊天模型（公开信息，无密钥）
@@ -357,13 +352,14 @@ export function mountStudioRoutes(app) {  const db = getDb();
   // GET /api/studio/assets?template_id=&rating=&page=&limit=
   app.get('/api/studio/assets', ah(async (req, res) => {
     const uid = uidOf(req);
-    const { template_id, rating, page, limit } = req.query || {};
+    const { template_id, rating, page, limit, search } = req.query || {};
     const lim = Math.min(Math.max(parseInt(limit, 10) || 48, 1), 200);
     const pg = Math.max(parseInt(page, 10) || 1, 1);
     const conds = [];
     const args = [];
     if (cfg.multiUser) { conds.push('g.user_id = ?'); args.push(uid); }
     if (template_id) { conds.push('g.template_id = ?'); args.push(template_id); }
+    if (search) { conds.push('(t.name LIKE ? OR CAST(g.id AS TEXT) LIKE ?)'); args.push('%'+String(search).slice(0,100)+'%','%'+String(search).slice(0,100)+'%'); }
     if (rating === 'liked') conds.push("g.user_rating = 'liked'");
     else if (rating === 'deleted') conds.push("g.user_rating = 'deleted'");
     else if (rating === 'unrated') conds.push("(g.user_rating IS NULL OR g.user_rating = '')");

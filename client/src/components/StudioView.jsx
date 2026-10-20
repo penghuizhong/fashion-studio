@@ -306,7 +306,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [exploreOpen, setExploreOpen] = useState(false);
   const [viewImage,setViewImage]=useState(null);
-  const openCard=t=>setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,panel:null});
+  const openCard=t=>setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,thumbnail:t.last_thumb||t.source_thumb_path,image_available:t.image_available,panel:null});
 
   const load = useCallback(async () => {
     if(!hasLoaded.current)setLoading(true);
@@ -365,7 +365,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
                   {label:'永久删除',action:()=>lifecycleActions.perform('templates',t,'delete')},
                 ]:[
                   {label:'重命名',action:async()=>{const name=window.prompt('款式名称',t.name);if(!name?.trim())return;try{await api.studio.updateTemplate(t.id,{name:name.trim()});await load();}catch(e){showToast(e.message);}}},
-                  {label:'更换展示图',action:()=>setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,panel:'versions'})},
+                  {label:'更换展示图',action:()=>setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,thumbnail:t.last_thumb||t.source_thumb_path,image_available:t.image_available,panel:'versions'})},
                   {label:'另存为新款式',action:async()=>{try{const w=await api.studio.workspace(t.id);const r=await api.studio.forkStyle(t.id,{version_id:w.template.work_version_id,name:t.name+' 副本',generation_id:t.image_available?w.template.cover_generation_id||undefined:undefined,attributes_only:!t.image_available});showToast('已另存为新款式');await load();}catch(e){showToast(e.message);}}},
                   {label:lifecycle==='archived'?'恢复使用':'归档款式',action:()=>lifecycleActions.perform('templates',t,lifecycle==='archived'?'activate':'archive')},
                   {label:'删除（移入回收站）',action:()=>lifecycleActions.perform('templates',t,'trash')},
@@ -381,7 +381,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
               <div className="studio-card-body">
                 <div className="studio-card-name">{t.name}</div>
                 {t.image_state==='thumbnail_only'&&<p className="dim small">仅缩略图可用 · 原图缺失</p>}
-                <button className="btn secondary small" onClick={e=>{e.stopPropagation();setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,panel:'attributes'});}}>款式属性</button>
+                <button className="btn secondary small" onClick={e=>{e.stopPropagation();setViewImage({id:t.id,name:t.name,path:t.last_image||t.source_image_path,thumbnail:t.last_thumb||t.source_thumb_path,image_available:t.image_available,panel:'attributes'});}}>款式属性</button>
                 <div className="studio-card-tags">
                   {t.category && <span className="tag">{t.category}</span>}
                   <span className="tag dim">已生成 {t.gen_count || 0} 张</span>
@@ -392,7 +392,7 @@ export default function StudioView({ showToast, onOpenSidebar }) {
         </div>
       )}
 
-      {viewImage&&<StyleWorkspace templateId={viewImage.id} initialImage={viewImage.path?{path:viewImage.path}:null} initialPanel={viewImage.panel} onClose={()=>setViewImage(null)} onChanged={load} showToast={showToast}/>}
+      {viewImage&&<StyleWorkspace key={viewImage.id} templateId={viewImage.id} initialImage={viewImage.path?{path:viewImage.path,thumb_path:viewImage.thumbnail,image_available:viewImage.image_available,name:viewImage.name}:null} initialPanel={viewImage.panel} onClose={()=>setViewImage(null)} onChanged={load} showToast={showToast}/>}
       {cloneOpen && (
         <CloneModal onClose={() => setCloneOpen(false)} onSaved={() => { setCloneOpen(false); load(); }} showToast={showToast} />
       )}

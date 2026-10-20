@@ -1,3 +1,4 @@
+import { inspectImageRates } from '../../shared/imagePricing.js';
 import { modelSignature, imageOptions } from './imageCapabilities.js';
 // v0.2.0: 统一模型注册表——供应商（providers）→ 模型（models）两层
 // 替代：.env 直读（聊天 key/address）、points_models（聊天模型定价）、image_models（图片模型）
@@ -324,6 +325,11 @@ export function listImageModelsCompat(activeOnly = true) {
 }
 
 function validateImageConfig(extra={},pricing={}) {
+  if(pricing.per_call!==undefined&&(!Number.isSafeInteger(pricing.per_call)||pricing.per_call<0||pricing.per_call>1e9))throw new Error('图片单价须为非负整数，免费请明确填写 0');
+  if(pricing.image_rates!==undefined){
+    const report=inspectImageRates(imageOptions(extra),pricing.image_rates);
+    if(report.errors.length)throw new Error(report.errors.join('；'));
+  }
   const c=extra.image_config;if(!c)return;
   if(!['openai_images','dashscope','dashscope_multimodal'].includes(c.protocol))throw new Error('请选择已实现的图片协议');
   for(const key of ['generation_path','edit_path'])if(c[key]&&(!/^\/[A-Za-z0-9_./-]+$/.test(c[key])||c[key].includes('..')))throw new Error('图片接口路径须为安全相对路径');
@@ -331,7 +337,6 @@ function validateImageConfig(extra={},pricing={}) {
   if(c.max_images!==undefined&&(!Number.isInteger(c.max_images)||c.max_images<1||c.max_images>16))throw new Error('参考图上限须为1–16');
   if(c.qualities!==undefined&&(!Array.isArray(c.qualities)||c.qualities.length>8||c.qualities.some(q=>!q||!/^[-\w]{1,32}$/.test(q.value)||typeof q.label!=='string')||new Set(c.qualities.map(q=>q.value)).size!==c.qualities.length))throw new Error('质量档位格式无效');
   const z=c.custom_size;if(z?.enabled&&(![z.min,z.max,z.step,z.max_pixels].every(Number.isInteger)||z.min<64||z.max>8192||z.max<z.min||z.step<1||z.max_pixels<z.min*z.min||z.max_pixels>16777216))throw new Error('自定义尺寸约束无效');
-  if(pricing.image_rates!==undefined&&(!Array.isArray(pricing.image_rates)||pricing.image_rates.some(r=>typeof r.size!=='string'||typeof r.quality!=='string'||!Number.isSafeInteger(r.per_call)||r.per_call<0||r.per_call>1e9)))throw new Error('图片分档价格格式无效');
 }
 
 function syncImageDefaults(id,extra){

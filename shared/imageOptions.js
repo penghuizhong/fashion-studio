@@ -30,3 +30,8 @@ export function imageTaskAllowed(cap,count=0){
  const task=count>1?'multi':count===1?'single':'text';
  return cap?.task_status?.[task]!=='failed' && (count===0?!!cap?.text:!!cap?.image_edit && count<=cap.max_images);
 }
+
+export function imageReferenceLimit(cap) {
+ if(!imageTaskAllowed(cap,1))return 0;
+ return imageTaskAllowed(cap,Math.max(1,cap.max_images))?cap.max_images:1;
+}

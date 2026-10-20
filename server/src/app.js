@@ -1,3 +1,6 @@
+import { chooseOutput } from './imageCapabilities.js';
+import { imageOptions } from '../../shared/imageOptions.js';
+import { inspectImageRates, imageRateMatch } from '../../shared/imagePricing.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -220,6 +223,17 @@ export function createApp() {
     }
     return true;
   };
+  app.post('/api/admin/image-price-preview',ah(async(req,res)=>{
+    if(!requireAdmin(req,res))return;
+    const {extra={},pricing={},size,quality='',count=1}=req.body||{};
+    if(!Number.isInteger(count)||count<1||count>16)return res.status(400).json({error:'数量须为 1–16'});
+    const capabilities=imageOptions(extra);
+    const report=inspectImageRates(capabilities,pricing.image_rates||[]);
+    if(report.errors.length)return res.status(400).json({error:report.errors.join('；')});
+    const output=chooseOutput({capabilities,pricing,price_per_call:pricing.per_call},size,quality);
+    const rule=pricing.image_rates?.length?imageRateMatch(pricing.image_rates,size,quality).rule:null;
+    res.json({ok:true,unit:output.unit,total:output.unit*count,count,rule,warnings:report.warnings});
+  }));
   const char404 = (res) => res.status(404).json({ error: '角色不存在' });
   const conv404 = (res) => res.status(404).json({ error: '对话不存在' });
 
