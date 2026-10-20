@@ -1,0 +1,77 @@
+import {useEffect,useRef,useState} from 'react';
+import {api} from '../api.js';
+import Icon from './icons.jsx';
+import StudioImage from './StudioImage.jsx';
+import {useAuth} from '../auth.jsx';
+export const freshKey=()=>crypto.randomUUID();
+export const money=cents=>`¥${((cents||0)/100).toFixed(2)}`;
+export const splitNames=s=>s.split(/[,，、\n]/).map(s=>s.trim()).filter(Boolean);
+export const prettyDate=s=>s?new Date(s).toLocaleString():'';
+export function useProductAction(){
+ const [busy,setBusy]=useState(false),[error,setError]=useState('');const lock=useRef(false),requests=useRef(new Map()),live=useRef(true);
+ useEffect(()=>{live.current=true;return()=>{live.current=false;};},[]);
+ const post=async(path,body={})=>{const signature=JSON.stringify([path,body]);if(!requests.current.has(signature))requests.current.set(signature,freshKey());const result=await api.products.post(path,{...body,request_key:requests.current.get(signature)});requests.current.delete(signature);return result;};
+ const run=async fn=>{if(lock.current)return;lock.current=true;setBusy(true);setError('');try{return await fn(post);}catch(e){if(live.current)setError(e.message);return null;}finally{lock.current=false;if(live.current)setBusy(false);}};
+ return {busy,error,setError,run};
+}
+export function ProductError({error,retry}){return error?<div className="product-error" role="alert">{error}{retry&&<button className="btn secondary small" onClick={retry}>重试</button>}</div>:null;}
+export function ProductField({label,children,hint}){return <label className="product-field"><span>{label}</span>{children}{hint&&<small>{hint}</small>}</label>;}
+export function ProductNav({items,value,onChange,label}){return <nav className="product-nav" aria-label={label}>{items.map(([key,title])=><button key={key} aria-current={value===key?'page':undefined} className={value===key?'active':''} onClick={()=>onChange(key)}>{title}</button>)}</nav>;}
+export function ProductHeader({title,subtitle,onOpenSidebar,children}){return <header className="product-head"><div>{onOpenSidebar&&<button className="menu-btn icon-btn menu-btn-lg" title="打开侧边栏" onClick={onOpenSidebar}><Icon name="menu" size={22}/></button>}<div><h2>{title}</h2>{subtitle&&<small>{subtitle}</small>}</div></div><div className="product-head-actions">{children}</div></header>;}
+export function useProductList(kind,{projectId,roundId,category,search='',state='active',reload=0}={}){
+ const [result,setResult]=useState({items:[],total:0,page:1}),[loading,setLoading]=useState(true),[error,setError]=useState(''),[page,setPage]=useState(1),[retry,setRetry]=useState(0);
+ useEffect(()=>setPage(1),[kind,projectId,roundId,category,search,state]);
+ useEffect(()=>{const controller=new AbortController();setLoading(true);setError('');const timer=setTimeout(()=>api.products.get('records',{kind,page,state,...(category?{category}:{}),...(projectId?{projectId}:{}),...(roundId?{roundId}:{}),...(search?{search}:{})},{signal:controller.signal}).then(setResult).catch(e=>{if(!controller.signal.aborted)setError(e.message);}).finally(()=>{if(!controller.signal.aborted)setLoading(false);}),120);return()=>{clearTimeout(timer);controller.abort();};},[kind,projectId,roundId,category,search,state,page,reload,retry]);
+ return {...result,loading,error,setPage,retry:()=>setRetry(n=>n+1)};
+}
+export function ProductPages({list}){return <div className="product-pages"><span>共 {list.total} 条</span><button className="btn secondary small" disabled={list.page<=1||list.loading} onClick={()=>list.setPage(list.page-1)}>上一页</button><span>{list.page}</span><button className="btn secondary small" disabled={list.page*20>=list.total||list.loading} onClick={()=>list.setPage(list.page+1)}>下一页</button></div>;}
+export function ProductFiles({value=[],onChange,image=false,label='添加附件',disabled=false}){
+ const [busy,setBusy]=useState(false),[error,setError]=useState(''),[preview,setPreview]=useState(null);const live=useRef(true);useEffect(()=>{live.current=true;return()=>{live.current=false;};},[]);
+ const upload=async e=>{const files=[...e.target.files];e.target.value='';setError('');if(value.length+files.length>30){setError('最多30个附件');return;}if(files.some(f=>f.size>20*1024*1024)){setError('单个文件应小于20MB');return;}setBusy(true);let next=[...value];try{for(const f of files){const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('文件读取失败'));reader.readAsDataURL(f);});const r=await api.products.post('files',{name:f.name,base64,image:image||f.type.startsWith('image/')});next.push(r.file);if(live.current)onChange(next);}}catch(e){if(live.current)setError(e.message);}finally{if(live.current)setBusy(false);}};
+ return <section className="product-files"><div className="product-file-list">{value.map((file,index)=><article key={file.file_id}>{file.image_path&&<StudioImage thumbnail={file.thumb_path} original={file.image_path} alt={file.name}/>}<a href={`/api/products/files/${file.file_id}`} download>{file.name}</a>{file.mime==='application/pdf'&&<button className="btn secondary small" onClick={()=>setPreview(preview===file.file_id?null:file.file_id)}>预览 PDF</button>}{onChange&&<button className="btn secondary small" aria-label={`移除附件${index+1}`} disabled={disabled||busy} onClick={()=>onChange(value.filter((_,i)=>i!==index))}>移除</button>}</article>)}</div>{onChange&&<label className="btn secondary product-file-input">{busy?'正在上传…':label}<input type="file" multiple accept={image?'image/*':'.pdf,.dxf,.plt,.ai,.eps,.zip,.rul,.aama,.astm,image/*'} aria-label={label} disabled={disabled||busy} onChange={upload}/></label>}<ProductError error={error}/>{preview&&<iframe className="product-file-preview" title="纸样PDF预览" src={`/api/products/files/${preview}?preview=1`}/>}</section>;
+}
+export function MeasurementRows({rows=[],onChange,sizes=[],disabled=false}){
+ const change=(index,key,value)=>onChange(rows.map((row,i)=>i===index?{...row,[key]:value}:row));
+ return <div className="product-measurements">{rows.map((row,index)=><article className="product-measurement" key={index}><div className="product-form-grid">
+ {['key','label'].map((key,i)=><ProductField key={key} label={i?'部位名称':'部位代码'}><input aria-label={`${i?'部位名称':'部位代码'}${index+1}`} value={row[key]||''} disabled={disabled} onChange={e=>change(index,key,e.target.value)}/></ProductField>)}
+ <ProductField label="口径"><select aria-label={`测量口径${index+1}`} value={row.basis} disabled={disabled} onChange={e=>change(index,'basis',e.target.value)}><option value="length">长度</option><option value="full">整围</option><option value="half">半围</option></select></ProductField>
+ <ProductField label="单位"><select aria-label={`尺寸单位${index+1}`} value={row.unit} disabled={disabled} onChange={e=>change(index,'unit',e.target.value)}><option value="cm">cm</option><option value="in">in</option></select></ProductField>
+ {['value','tolerance',...(sizes.length?['step']:[])].map(key=><ProductField key={key} label={{value:'数值',tolerance:'公差 ±',step:'单档增量'}[key]}><input type="number" step="0.01" aria-label={`${{value:'尺寸数值',tolerance:'尺寸公差',step:'放码增量'}[key]}${index+1}`} value={row[key]??''} disabled={disabled} onChange={e=>change(index,key,e.target.value)}/></ProductField>)}
+ </div><ProductField label="测量方法与起止点"><input aria-label={`测量方法${index+1}`} value={row.method||''} disabled={disabled} placeholder="例如：两侧袖窿下端水平测量" onChange={e=>change(index,'method',e.target.value)}/></ProductField>
+ {sizes.length>0&&<div className="product-form-grid">{sizes.map(size=><ProductField key={size} label={size}><input type="number" step="0.01" aria-label={`部位${index+1}尺码${size}`} value={row.values?.[size]??''} disabled={disabled} onChange={e=>change(index,'values',{...row.values,[size]:e.target.value})}/></ProductField>)}</div>}
+ {onChange&&!disabled&&<button className="btn secondary small" onClick={()=>onChange(rows.filter((_,i)=>i!==index))}>移除此部位</button>}</article>)}
+ {onChange&&!disabled&&<button className="btn secondary small" onClick={()=>onChange([...rows,{key:'',label:'',basis:'length',unit:'cm',value:'',tolerance:'',method:'',step:'',values:{}}])}>添加测量部位</button>}</div>;
+}
+export function useLocalProductDraft(name,initial){
+ const {user,multiUser}=useAuth();const key=`style-draft-product:${multiUser?user?.id||'guest':'local'}:${name}`;
+ const [value,setValue]=useState(()=>{try{const saved=JSON.parse(sessionStorage.getItem(key));if(saved&&Date.now()-saved.at<86400000)return saved.data;}catch{}return initial;});
+ useEffect(()=>{try{sessionStorage.setItem(key,JSON.stringify({at:Date.now(),data:value}));}catch{}},[value,key]);return [value,setValue,()=>{try{sessionStorage.removeItem(key);}catch{}}];
+}
+const historyLabels={name:'名称',category:'适用品类',code:'款号',notes:'备注',process:'工艺要求',measurements:'成衣尺寸',colors:'颜色',sizes:'尺码',skus:'SKU与数量',materials:'面辅料',fees:'其他费用',deadline:'交期',delivery:'设计交付',pending_delivery:'待采用设计',standard_binding:'制版标准',body_binding:'人体依据',size_binding:'尺寸依据',pattern_binding:'采用纸样',confirmed_quote_id:'确认核价',stage:'项目阶段',content:'资料内容',source:'来源',scope:'适用范围',rows:'测量数据',files:'附件',photos:'实拍',technical_signature:'技术基准',maker:'制作方',cost:'费用',decision_note:'评审结论',progress:'生产进度',accepted_quantity:'验收数量',resolution:'处理依据',applied_value:'采用值',inputs:'计算输入',result:'计算结果',description:'交付说明',slots:'视角图',standard_exception:'标准例外原因',base_size:'基础尺码',measurement_type:'尺寸性质',posture:'体态说明',measured_at:'测量日期'};
+const historyActions={create:'建立资料',save:'保存资料',publish:'核对发布',apply_library:'应用制版依据',apply_calculation:'采用计算结果',adopt_pattern:'采用纸样',confirm_cost:'确认核价',start_sample:'建立样衣轮次',decide_sample:'样衣评审',resolve_issue:'解决问题',start_production:'建立生产批次',production_progress:'更新生产进度',new_delivery:'收到新交付',adopt_delivery:'采用设计交付',archive:'归档',restore:'恢复使用',trash:'移入回收站',delete:'移除记录',lifecycle:'更新使用状态'};
+const historyValue=value=>value==null?'未填写':Array.isArray(value)?value.every(v=>typeof v==='string')?value.join('、'):String(value.length)+' 项':typeof value==='object'?value.name||value.version_number&&'设计 V'+value.version_number||'已保存采用快照':String(value);
+function HistorySnapshot({data}){
+ const [open,setOpen]=useState(false),[quote,setQuote]=useState(null),[error,setError]=useState('');const d=data.baseline||data.source?.delivery&&data.source||data;
+ useEffect(()=>{if(!open||!d.confirmed_quote_id)return;const c=new AbortController();api.products.get(`records/${d.confirmed_quote_id}`,{}, {signal:c.signal}).then(r=>setQuote(r.record.data)).catch(e=>{if(!c.signal.aborted)setError(e.message);});return()=>c.abort();},[open,d.confirmed_quote_id]);
+ return <details onToggle={e=>setOpen(e.currentTarget.open)}><summary>查看当时采用资料</summary>{open&&<><p>{d.name}{d.delivery?` · 设计 V${d.delivery.version_number}`:''}</p>{d.delivery&&<><div className="delivery-grid">{[['front','正面'],['back','背面'],['side','侧面']].map(([key,label])=>d.delivery.slots[key]&&<figure key={key}><a href={'/'+d.delivery.slots[key].image_path+'?download=1'} download><StudioImage original={d.delivery.slots[key].image_path} thumbnail={d.delivery.slots[key].thumb_path} alt={`历史${label}`}/>{label} · 下载原图</a></figure>)}</div><p className="product-text">{d.delivery.design_note||d.delivery.description}</p></>}
+ {d.process&&<p className="product-text">工艺：{d.process}</p>}{d.measurements?.length>0&&<MeasurementRows rows={d.measurements} disabled/>}
+ {[['standard_binding','制版标准'],['body_binding','人体依据'],['size_binding','尺寸依据']].map(([key,label])=>d[key]&&<details key={key}><summary>{label}：{d[key].name} · 采用修订 {d[key].revision}</summary><p className="product-text">{d[key].content||d[key].source}</p>{d[key].rows&&<MeasurementRows rows={d[key].rows} sizes={d[key].sizes||[]} disabled/>}</details>)}
+ {d.pattern_binding&&<><p>纸样：{d.pattern_binding.name} · 第 {d.pattern_binding.edition} 版 · {d.pattern_binding.sizes?.join('、')}</p><ProductFiles value={[d.pattern_binding]}/></>}
+ {d.materials?.length>0&&<div className="product-table-wrap"><table className="product-table"><caption>当时的面辅料</caption><thead><tr><th>材料 / 规格</th><th>单耗</th><th>单价 ¥</th><th>损耗</th></tr></thead><tbody>{d.materials.map((m,i)=><tr key={i}><td>{m.name} / {m.spec}</td><td>{m.usage??'待补'} {m.unit}</td><td>{m.price??'待补'}</td><td>{m.waste||0}%{m.includes_waste?'（单耗已含）':''}</td></tr>)}</tbody></table></div>}
+ {d.skus?.length>0&&<SkuMatrix skus={d.skus}/>}<ProductFiles value={d.files||data.photos||[]}/>{quote&&<p>确认核价：{quote.total_quantity} 件 · {money(quote.total_cents)}</p>}<ProductError error={error}/>
+ </>}</details>;
+}
+export function ProductHistory({id,reload=0}){
+ const [open,setOpen]=useState(false),[data,setData]=useState(null),[page,setPage]=useState(1),[error,setError]=useState('');
+ useEffect(()=>{if(!open)return;const c=new AbortController();api.products.get(`records/${id}/history`,{page},{signal:c.signal}).then(setData).catch(e=>{if(!c.signal.aborted)setError(e.message);});return()=>c.abort();},[open,id,page,reload]);
+ return <details onToggle={e=>setOpen(e.currentTarget.open)}><summary>资料历史</summary><ProductError error={error}/>{data?.items.map(r=><details key={r.revision}><summary>修订 {r.revision} · {historyActions[r.action]||'更新资料'} · {prettyDate(r.created_at)}</summary><p className="dim small">{r.state==='published'?'已发布':'资料快照'} · {r.lifecycle==='active'?'使用中':r.lifecycle==='archived'?'已归档':'已移除'} · 操作者 {r.user_id}</p><dl className="product-history-fields">{Object.entries(historyLabels).filter(([key])=>Object.hasOwn(r.data,key)).filter(([key])=>{const previous=data.items.find(old=>old.revision===r.revision-1);return !previous||JSON.stringify(previous.data[key])!==JSON.stringify(r.data[key]);}).map(([key,label])=><div key={key}><dt>{label}</dt><dd>{historyValue(data.items.find(old=>old.revision===r.revision-1)?.data[key])} → {historyValue(r.data[key])}</dd></div>)}</dl><HistorySnapshot data={r.data}/></details>)}{data&&<ProductPages list={{...data,setPage}}/>}</details>;
+}
+export function NameListInput({value=[],onChange,label,placeholder}){
+ const joined=value.join('、'),[text,setText]=useState(joined),[error,setError]=useState(''),focused=useRef(false);
+ useEffect(()=>{if(!focused.current)setText(joined);},[joined]);
+ return <><input aria-label={label} aria-invalid={!!error} value={text} placeholder={placeholder} onFocus={()=>focused.current=true} onChange={e=>{setText(e.target.value);setError('');}} onBlur={()=>{focused.current=false;try{const names=splitNames(text);if(names.length>30||new Set(names).size!==names.length||names.some(n=>n.length>40))throw new Error('最多30项，每项最多40字，请移除重复项');onChange(names);setText(names.join('、'));setError('');}catch(e){setError(e.message);}}}/>{error&&<small role="alert">{error}</small>}</>;
+}
+export function SkuMatrix({skus=[],onChange,quantities=true}){
+ const active=skus.filter(s=>s.active!==false),colors=[...new Set(active.map(s=>s.color))],sizes=[...new Set(active.map(s=>s.size))];
+ return <div className="product-table-wrap"><table className="product-table"><caption>颜色 × 尺码数量</caption><thead><tr><th>颜色</th>{sizes.map(s=><th key={s}>{s}</th>)}</tr></thead><tbody>{colors.map(color=><tr key={color}><th>{color}</th>{sizes.map(size=>{const sku=active.find(s=>s.color===color&&s.size===size);return <td key={size}>{sku&&(quantities&&onChange?<input type="number" aria-label={`${color} ${size}数量`} min={0} step={1} value={sku.quantity} onChange={e=>onChange(skus.map(s=>s.key===sku.key?{...s,quantity:Number(e.target.value)}:s))}/>:sku.quantity)}</td>;})}</tr>)}</tbody></table></div>;
+}

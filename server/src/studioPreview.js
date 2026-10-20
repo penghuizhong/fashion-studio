@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { productFileOwned } from './productReferences.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -12,7 +13,7 @@ export function previewFile(file) {
 export function ownedStudioFile(file, uid) {
   if (!/^uploads\/studio\/(?!.*(?:^|\/)\.\.)[^?\0\\]+$/.test(file)) return false;
   if (!getConfig().multiUser) return true;
-  return !!getDb().prepare(`SELECT 1 FROM dna_generations WHERE user_id=? AND lifecycle!='deleted' AND (image_path=? OR thumb_path=?)
+  return productFileOwned(getDb(),file,uid) || !!getDb().prepare(`SELECT 1 FROM dna_generations WHERE user_id=? AND lifecycle!='deleted' AND (image_path=? OR thumb_path=?)
     UNION ALL SELECT 1 FROM style_dna_templates WHERE user_id=? AND lifecycle!='deleted' AND (source_image_path=? OR source_thumb_path=?)
     UNION ALL SELECT 1 FROM exploration_batches b,json_each(b.renders_json) r WHERE b.user_id=? AND (json_extract(r.value,'$.image_path')=? OR json_extract(r.value,'$.thumb_path')=?)
     UNION ALL SELECT 1 FROM style_references WHERE user_id=? AND (image_path=? OR thumb_path=?)

@@ -252,7 +252,10 @@ export function mountStyleWorkspace(app) {
         ].includes(op)
       )
         throw problem("INVALID_OPERATION", "请选择有效的衍生动作");
-      const count = b.count ?? 1;
+      const deliverySlots = b.delivery_views;
+      if (deliverySlots && (!Array.isArray(deliverySlots) || !deliverySlots.length || deliverySlots.length > 5 || new Set(deliverySlots).size !== deliverySlots.length || deliverySlots.some(s=>!['front','back','side','side_right','detail'].includes(s)))) throw problem('INVALID_CAMERA','三视角输出位置无效');
+      if (deliverySlots && (op !== 'create' || b.mode !== 'image' || !b.source)) throw problem('SOURCE_REQUIRED','多视角生成需要当前款式基准图');
+      const count = deliverySlots ? deliverySlots.length : b.count ?? 1;
       if (!Number.isInteger(count) || count < 1 || count > 16)
         throw problem("INVALID_COUNT", "生成张数为 1–16");
       const model = resolveExploreModel(req, b.model_id, "image");
@@ -357,7 +360,7 @@ export function mountStyleWorkspace(app) {
           ? "Explore an alternative rendering of this same saved design; retain its defining construction."
           : "Generate another candidate of the same saved design and presentation.",
       };
-      const prompt = [
+      const promptFor = camera => [
         renderDnaPrompt({ dna:purpose === "white" ? {...dna,scene:{value:"pure white studio background"}} : dna, presetId: v.preset_id, camera }),
         ops[op],
         designNote ? `Saved design change (takes precedence over unchanged structured attributes): ${designNote}` : "",
@@ -404,6 +407,13 @@ export function mountStyleWorkspace(app) {
         explore_variation: !!b.explore_variation,
         consistent: !!b.consistent,
       };
+      if (deliverySlots) {
+        context.item_contexts = Object.fromEntries(deliverySlots.map((slot,index)=>{
+          const c = normalizeCamera({...camera,view:slot==='detail'?camera.view:slot==='side_right'?'side':slot,framing:slot==='detail'?'detail':'garment',detail:slot==='detail'?camera.detail:'',...(slot==='side_right'?{view:'side'}:{})});
+          return [index,{camera:c,delivery_slot:slot}];
+        }));
+      }
+      const prompts=deliverySlots?deliverySlots.map((slot,index)=>promptFor(context.item_contexts[index].camera)+(slot==='side_right'?'\nShow the opposite right side of the garment.':'')):Array(count).fill(promptFor(camera));
       const batchId = internalBatch(t),
         batch = db
           .prepare("SELECT * FROM exploration_batches WHERE id=?")
@@ -418,7 +428,7 @@ export function mountStyleWorkspace(app) {
           quality: b.quality,
           camera,
         },
-        { style: context, prompts: Array(count).fill(prompt) },
+        { style: context, prompts },
       );
       res.json({ ok: true, quote });
     }),
