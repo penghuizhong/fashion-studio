@@ -3,6 +3,7 @@ export default function CameraSettings({
   value = DEFAULT_CAMERA,
   onChange,
   disabled = false,
+  scope = "batch",
 }) {
   const set = (key, val) => {
     const next = { ...value, [key]: val };
@@ -28,7 +29,9 @@ export default function CameraSettings({
     <fieldset className="camera-settings" disabled={disabled}>
       <legend>视角与取景</legend>
       <p className="dim small">
-        标准款式对比默认正面平视、完整单品、居中留白。同批图片共用设置，模型仍可能偏离要求。
+        {scope === "item"
+          ? "本图单独设置视角与取景，其他模块可使用不同景别。模型仍可能偏离要求。"
+          : "标准款式对比默认正面平视、完整单品、居中留白。同批图片共用设置，模型仍可能偏离要求。"}
       </p>
       <div className="camera-controls">
         {Object.entries(CAMERA_OPTIONS).map(([key, options]) => (

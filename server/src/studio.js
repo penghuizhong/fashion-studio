@@ -3,6 +3,7 @@ import { mountStudioLifecycle,lifecycleState,changeLifecycle } from './studioLif
 import { imageAvailability,templateAvailability,studioFileExists } from './imageLifecycle.js';
 import { randomUUID } from 'node:crypto';
 import { problem } from './exploreErrors.js';
+import { mountStylePlans } from './stylePlans.js';
 import { mountStyleWorkspace } from './styleWorkspace.js';
 import { mountProductRoutes } from './productRoutes.js';
 import { ensureStyle, saveVersion, setWorking, styleVersion, recordStyleImage } from './styleVersions.js';
@@ -70,6 +71,7 @@ export function mountStudioRoutes(app) {  const db = getDb();
   mountStudioLifecycle(app);
   mountStudioPreview(app);
   mountStyleWorkspace(app);
+  mountStylePlans(app);
   mountProductRoutes(app);
   const cfg = getConfig();
   const uidOf = (req) => (req && req.userId) || 'local';

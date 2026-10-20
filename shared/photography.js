@@ -2,6 +2,7 @@ export const CAMERA_OPTIONS = {
   display: [
     ["model", "真人穿着"],
     ["mannequin", "人台展示"],
+    ["hanger", "挂架展示"],
     ["flat", "平铺展示"],
   ],
   view: [
@@ -87,7 +88,9 @@ export function photographyPrompt(input, presetId = "") {
       ? "flat lay, camera directly overhead"
       : c.display === "mannequin"
         ? "garment on a neutral mannequin, camera level"
-        : "garment worn by a model in a neutral standing pose, camera level, arms not obscuring garment structure",
+        : c.display === "hanger"
+          ? "garment hanging naturally on a clothes hanger, no mannequin and no person, camera level"
+          : "garment worn by a model in a neutral standing pose, camera level, arms not obscuring garment structure",
     view,
     c.framing === "detail"
       ? `intentional close-up of ${c.detail}; this is an AI interpretation, do not invent product specifications`

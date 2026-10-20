@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { migrateStylePlans } from './stylePlanSchema.js';
 import { migrateProducts } from './productSchema.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -793,6 +794,7 @@ export function getDb() {
       CREATE TABLE IF NOT EXISTS studio_lifecycle_events(id INTEGER PRIMARY KEY,user_id TEXT NOT NULL,object_type TEXT NOT NULL,object_id TEXT NOT NULL,action TEXT NOT NULL,created_at TEXT NOT NULL);`);
   })();
   migrateProducts(_db, dataDir);
+  migrateStylePlans(_db);
   return _db;
 }
 

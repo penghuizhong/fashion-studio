@@ -15,8 +15,9 @@ export function sharedImageFile(db, generation) {
     UNION ALL SELECT 1 FROM explore_items,json_tree(result_json) j WHERE j.type='text' AND j.value=?
     UNION ALL SELECT 1 FROM explore_jobs,json_tree(snapshot_json) j WHERE j.type='text' AND j.value=?
     UNION ALL SELECT 1 FROM explore_quotes,json_tree(payload_json) j WHERE j.type='text' AND j.value=?
+    UNION ALL SELECT 1 FROM style_plan_revisions,json_tree(content_json) j WHERE j.type='text' AND j.value=?
     LIMIT 1
-  `).get(file, file, generation.id, file, file, file, file, file, file, file, file));
+  `).get(file, file, generation.id, file, file, file, file, file, file, file, file, file));
 }
 
 export function studioFileExists(file) {
