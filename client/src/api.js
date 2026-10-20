@@ -411,6 +411,16 @@ export const api = {
   },
   // v0.1.0: 设计台
   studio: {
+    plans: (id,params={},options) => get(`/api/studio/templates/${id}/plans?${new URLSearchParams(params)}`,options),
+    plan: (id,planId,options) => get(`/api/studio/templates/${id}/plans/${planId}`,options),
+    createPlan: (id,body) => post(`/api/studio/templates/${id}/plans`,body),
+    updatePlan: (id,planId,body) => put(`/api/studio/templates/${id}/plans/${planId}`,body),
+    analysisEstimate: (id,planId,body) => post(`/api/studio/templates/${id}/plans/${planId}/analysis-estimate`,body),
+    analyzePlan: (id,planId,body) => post(`/api/studio/templates/${id}/plans/${planId}/analyze`,body),
+    planAnalysis: (id,planId,analysisId,options) => get(`/api/studio/templates/${id}/plans/${planId}/analyses/${encodeURIComponent(analysisId)}`,options),
+    applyPlanAnalysis: (id,planId,body) => post(`/api/studio/templates/${id}/plans/${planId}/apply-analysis`,body),
+    planQuote: (id,planId,body,options) => post(`/api/studio/templates/${id}/plans/${planId}/quote`,body,options),
+    styleJob: (id,jobId,options) => get(`/api/studio/templates/${id}/jobs/${jobId}`,options),
     lifecycle: (kind,id,action,confirm) => post(`/api/studio/${kind}/${id}/lifecycle`,{action,confirm}),
     lifecycleImpact: (kind,id) => get(`/api/studio/${kind}/${id}/impact`),
     bulkLifecycle: (ids,action,confirm) => post('/api/studio/assets/lifecycle',{ids,action,confirm}),

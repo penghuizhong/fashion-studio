@@ -33,6 +33,9 @@ jobs:
       - name: Model registry lifecycle and deletion regression
         working-directory: server
         run: npm run check:models
+      - name: Style planning, analysis, snapshots and billing regression
+        working-directory: server
+        run: npm run check:plans
       - name: Design delivery, pattern standards and sample production regression
         working-directory: server
         run: npm run check:products

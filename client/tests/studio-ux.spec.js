@@ -1,3 +1,4 @@
+import {derive,analyze,render,attributes} from './wizard-helpers.js';
 import {test,expect} from '@playwright/test';
 import sharp from '../../server/node_modules/sharp/lib/index.js';
 async function makeStyle(request,name,width=800,height=1200){
@@ -14,7 +15,6 @@ async function openStyle(page,name,properties=false){
  if(properties)await card.getByRole('button',{name:'款式属性',exact:true}).click();else await card.click();
  await expect(page.getByRole('dialog',{name:'款式详情',exact:true})).toBeVisible();
 }
-async function derive(page){await page.locator('.style-panel nav').getByRole('button',{name:'款式衍生',exact:true}).click();await expect(page.getByLabel('款式图片模型')).toBeVisible();}
 async function generate(request,t,count=1){
  const q=await(await request.post(`/api/studio/templates/${t.id}/quote`,{data:{version_id:t.ws.template.work_version_id,op:'create',mode:'text',model_id:'browser-image-two',size:'512x512',count}})).json();expect(q.ok).toBe(true);
  const r=await request.post(`/api/studio/templates/${t.id}/jobs`,{data:{quote_id:q.quote.id,request_key:crypto.randomUUID(),confirm:true}});expect(r.status()).toBe(202);
@@ -61,37 +61,22 @@ for(const [width,edge] of [[1440,4096],[390,4096],[1440,1024]])test(`cold/warm p
 test('failed model loading is isolated from image and attributes and can retry',async({page,request})=>{
  await makeStyle(request,'辅助请求隔离');let fail=true;
  await page.route('**/api/studio/image-models',route=>fail?route.fulfill({status:503,json:{error:'模拟模型列表失败'}}):route.continue());
- await openStyle(page,'辅助请求隔离',true);await expect(page.getByText('结构版型',{exact:true})).toBeVisible();
- await derive(page);await expect(page.getByText(/图片模型加载失败/)).toBeVisible();await expect(page.locator('.style-preview-image img')).toBeVisible();
- fail=false;await page.getByRole('button',{name:'重试加载模型',exact:true}).click();
- await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();
+ await openStyle(page,'辅助请求隔离',true);await expect(page.getByText('基础属性',{exact:true})).toBeVisible();await expect(page.locator('.wizard-property-preview img')).toBeVisible();
+ await page.locator('.wizard-steps button').nth(1).click();await expect(page.locator('.wizard-inputs [role=alert]')).toBeVisible();
+ fail=false;await page.getByRole('button',{name:'重试加载模型',exact:true}).click();await expect(page.getByLabel('图片模型',{exact:true})).not.toHaveValue('');await analyze(page);await expect(page.locator('.wizard-footer .wizard-primary')).toBeEnabled();
 });
 
-test('action drafts persist, white is a primary direction, free design saves on confirmation',async({page,request})=>{
- const t=await makeStyle(request,'动作草稿');await openStyle(page,'动作草稿',true);await derive(page);
- expect(await page.getByLabel('本次要求包含服装设计变化').count()).toBe(0);expect(await page.getByRole('button',{name:'从当前属性整理要求'}).count()).toBe(0);
- await page.getByLabel('本次要求',{exact:true}).fill('自然打光');
- await page.getByRole('button',{name:'换场景 保留服装，调整背景和展示环境',exact:true}).click();await page.getByLabel('本次要求',{exact:true}).fill('更换室内背景');
- await page.getByRole('button',{name:'海岛度假',exact:true}).click();
- await page.getByRole('button',{name:'白底商品图 保留服装，生成纯白背景商品图',exact:true}).click();
- await expect(page.getByRole('button',{name:'海岛度假',exact:true})).toHaveCount(0);await expect(page.getByRole('checkbox',{name:'白底商品图'})).toHaveCount(0);
- await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();
- await page.getByRole('button',{name:'换场景 保留服装，调整背景和展示环境',exact:true}).click();await expect(page.getByLabel('本次要求',{exact:true})).toHaveValue('更换室内背景');await expect(page.getByRole('button',{name:'海岛度假',exact:true})).toHaveAttribute('aria-pressed','true');
- await page.getByRole('button',{name:'生成基础图 按已保存设计生成或参考图片重绘',exact:true}).click();await expect(page.getByLabel('本次要求',{exact:true})).toHaveValue('自然打光');
- await page.getByRole('button',{name:'自由衍生 按文字或多张参考图探索新设计',exact:true}).click();await page.getByLabel('本次要求',{exact:true}).fill('保留版型，改为条纹面料');
- await expect(page.getByRole('button',{name:'保存要求为新版本',exact:true})).toHaveCount(0);
- await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();
- let ws=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(ws.versions).toHaveLength(1);
- await page.getByRole('button',{name:'确认费用并生成',exact:true}).click();await expect(page.locator('.style-result-grid article')).toHaveCount(1);
- ws=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(ws.versions).toHaveLength(2);expect(ws.versions.find(v=>v.number===1).design_note).toBe('');
- await page.screenshot({path:'/tmp/style-derivation-new.png'});
- await page.getByRole('button',{name:'关闭款式详情'}).click();await page.locator('.studio-card').filter({hasText:'动作草稿'}).getByRole('button',{name:'款式属性',exact:true}).click();await derive(page);await expect(page.getByLabel('本次要求',{exact:true})).toHaveValue('保留版型，改为条纹面料');
+test('directions and requirements persist while design changes save only in attributes',async({page,request})=>{
+ const t=await makeStyle(request,'方向草稿');await openStyle(page,'方向草稿',true);await derive(page);
+ await page.getByLabel('本次衍生方向').selectOption('white');await page.getByLabel('生成要求').fill('纯白背景，完整展示');await attributes(page);
+ await page.getByRole('button',{name:'基于此版本修改',exact:true}).click();await page.getByLabel('设计变化说明').fill('衣领改为条纹');await page.getByRole('button',{name:'保存为新版本',exact:true}).click();await derive(page);await page.getByLabel('本次衍生方向').selectOption('free_design');await analyze(page);
+ const before=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(before.versions).toHaveLength(2);await render(page);const after=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json();expect(after.versions).toHaveLength(2);expect(after.jobs[0].snapshot.style.version_id).not.toBe(after.template.work_version_id);
 });
 
 test('one reference picker paginates searchable assets, preserves staged selections and deduplicates uploads',async({page,request})=>{
  test.setTimeout(60000);const source=await makeStyle(request,'图库分页资产');await generate(request,source,16);await generate(request,source,16);
- await makeStyle(request,'图库目标款式');await openStyle(page,'图库目标款式',true);await derive(page);await page.getByLabel('款式图片模型').selectOption('browser-image-two');
- let assets=0;page.on('request',r=>{if(new URL(r.url()).pathname==='/api/studio/assets')assets++;});expect(assets).toBe(0);
+ await makeStyle(request,'图库目标款式');await openStyle(page,'图库目标款式',true);await derive(page);await page.getByLabel('图片模型',{exact:true}).selectOption('browser-image-two');
+ await page.getByLabel('移除参考图1').click();let assets=0;page.on('request',r=>{if(new URL(r.url()).pathname==='/api/studio/assets')assets++;});expect(assets).toBe(0);
  await page.getByRole('button',{name:'从图库选择',exact:true}).click();await page.getByRole('tab',{name:'资产库',exact:true}).click();await page.getByLabel('搜索参考图').fill('图库分页资产');
  await expect(page.locator('.reference-picker-grid button')).toHaveCount(24);await page.locator('.reference-picker-grid button').first().click();
  await page.getByRole('button',{name:'下一页',exact:true}).click();await expect(page.locator('.reference-picker-grid button')).toHaveCount(8);await page.locator('.reference-picker-grid button').first().click();
@@ -103,13 +88,9 @@ test('one reference picker paginates searchable assets, preserves staged selecti
 test('history is lazy and paginated; task polling does not reload full workspace',async({page,request})=>{
  const t=await makeStyle(request,'分页与任务');let parent=t.ws.template.work_version_id;
  for(let i=0;i<23;i++){const r=await request.post(`/api/studio/templates/${t.id}/versions`,{data:{parent_id:parent,dna:{...t.dna,primary_color:{value:'蓝'+i}},request_key:crypto.randomUUID()}});parent=(await r.json()).version.id;}
- await openStyle(page,'分页与任务',true);await expect(page.locator('.style-version-row')).toHaveCount(0);
- await page.locator('.style-panel nav').getByRole('button',{name:'版本记录',exact:true}).click();await expect(page.locator('.style-version-row')).toHaveCount(20);await page.getByRole('button',{name:'加载更多版本',exact:true}).click();await expect(page.locator('.style-version-row')).toHaveCount(24);
- // Exercise polling with a history snapshot taken just before the fast mock completes.
- let pending=true;await page.route('**/workspace/jobs?*',async route=>{const r=await route.fetch();const payload=await r.json();if(pending&&payload.items.length){pending=false;payload.items=payload.items.map(j=>({...j,status:'running',completed:0,revision:'browser-before-completion'}));}await route.fulfill({json:payload});});
- await derive(page);await expect(page.getByRole('button',{name:'确认费用并生成',exact:true})).toBeEnabled();const paths=[];page.on('request',r=>paths.push(new URL(r.url()).pathname));
- await page.getByRole('button',{name:'确认费用并生成',exact:true}).click();await expect(page.locator('.style-result-grid article')).toHaveCount(1);
- expect(paths.filter(p=>p.endsWith('/workspace'))).toEqual([]);await expect.poll(()=>paths.some(p=>p.endsWith('/workspace/progress'))).toBe(true);
+ await openStyle(page,'分页与任务',true);await expect(page.locator('.wizard-version-list')).toHaveCount(0);
+ await page.getByRole('button',{name:/浏览版本记录/}).click();await expect(page.locator('.wizard-version-list>button').filter({hasText:/^V/})).toHaveCount(20);await page.getByRole('button',{name:'加载更多版本',exact:true}).click();await expect(page.locator('.wizard-version-list>button').filter({hasText:/^V/})).toHaveCount(24);
+ await derive(page);await analyze(page);const paths=[];page.on('request',r=>paths.push(new URL(r.url()).pathname));await render(page);await expect.poll(()=>paths.some(p=>p.endsWith('/workspace/progress'))).toBe(true);expect(paths.filter(p=>p.endsWith('/workspace'))).toEqual([]);
 });
 
 for(const width of [1440,390])test(`visual pricing editor preserves tiers and previews authoritative prices ${width}`,async({page},info)=>{
@@ -162,11 +143,8 @@ test('closing a pending detail cancels the read and cannot overwrite the next ca
 });
 
 
-test('continuing from an older result keeps that image selected after version hydration',async({page,request})=>{
- const t=await makeStyle(request,'保留指定底图');await generate(request,t,2);await openStyle(page,'保留指定底图',true);await derive(page);
- await page.locator('.style-results').getByRole('button',{name:'展开',exact:true}).click();await expect(page.locator('.style-result-grid article')).toHaveCount(2);
+test('continuing from an older result keeps that image as the explicit reference',async({page,request})=>{
+ const t=await makeStyle(request,'保留指定底图');await generate(request,t,2);await openStyle(page,'保留指定底图',true);await page.locator('.wizard-steps button').nth(4).click();await page.getByText('历史结果',{exact:false}).first().click();
  const ws=await(await request.get(`/api/studio/templates/${t.id}/workspace`)).json(),older=ws.images.at(-1);
- const hydrated=page.waitForResponse(r=>r.url().includes('/workspace/images?')&&new URL(r.url()).searchParams.get('limit')==='1');
- await page.locator('.style-result-grid article').filter({hasText:`#${older.id} ·`}).getByRole('button',{name:'以此继续衍生',exact:true}).click();await hydrated;
- await expect.poll(async()=>{const src=await page.locator('.style-preview-image img').getAttribute('src');return src.includes(encodeURIComponent(older.image_path))||src.includes(older.thumb_path);}).toBe(true);
+ const card=page.locator('.wizard-result-card').filter({hasText:`历史图片 #${older.id}`});await card.getByRole('button',{name:'以此继续衍生',exact:true}).click();await expect(page.locator('.reference-strip article')).toHaveCount(1);await expect(page.locator('.reference-strip img')).toHaveAttribute('src','/'+older.thumb_path);
 });

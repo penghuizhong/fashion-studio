@@ -218,7 +218,8 @@ export function makeQuote(batch, req, b, context = null) {
     "image",
   );
   const inputCount=context?.style?.source_path?1+(context.style.references||[]).length:0;
-  if(!imageTaskAllowed(model.capabilities,inputCount))throw problem('MODEL_CAPABILITY_UNAVAILABLE','所选模型不支持此任务，或该功能最近验证失败，请更换模型或复测',422);
+  const referenceCounts=context?.style?.item_contexts?indexes.map(i=>context.style.item_contexts[i]).filter(Boolean).map(c=>c.source_path?1+(c.references||[]).length:0):[inputCount];
+  if(referenceCounts.some(n=>!imageTaskAllowed(model.capabilities,n)))throw problem('MODEL_CAPABILITY_UNAVAILABLE','所选模型不支持此任务，或该功能最近验证失败，请更换模型或复测',422);
   const size = b.render_size || source?.snapshot.size || model.sizes[0];
   const quality = b.quality ?? source?.snapshot.quality ?? "";
   const output = chooseOutput(model, size, quality);
@@ -233,6 +234,12 @@ export function makeQuote(batch, req, b, context = null) {
   if (camera && !source && !context)
     validateCameraIntent(camera, batch.intent_text);
   const unit = model.billable ? output.unit : 0;
+  const itemOutputs = context?.outputs || source?.snapshot.outputs;
+  const outputs = itemOutputs ? Object.fromEntries(indexes.map(i => {
+    const spec=itemOutputs[i];if(!spec)throw problem('INVALID_SIZE','图片输出规格缺失');
+    const selected=chooseOutput(model,spec.size,spec.quality||'');
+    return [i,{size:selected.size,quality:selected.quality,unit_price:model.billable?selected.unit:0}];
+  })) : null;
   const payload = {
     indexes,
     ...(context?.style ? { style: context.style } : {}),
@@ -241,7 +248,8 @@ export function makeQuote(batch, req, b, context = null) {
     size,
     quality,
     unit_price: unit,
-    total: indexes.length * unit,
+    ...(outputs ? {outputs} : {}),
+    total: outputs ? Object.values(outputs).reduce((n,o)=>n+o.unit_price,0) : indexes.length * unit,
     pricing_version: JSON.stringify(model.pricing),
     effective_prompt_extend:
       source?.snapshot.effective_prompt_extend ??
@@ -308,6 +316,8 @@ export async function executeJob(id, model) {
         return;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    const spec=q.outputs?.[item.proposal_idx]||{size:q.size,quality:q.quality,unit_price:q.unit_price};
+    const itemStyle=q.style?.item_contexts?.[item.proposal_idx]?{...q.style,...q.style.item_contexts[item.proposal_idx]}:q.style;
     let result = JSON.parse(item.result_json),
       status = "succeeded",
       generatedComplete = false;
@@ -316,26 +326,26 @@ export async function executeJob(id, model) {
         userId: job.user_id,
         modelId: model.id,
         prompt: result.prompt_snapshot,
-        size: q.size,
-        quality: q.quality,
+        size: spec.size,
+        quality: spec.quality,
         seed: result.seed,
         executionModel: {
           ...model,
-          price_per_call: q.unit_price,
+          price_per_call: spec.unit_price,
           prompt_extend: q.effective_prompt_extend ?? model.prompt_extend,
           provider:
             model.provider === "dashscope" ? "dashscope" : "openai_compatible",
         },
         deferBilling: true,
-        sourceImageBase64: q.style?.source_path
+        sourceImageBase64: itemStyle?.source_path
           ? fs
               .readFileSync(
-                path.join(getConfig().dataDir || "./data", q.style.source_path),
+                path.join(getConfig().dataDir || "./data", itemStyle.source_path),
               )
               .toString("base64")
           : null,
         referenceImages:
-          q.style?.references?.map((r) =>
+          itemStyle?.references?.map((r) =>
             fs
               .readFileSync(path.join(getConfig().dataDir || "./data", r.path))
               .toString("base64"),
@@ -350,8 +360,8 @@ export async function executeJob(id, model) {
         ...result,
         ...files,
         model: model.model_id,
-        size: q.size,
-        price: q.unit_price,
+        size: spec.size,
+        price: spec.unit_price,
       };
     } catch (e) {
       const error = generatedComplete
@@ -464,6 +474,10 @@ export function startJob(batch, req, b) {
       .all(batch.id);
     if (unknown.some((i) => q.indexes.includes(i.proposal_idx)))
       throw problem("RESULT_UNCERTAIN", "生成结果待确认，不能重复生成", 409);
+    if (q.style?.plan_id && !q.source_job_id) {
+      const plan=db.prepare('SELECT revision FROM style_plans WHERE id=? AND template_id=? AND user_id=?').get(q.style.plan_id,q.style.template_id,owner(req));
+      if(!plan||plan.revision!==q.style.plan_revision)throw problem('PLAN_CHANGED','图片规划已修改，请重新确认报价',409);
+    }
     if (q.style) {
       const template = db.prepare('SELECT * FROM style_dna_templates WHERE id=? AND user_id=?').get(q.style.template_id, owner(req));
       if (!template) throw problem('TEMPLATE_NOT_FOUND', '款式不存在', 404);
@@ -494,11 +508,12 @@ export function startJob(batch, req, b) {
     );
     q.indexes.forEach((idx, n) => {
       const itemId = randomUUID();
-      if (q.unit_price > 0) {
+      const itemUnit=q.outputs?.[idx]?.unit_price??q.unit_price;
+      if (itemUnit > 0) {
         try {
           addLedger(
             owner(req),
-            -q.unit_price,
+            -itemUnit,
             "explore_reserve",
             "explore_item",
             itemId,
@@ -522,7 +537,7 @@ export function startJob(batch, req, b) {
           prompt_snapshot: q.prompts[n],
           seed: q.seeds[n],
         }),
-        q.unit_price,
+        itemUnit,
       );
     });
     db.prepare(

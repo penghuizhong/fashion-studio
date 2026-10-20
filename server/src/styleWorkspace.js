@@ -44,7 +44,7 @@ export function localImage(file) {
     throw problem("SOURCE_MISSING", "参考图片不存在，请重新选择", 404);
   return abs;
 }
-function imageFor(t, ref, req) {
+export function imageFor(t, ref, req) {
   const db = getDb();
   if (ref === "original") {
     if (!t.source_image_path)
@@ -78,7 +78,7 @@ function imageFor(t, ref, req) {
   }
   throw problem("SOURCE_REQUIRED", "请选择本次底图");
 }
-function internalBatch(t) {
+export function internalBatch(t) {
   const db = getDb();
   if (t.style_batch_id) return t.style_batch_id;
   return db.transaction(() => {
@@ -452,6 +452,11 @@ export function mountStyleWorkspace(app) {
       res.status(202).json({ ok: true, ...startJob(batch, req, req.body) });
     }),
   );
+  app.get('/api/studio/templates/:id/jobs/:jobId',ah(async(req,res)=>{
+    const t=styleTemplate(req.params.id,req),job=jobView(req.params.jobId);
+    if(!job||job.batch_id!==t.style_batch_id||job.snapshot.style?.template_id!==t.id)throw problem('JOB_NOT_FOUND','生成任务不存在',404);
+    res.json({job});
+  }));
   app.post(
     "/api/studio/templates/:id/retry-quote",
     ah(async (req, res) => {
@@ -479,6 +484,7 @@ export function mountStyleWorkspace(app) {
           },
           {
             style: job.snapshot.style,
+            outputs: job.snapshot.outputs,
             prompts: failed.map(
               (i) =>
                 job.renders.find((r) => r.proposal_idx === i).prompt_snapshot,

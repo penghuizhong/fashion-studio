@@ -2,12 +2,12 @@ import { imageReferenceLimit, imageTaskAllowed } from '../../../shared/imageOpti
 import { useEffect, useRef, useState } from 'react';
 import StudioImage from './StudioImage.jsx';
 import { api } from '../api.js';
-export default function ReferenceImages({items,onChange,choices,model,availableLimit=0,onUploaded,onResolved,disabled,templateId}){
+export default function ReferenceImages({items,onChange,choices,model,availableLimit=0,onUploaded,onResolved,disabled,templateId,strictLimit=false}){
  const [uploading,setUploading]=useState(false),[picker,setPicker]=useState(false),[tab,setTab]=useState('current');
  const [search,setSearch]=useState(''),[page,setPage]=useState(1),[result,setResult]=useState({rows:[],total:0}),[selected,setSelected]=useState([]);
  const [loading,setLoading]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0);
  const live=useRef(true);useEffect(()=>{live.current=true;return()=>{live.current=false;};},[]);
- const cap=model?.capabilities,limit=Math.max(imageReferenceLimit(cap),availableLimit);
+ const cap=model?.capabilities,limit=strictLimit&&model?imageReferenceLimit(cap):Math.max(imageReferenceLimit(cap),availableLimit);
  const identity=c=>c?.image_path||c?.key;
  const identities=new Set(items.map(key=>identity(choices.find(c=>c.key===key)||{key})));
  const currentOriginal=choices.find(c=>c.key==='original');

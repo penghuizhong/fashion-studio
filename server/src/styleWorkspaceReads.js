@@ -10,12 +10,12 @@ export function progressJob(id) {
   const db = getDb();
   const j = db.prepare(`SELECT id,batch_id,status,created_at,json_extract(snapshot_json,'$.model.name') model_name,
     json_extract(snapshot_json,'$.style.version_id') version_id,json_extract(snapshot_json,'$.style.version_number') version_number,
-    json_extract(snapshot_json,'$.style.op') op FROM explore_jobs WHERE id=?`).get(id);
+    json_extract(snapshot_json,'$.style.op') op, json_extract(snapshot_json,'$.style.plan_id') plan_id, json_extract(snapshot_json,'$.style.plan_revision') plan_revision FROM explore_jobs WHERE id=?`).get(id);
   if (!j) return null;
   const rows = db.prepare('SELECT id,proposal_idx,status,result_json FROM explore_items WHERE job_id=? ORDER BY proposal_idx').all(id);
-  const renders = rows.map(r => { const result = parse(r.result_json); return { item_id:r.id,proposal_idx:r.proposal_idx,status:r.status,error:result.error || '',price:result.price || 0 }; });
+  const renders = rows.map(r => { const result = parse(r.result_json); return { item_id:r.id,proposal_idx:r.proposal_idx,status:r.status,error:result.error || '',price:result.price || 0,...(r.status==='succeeded'?imageAvailability({image_path:result.image_path,thumb_path:result.thumb_path,generation_id:result.generation_id}):{}) }; });
   const result = { id:j.id,batch_id:j.batch_id,status:j.status,created_at:j.created_at,
-    snapshot:{model:{name:j.model_name},style:{version_id:j.version_id,version_number:j.version_number,op:j.op}},
+    snapshot:{model:{name:j.model_name},style:{version_id:j.version_id,version_number:j.version_number,op:j.op,plan_id:j.plan_id,plan_revision:j.plan_revision}},
     renders,total:rows.length,completed:rows.filter(r=>!['running','queued'].includes(r.status)).length,
     cost_actual:renders.reduce((n,r)=>n+(r.status==='succeeded'?r.price:0),0) };
   result.revision = crypto.createHash('sha256').update(JSON.stringify(result)).digest('hex').slice(0,16);

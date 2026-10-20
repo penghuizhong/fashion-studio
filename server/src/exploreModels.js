@@ -24,6 +24,7 @@ export function availableModels(kind) {
       name: m.name,
       model_id: m.model_id,
       provider_name: m.provider_name,
+      vision: !!m.extra.vision,
       thinking_control: thinkingControl(m.provider_preset, m.model_id),
       pricing: m.pricing,
       capabilities: {...imageOptions(m.extra,m.provider_preset),task_status:Object.fromEntries((m.checks||[]).filter(c=>c.status!=='stale').map(c=>[c.task,c.status]))},
