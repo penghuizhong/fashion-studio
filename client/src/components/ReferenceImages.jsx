@@ -2,7 +2,7 @@ import { imageReferenceLimit, imageTaskAllowed } from '../../../shared/imageOpti
 import { useEffect, useRef, useState } from 'react';
 import StudioImage from './StudioImage.jsx';
 import { api } from '../api.js';
-export default function ReferenceImages({items,onChange,choices,model,availableLimit=0,onUploaded,onResolved,disabled,onError,templateId}){
+export default function ReferenceImages({items,onChange,choices,model,availableLimit=0,onUploaded,onResolved,disabled,templateId}){
  const [uploading,setUploading]=useState(false),[picker,setPicker]=useState(false),[tab,setTab]=useState('current');
  const [search,setSearch]=useState(''),[page,setPage]=useState(1),[result,setResult]=useState({rows:[],total:0}),[selected,setSelected]=useState([]);
  const [loading,setLoading]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0);
@@ -47,21 +47,21 @@ export default function ReferenceImages({items,onChange,choices,model,availableL
     known.add(identity(c));next.push(key);
    }
    if(live.current){onResolved?.(candidates.filter(c=>!c.generation_id));onChange(next);setPicker(false);setSelected([]);}
-  }catch(e){if(live.current){if(next.length!==items.length)onChange(next);setError(e.message);onError(e);}}
+  }catch(e){if(live.current){if(next.length!==items.length)onChange(next);setError(e.message);}}
   finally{if(live.current)setUploading(false);}
  };
  const upload=async e=>{
   const files=[...e.target.files];e.target.value='';
-  if(items.length+files.length>limit){onError(new Error(`兼容模型最多支持 ${limit} 张参考图，请减少图片`));return;}
-  if(files.some(f=>f.size>15*1024*1024||!/^image\//.test(f.type))){onError(new Error('请选择不超过15MB的图片'));return;}
-  setUploading(true);const added=[];
+  if(items.length+files.length>limit){setError(`兼容模型最多支持 ${limit} 张参考图，请减少图片`);return;}
+  if(files.some(f=>f.size>15*1024*1024||!/^image\//.test(f.type))){setError('请选择不超过15MB的图片');return;}
+  setUploading(true);setError('');const added=[];
   try{
    for(const f of files){
     const image_base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('图片读取失败'));reader.readAsDataURL(f);});
     const r=await api.studio.uploadReference({image_base64});if(!live.current)return;
     onUploaded(r);added.push(`ref:${r.id}`);
    }
-  }catch(e){if(live.current)onError(e);}
+  }catch(e){if(live.current)setError(e.message);}
   finally{if(live.current){if(added.length)onChange([...items,...added]);setUploading(false);}}
  };
  return <section className="unified-references"><h3>参考图 <small>已选 {items.length} 张{imageReferenceLimit(cap)?` · 当前模型最多 ${imageReferenceLimit(cap)} 张`:''}</small></h3>
@@ -72,7 +72,8 @@ export default function ReferenceImages({items,onChange,choices,model,availableL
    </label>
    <button className="btn secondary" disabled={disabled||uploading||!limit} aria-expanded={picker} onClick={()=>{setPicker(v=>!v);setSelected([]);}}>从图库选择</button>
   </div>
-  {items.length>0&&!imageTaskAllowed(cap,items.length)&&<p role="alert">当前模型不能处理所选参考图，请选择兼容模型或减少图片。</p>}
+  {error&&!picker&&<p role="alert" className="style-error">{error}<button className="btn secondary small" onClick={()=>setError('')}>知道了</button></p>}
+  {items.length>0&&!imageTaskAllowed(cap,items.length)&&<p className="dim small">当前模型不能处理所选参考图，请选择兼容模型或减少图片。</p>}
   <p className="dim small">图1为主体，其余图片可在要求中按图号说明用途。{!items.length?'不添加参考图时，按已保存属性生成。':''}</p>
   {picker&&<section className="reference-picker" aria-label="参考图库">
    <div role="tablist" aria-label="参考图来源">{[['current','当前款式'],['assets','资产库'],['uploaded','已上传']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} className="btn secondary small" onClick={()=>{setTab(key);setPage(1);setSearch('');}}>{label}</button>)}</div>

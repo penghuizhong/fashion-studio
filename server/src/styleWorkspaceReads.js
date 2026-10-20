@@ -35,10 +35,9 @@ export function workspaceSummary(t, query) {
   }
   recoverExploreJobs();
   const jobs = t.style_batch_id ? db.prepare("SELECT id FROM explore_jobs WHERE batch_id=? AND (status IN ('running','queued') OR id=(SELECT id FROM explore_jobs WHERE batch_id=? ORDER BY rowid DESC LIMIT 1)) ORDER BY rowid DESC").all(t.style_batch_id,t.style_batch_id).map(j=>progressJob(j.id)) : [];
-  return {template:templateAvailability(t),versions:versions.sort((a,b)=>b.number-a.number),images,jobs,layouts:[],
+  return {template:templateAvailability(t),versions:versions.sort((a,b)=>b.number-a.number),images,jobs,
     totals:{versions:db.prepare('SELECT COUNT(*) n FROM style_versions WHERE template_id=?').get(t.id).n,
       images:db.prepare("SELECT COUNT(*) n FROM dna_generations WHERE template_id=? AND lifecycle!='deleted'").get(t.id).n,
-      layouts:db.prepare('SELECT COUNT(*) n FROM style_layouts WHERE template_id=?').get(t.id).n,
       jobs:t.style_batch_id?db.prepare('SELECT COUNT(*) n FROM explore_jobs WHERE batch_id=?').get(t.style_batch_id).n:0}};
 }
 export function mountWorkspaceReads(app) {
@@ -57,9 +56,10 @@ export function mountWorkspaceReads(app) {
   }));
   app.get('/api/studio/templates/:id/workspace/:collection',ah(async(req,res)=>{
     const t=styleTemplate(req.params.id,req), db=getDb(), collection=req.params.collection;
-    if(!['versions','images','jobs','layouts'].includes(collection))throw problem('INVALID_QUERY','记录类型无效',404);
+    if(collection==='layouts'){throw problem('FEATURE_RETIRED','图文排版功能已下线，请使用原图查看与下载',410);}
+    if(!['versions','images','jobs'].includes(collection))throw problem('INVALID_QUERY','记录类型无效',404);
     const page=Math.max(1,Number.parseInt(req.query.page)||1),limit=Math.min(50,Math.max(1,Number.parseInt(req.query.limit)||20));
-    const table={versions:'style_versions',images:'dna_generations',jobs:'explore_jobs',layouts:'style_layouts'}[collection];
+    const table={versions:'style_versions',images:'dna_generations',jobs:'explore_jobs'}[collection];
     const cond=[collection==='jobs'?'batch_id=?':'template_id=?'], args=[collection==='jobs'?t.style_batch_id:t.id];
     if(collection==='images'){
       cond.push("COALESCE(user_rating,'')!='deleted'");

@@ -6,7 +6,7 @@ import ReferenceImages from "./ReferenceImages.jsx";
 import ImageOutputOptions from "./ImageOutputOptions.jsx";
 import { PRESENTATION_STYLES } from "../../../shared/presentationStyles.js";
 import StudioImage from "./StudioImage.jsx";
-import StyleLayoutEditor from "./StyleLayoutEditor.jsx";
+import { generationIssue, generationErrorSection } from "./styleGenerationReadiness.js";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
@@ -15,6 +15,7 @@ import CameraSettings from "./CameraSettings.jsx";
 import OriginalImageLink from "./OriginalImageLink.jsx";
 import OriginalImageViewer from "./OriginalImageViewer.jsx";
 import { fmtDnaValue } from "./DnaFields.js";
+const validTab = tab => ["derive", "attributes", "versions"].includes(tab) ? tab : "derive";
 const parse = (s, f = {}) => {
   try {
     return JSON.parse(s);
@@ -24,13 +25,14 @@ const parse = (s, f = {}) => {
 };
 const actions = [
   ["create", "生成基础图", "按已保存设计生成或参考图片重绘"],
+  ["free_design", "自由衍生", "按文字或多张参考图探索新设计"],
   ["recolor", "换色", "指定部位与目标颜色，保存为新版本"],
   ["detail_modify", "改细节", "选择部位与添加、替换或移除"],
   ["detail_shot", "出细节图", "指定局部取景，AI 推演不代表真实工艺"],
   ["scene", "换场景", "保留服装，调整背景和展示环境"],
   ["white", "白底商品图", "保留服装，生成纯白背景商品图"],
 ];
-const actionLabels = [...actions,["free_design","自由衍生","修改设计并保存新版本"],["variant","再生成","沿用当前设计再出图"]];
+const actionLabels = [...actions,["variant","再生成","沿用当前设计再出图"]];
 const states = {
   running: "生成中",
   queued: "等待中",
@@ -78,8 +80,8 @@ export default function StyleWorkspace({
     [resolvedChoices,setResolvedChoices]=useState([]),
     [modelError, setModelError] = useState("");
   const [versionId, setVersionId] = useState(null),
-    [panel, setPanel] = useState(initialPanel || null),
-    [tab, setTab] = useState(initialPanel || "derive");
+    [panel, setPanel] = useState(initialPanel ? validTab(initialPanel) : null),
+    [tab, setTab] = useState(validTab(initialPanel));
   const [form, setForm] = useState({
       ...defaultForm,
       camera: { ...DEFAULT_CAMERA },
@@ -102,7 +104,8 @@ export default function StyleWorkspace({
   const live = useRef(true), loadController = useRef(null), currentVersion = useRef(null), editParentRef=useRef(null), selectionEpoch=useRef(0);
   const busyLock=useRef(false);
   const [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
+    [errors, setErrors] = useState({}),
+    [pendingStart, setPendingStart] = useState(null),
     [quote, setQuote] = useState(null),
     [quoteBusy, setQuoteBusy] = useState(false),
     [quoteNonce, setQuoteNonce] = useState(0),
@@ -140,14 +143,19 @@ export default function StyleWorkspace({
         ),
       );
   const active = data?.jobs.some((j) => ["running","queued"].includes(j.status));
-  const fail = (e) => {
-    if(live.current&&e.name!=="AbortError")setError(e.message || "操作失败");
+  const clearError = section => setErrors(old => ({...old, [section]: ''}));
+  const fail = (e, section = tab === 'derive' ? 'quote' : tab) => {
+    if (live.current && e.name !== 'AbortError') setErrors(old => ({...old, [section]: e.message || '操作失败'}));
   };
+  const selectedModel = models.find(m => m.id === form.model_id);
+  const readiness = generationIssue({data,version,form,model:selectedModel,dirty,active,retryJob,target});
+  const sectionError = section => errors[section] && <p role="alert" className="style-error">{errors[section]}</p>;
+
   const load = useCallback(async (selectedId = currentVersion.current, editId = editParentRef.current) => {
     loadController.current?.abort();const controller=new AbortController();loadController.current=controller;
     const r = await api.studio.workspace(templateId,{view:'summary',...(selectedId?{version_id:selectedId}:{}),...(editId?{edit_parent_id:editId}:{}),...(initialImage?.id?{image_id:initialImage.id}:{})},{signal:controller.signal});
     if(!live.current||controller.signal.aborted)return r;
-    setData(d=>d?{...r,versions:mergeRecords(d.versions,r.versions),images:mergeRecords(d.images,r.images),jobs:mergeRecords(d.jobs,r.jobs),layouts:d.layouts}:r);
+    setData(d=>d?{...r,versions:mergeRecords(d.versions,r.versions),images:mergeRecords(d.images,r.images),jobs:mergeRecords(d.jobs,r.jobs)}:r);
     setVersionId(selectedId && r.versions.some(v=>v.id===selectedId)?selectedId:r.template.work_version_id);
     setRefreshCollections(n=>n+1);
     return r;
@@ -168,6 +176,8 @@ export default function StyleWorkspace({
     live.current=true;
     let saved;
     try { saved=parse(sessionStorage.getItem(draftKey),null); } catch {}
+    // An unresolved submission must outlive ordinary form drafts.
+    if(saved?.pendingStart)setPendingStart(saved.pendingStart);
     if(saved && Date.now()-saved.savedAt<86400000){
       const oldForm={...defaultForm,...saved.form};
       if(oldForm.purpose==='white'&&['create','scene'].includes(oldForm.op))oldForm.op='white';
@@ -177,7 +187,7 @@ export default function StyleWorkspace({
       setPreview(initialImage||saved.preview||null);
       setDraft(saved.draft||null);setEditParent(saved.editParent||null);
     }
-    load(saved?.versionId,saved?.editParent).catch(e=>{if(e.code==="VERSION_NOT_FOUND")return load(null);throw e;}).then(()=>{if(live.current)restored.current=true;}).catch(e=>{if(live.current&&e.name!=="AbortError")fail(e);});
+    load(saved?.versionId,saved?.editParent).catch(e=>{if(e.code==="VERSION_NOT_FOUND")return load(null);throw e;}).then(()=>{if(live.current)restored.current=true;}).catch(e=>{if(live.current&&e.name!=="AbortError")fail(e,"load");});
     return()=>{live.current=false;loadController.current?.abort();};
   },[templateId]);
   useEffect(()=>{
@@ -193,13 +203,12 @@ export default function StyleWorkspace({
   useEffect(()=>{
     if(!panel||tab!=='attributes'||!version||snapshotFields.length||presetFields.length)return;
     const controller=new AbortController();
-    api.studio.dnaPresets({signal:controller.signal}).then(p=>setFields(p.presets?.find(p=>p.id===data.template.preset_id)?.fields||[])).catch(e=>{if(!controller.signal.aborted)fail(e);});
+    api.studio.dnaPresets({signal:controller.signal}).then(p=>setFields(p.presets?.find(p=>p.id===data.template.preset_id)?.fields||[])).catch(e=>{if(!controller.signal.aborted)fail(e,'attributes');});
     return()=>controller.abort();
   },[panel,tab,versionId,!!data]);
   useEffect(()=>{
     if(!panel||!data)return;
     if(tab==='versions')fetchPage('versions');
-    if(tab==='layout'){fetchPage('layouts');fetchPage('layoutImages');}
   },[panel,tab,refreshCollections]);
   useEffect(()=>{
     if(!panel||!data||!showHistory)return;
@@ -209,13 +218,13 @@ export default function StyleWorkspace({
     const needed=[form.source,...form.references.map(r=>r.source)].filter(x=>String(x).startsWith('ref:'));
     if(!panel||tab!=='derive'||!needed.length)return;
     const controller=new AbortController();
-    api.studio.references({ids:needed.map(x=>x.slice(4)).join(','),limit:16},{signal:controller.signal}).then(r=>setReferences(old=>mergeRecords(old,r.references))).catch(e=>{if(!controller.signal.aborted)fail(e);});
+    api.studio.references({ids:needed.map(x=>x.slice(4)).join(','),limit:16},{signal:controller.signal}).then(r=>setReferences(old=>mergeRecords(old,r.references))).catch(e=>{if(!controller.signal.aborted)fail(e,'references');});
     return()=>controller.abort();
   },[panel,tab,form.source,JSON.stringify(form.references)]);
   useEffect(()=>{
     const ids=[form.source,...form.references.map(r=>r.source)].filter(x=>/^\d+$/.test(String(x))&&!data?.images.some(i=>String(i.id)===String(x)));
     if(!panel||tab!=='derive'||!ids.length)return;
-    const controller=new AbortController();api.studio.workspaceItems(templateId,'images',{ids:ids.join(','),limit:16},{signal:controller.signal}).then(r=>setData(d=>({...d,images:mergeRecords(d.images,r.items)}))).catch(e=>{if(!controller.signal.aborted)fail(e);});
+    const controller=new AbortController();api.studio.workspaceItems(templateId,'images',{ids:ids.join(','),limit:16},{signal:controller.signal}).then(r=>setData(d=>({...d,images:mergeRecords(d.images,r.items)}))).catch(e=>{if(!controller.signal.aborted)fail(e,'references');});
     return()=>controller.abort();
   },[panel,tab,form.source,JSON.stringify(form.references),!!data]);
   useEffect(() => {
@@ -225,6 +234,7 @@ export default function StyleWorkspace({
         draftKey,
         JSON.stringify({
           savedAt: Date.now(),
+          pendingStart,
           versionId,
           form,
           draft,
@@ -234,7 +244,7 @@ export default function StyleWorkspace({
         }),
       );
     } catch {}
-  }, [versionId, form, draft, editParent, preview,target,part,detailAction]);
+  }, [versionId, form, draft, editParent, preview,target,part,detailAction,pendingStart]);
   useEffect(() => {
     if (!active) return;
     const controller=new AbortController();let timer;
@@ -243,11 +253,12 @@ export default function StyleWorkspace({
         const known=Object.fromEntries((data?.jobs||[]).filter(j=>['running','queued'].includes(j.status)).slice(0,16).map(j=>[j.id,j.revision||'']));
         const r=await api.studio.styleProgress(templateId,known,{signal:controller.signal});
         if(controller.signal.aborted)return;
+        clearError('history');
         if(r.jobs.length){setData(d=>({...d,jobs:mergeRecords(d.jobs,r.jobs)}));
           if(r.jobs.some(j=>!['running','queued'].includes(j.status))){setShowHistory(true);setRefreshCollections(n=>n+1);onChanged();}
           else if(r.jobs.some(j=>j.completed>(data.jobs.find(old=>old.id===j.id)?.completed||0)))fetchPage('images');
         }
-      }catch(e){if(!controller.signal.aborted)fail(e);}
+      }catch(e){if(!controller.signal.aborted)fail(e,'history');}
       if(!controller.signal.aborted)timer=setTimeout(poll,1500);
     };
     timer=setTimeout(poll,1000);
@@ -268,16 +279,17 @@ export default function StyleWorkspace({
   }, [data?.jobs]);
   const signature = JSON.stringify({ versionId, ...form, retryJob, dirty });
   useEffect(() => {
+    if (pendingStart) return;
     setQuote(null);
     setRequestKey("");
+    setErrors(old => ({...old, quote:'', output:'', instruction:'', camera:''}));
     if (
       !data ||
       data.template.lifecycle!=="active" ||
       !versionId ||
       !form.model_id ||
       !form.size ||
-      (form.op==="free_design" && (!form.instruction.trim()||form.instruction.trim()!==(version?.design_note||""))) ||
-      (['recolor','detail_modify'].includes(form.op) && (!version?.parent_id || !parse(version.summary,[]).some?.(d=>form.op==='recolor'?/color/.test(d.key):d.key==='details'))) ||
+      readiness ||
       dirty ||
       active ||
       !panel ||
@@ -298,10 +310,10 @@ export default function StyleWorkspace({
         if (alive) {
           setQuote(r.quote);
           setRequestKey(crypto.randomUUID());
-          setError("");
+          clearError('quote');
         }
       } catch (e) {
-        if (alive) fail(e);
+        if (alive) fail(e, generationErrorSection(e.code));
       } finally {
         if (alive) setQuoteBusy(false);
       }
@@ -312,7 +324,7 @@ export default function StyleWorkspace({
       controller.abort();
       setQuoteBusy(false);
     };
-  }, [signature, active, tab, panel, quoteNonce, !!data,data?.template.lifecycle]);
+  }, [signature, active, tab, panel, quoteNonce, !!data,data?.template.lifecycle,readiness?.message]);
   useEffect(() => {
     if (!quote) return;
     const timer = setTimeout(
@@ -326,18 +338,19 @@ export default function StyleWorkspace({
   }, [quote]);
   const update = (key, value) => {
     setRetryJob(null);
+    setQuote(null);
     setForm((f) => ({ ...f, [key]: value }));
   };
-  const run = async (fn) => {
+  const run = async (fn, section = tab === 'derive' ? 'quote' : tab) => {
     if (busyLock.current) return;
     busyLock.current=true;
     setBusy(true);
-    setError("");
+    clearError(section);
     try {
       await fn();
       window.dispatchEvent(new Event("studio-images-changed"));
     } catch (e) {
-      fail(e);
+      fail(e, section);
     } finally {
       busyLock.current=false;
       if(live.current)setBusy(false);
@@ -452,41 +465,48 @@ export default function StyleWorkspace({
       setTarget("");
     });
   const changeAction = (op) => {
-    if(op===form.op)return;
+    if(pendingStart || op===form.op)return;
     actionDrafts.current[form.op]={instruction:form.instruction,camera:form.camera,visual_style:form.visual_style,keep:form.keep,explore_variation:form.explore_variation,target,part,detailAction};
     const saved=actionDrafts.current[op];
     const camera=saved?.camera||{...form.camera,framing:op==='detail_shot'?'detail':form.camera.framing==='detail'?'garment':form.camera.framing,detail:op==='detail_shot'?form.camera.detail||'':''};
     setForm(f=>({...f,op,instruction:saved?.instruction||'',instruction_scope:op==='free_design'?'design':'presentation',camera,visual_style:op==='white'?'auto':saved?.visual_style||'auto',purpose:op==='white'?'white':op==='scene'?'scene':op==='detail_shot'?'detail':'free',keep:saved?.keep||'',explore_variation:saved?.explore_variation||false}));
-    setTarget(saved?.target||'');setPart(saved?.part||'primary_color');setDetailAction(saved?.detailAction||'替换');setRetryJob(null);setError('');
+    setTarget(saved?.target||'');setPart(saved?.part||'primary_color');setDetailAction(saved?.detailAction||'替换');setRetryJob(null);setQuote(null);setErrors(old=>({...old,quote:'',references:'',instruction:'',camera:'',output:''}));
     if(!['create','free_design'].includes(op)&&!form.source){
       const base=referenceChoices.find(c=>c.image_path===file&&c.available!==false)||referenceChoices.find(c=>c.available!==false);
       if(base)setReferenceItems([base.key]);
     }
   };
-  const saveTextDesign = () => run(async()=>{
-    if(!form.instruction.trim())throw new Error('请描述本次设计变化');
-    const sig=JSON.stringify({parent_id:versionId,dna,design_note:form.instruction});
-    if(saveRequest.current.signature!==sig)saveRequest.current={signature:sig,key:crypto.randomUUID()};
-    const r=await api.studio.saveVersion(templateId,{parent_id:versionId,dna,design_note:form.instruction,request_key:saveRequest.current.key});
-    await load(r.version.id);notify(`设计要求已保存为 V${r.version.number}，原版保留，请确认费用后生成`);
-  });
-  const start = () =>
-    run(async () => {
-      if (!quote || dirty || active) return;
-      const r = await api.studio.styleStart(templateId, {
-        quote_id: quote.id,
-        request_key: requestKey,
-        confirm: true,
-      });
-      setData((d) => ({
-        ...d,
-        jobs: [r.job, ...d.jobs.filter((j) => j.id !== r.job.id)],
-      }));
-      setQuote(null);
-      setShowHistory(true);
-      notify("生成任务已提交，关闭面板也会继续");
-    });
+  const start = () => run(async () => {
+    if ((!quote || readiness) && !pendingStart) return;
+    const submission = pendingStart || { quote_id: quote.id, request_key: requestKey, confirm: true };
+    setPendingStart(submission);
+    // Save before sending so closing/reloading after a lost response reuses the same key.
+    try {
+      const saved = parse(sessionStorage.getItem(draftKey), {});
+      sessionStorage.setItem(draftKey, JSON.stringify({...saved, savedAt:Date.now(), pendingStart:submission}));
+    } catch {}
+    let r;
+    try { r = await api.studio.styleStart(templateId, submission); }
+    catch(e) {
+      if (e.code && e.status < 500) {
+        setPendingStart(null);
+        if (/^QUOTE_/.test(e.code)) setQuote(null);
+        try { const saved=parse(sessionStorage.getItem(draftKey),{}); sessionStorage.setItem(draftKey,JSON.stringify({...saved,pendingStart:null})); } catch {}
+      }
+      if (!e.code || e.status >= 500) throw new Error('提交结果尚未确认，请使用“核对提交结果”恢复原请求');
+      throw e;
+    }
+    setPendingStart(null);
+    try { const saved=parse(sessionStorage.getItem(draftKey),{}); sessionStorage.setItem(draftKey,JSON.stringify({...saved,pendingStart:null})); } catch {}
+    setData(d => ({...d, jobs: [r.job, ...d.jobs.filter(job=>job.id!==r.job.id)]}));
+    setQuote(null);setShowHistory(true);
+    const resultVersion = r.job.snapshot.style.version_id;
+    if (resultVersion !== versionId) await load(resultVersion);
+    setRefreshCollections(n=>n+1);
+    notify(`生成任务已提交 · V${r.job.snapshot.style.version_number}，关闭面板也会继续`);
+  }, 'quote');
   const chooseSource = (img) => {
+    if (pendingStart) return;
     update("source", String(img.id));
     update("mode", "image");
     selectVersion(img.design_version_id || versionId,img);
@@ -503,14 +523,13 @@ export default function StyleWorkspace({
   const sourceImage = form.source==='original'?data?.template.source_image_path:String(form.source).startsWith('ref:')?references.find(r=>String(r.id)===form.source.slice(4))?.image_path:data?.images.find(i=>String(i.id)===form.source)?.image_path||resolvedChoices.find(c=>c.key===form.source)?.image_path;
   const previewThumbnail=preview?.thumb_path || data?.images.find(i=>i.image_path===file)?.thumb_path || (file===data?.template.source_image_path?data?.template.source_thumb_path:null);
   const sourceThumbnail=form.source==='original'?data?.template.source_thumb_path:String(form.source).startsWith('ref:')?references.find(r=>String(r.id)===form.source.slice(4))?.thumb_path:data?.images.find(i=>String(i.id)===form.source)?.thumb_path||resolvedChoices.find(c=>c.key===form.source)?.thumb_path;
-  const selectedModel = models.find((m) => m.id === form.model_id);
   const lifecycleActions=useLifecycleActions({onChanged:async()=>{await load();onChanged();},showToast:notify});
   const setReferenceItems=selected=>{
     const seen=new Set();const items=selected.filter(key=>{const c=referenceChoices.find(c=>c.key===key),identity=c?.image_path||key;if(seen.has(identity))return false;seen.add(identity);return true;});
     const task=items.length>1?'multi':items.length?'single':'text';
     const compatible=m=>imageTaskAllowed(m?.capabilities,items.length);
     const recommended=compatible(selectedModel)?selectedModel:models.find(m=>compatible(m)&&m.capabilities.default_for?.includes(task))||models.find(compatible);
-    setRetryJob(null);
+    setRetryJob(null);setQuote(null);clearError('references');
     setForm(f=>({...f,mode:items.length?'image':'text',source:items[0]||'',references:items.slice(1).map(source=>({source,role:'instruction'})),...(recommended&&recommended.id!==f.model_id?{model_id:recommended.id,size:sizeAllowed(recommended.capabilities,f.size)?f.size:recommended.sizes[0],quality:''}:{})}));
     if(recommended&&recommended.id!==form.model_id)notify(`已选择支持${items.length}张参考图的模型：${recommended.name}，请核对报价`);
   };
@@ -568,14 +587,8 @@ export default function StyleWorkspace({
           >
             款式属性
           </button>
-          <button
-            className="icon-btn"
-            aria-label="关闭款式详情"
-            onClick={close}
-          >
-            ×
-          </button>
         </div>
+        <button className="icon-btn style-workspace-close" aria-label="关闭款式详情" onClick={close}>×</button>
       </header>
       <>
           <div className="style-workspace-main">
@@ -678,7 +691,7 @@ export default function StyleWorkspace({
                 <span>预览不裁切 · 原图按需加载</span>
               </div>}
             </section>
-            {!data&&<div className="style-loading" role="status">正在加载款式资料…{error&&<p role="alert">{error}<button className="btn secondary" onClick={()=>load().catch(fail)}>重试</button></p>}</div>}
+            {!data&&<div className="style-loading" role="status">正在加载款式资料…{errors.load&&<p role="alert">{errors.load}<button className="btn secondary" onClick={()=>load().then(()=>clearError("load")).catch(e=>fail(e,"load"))}>重试</button></p>}</div>}
             {panel && data && version && (
               <aside className="style-panel">
                 <nav aria-label="款式详情功能">
@@ -686,11 +699,11 @@ export default function StyleWorkspace({
                     ["derive", "款式衍生"],
                     ["attributes", "款式属性"],
                     ["versions", "版本记录"],
-                    ["layout", "图文排版"],
                   ].map(([key, label]) => (
                     <button
                       key={key}
                       className={tab === key ? "active" : ""}
+                      aria-current={tab === key ? 'page' : undefined}
                       onClick={() => setTab(key)}
                     >
                       {label}
@@ -723,11 +736,6 @@ export default function StyleWorkspace({
                     </p>
                   )}
                   {data.template.lifecycle!=="active"&&<p className="style-notice">此款式已归档或在回收站；可查看属性与历史，恢复后才能生成。</p>}
-                  {error && (
-                    <p role="alert" className="style-error">
-                      {error}
-                    </p>
-                  )}
                   {dirty && (
                     <p role="status" className="style-notice">
                       有未保存属性，生成前请保存为新版本或取消修改。
@@ -735,6 +743,7 @@ export default function StyleWorkspace({
                   )}
                   {tab === "attributes" && (
                     <>
+                      {sectionError('attributes')}
                       <div className="style-section-title">
                         <h3>款式属性</h3>
                         {!draft && (
@@ -850,8 +859,18 @@ export default function StyleWorkspace({
                   )}
                   {tab === "derive" && (
                     <>
+                      <fieldset className="style-generation-fields" disabled={busy || active || !!pendingStart}>
                       <h3>本次衍生</h3>
-                      <div className="style-action-grid">
+                      <div className="style-action-grid" role="group" aria-label="本次衍生动作" onKeyDown={e=>{
+                        if (!['ArrowRight','ArrowLeft','ArrowDown','ArrowUp','Home','End'].includes(e.key)) return;
+                        const buttons=[...e.currentTarget.querySelectorAll('button')];
+                        if (buttons.some(b=>b.disabled)) return;
+                        const current=buttons.indexOf(document.activeElement);
+                        if (current<0) return;
+                        e.preventDefault();
+                        const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(current+(['ArrowRight','ArrowDown'].includes(e.key)?1:-1)+buttons.length)%buttons.length;
+                        buttons[next].focus();buttons[next].click();
+                      }}>
                         {actions.map(([op, label, desc]) => (
                           <button
                             key={op}
@@ -860,13 +879,15 @@ export default function StyleWorkspace({
                             disabled={busy||active}
                             onClick={() => changeAction(op)}
                           >
-                            <strong>{label}</strong>
+                            <span className="style-action-title"><strong>{label}</strong><span className="style-action-check" aria-hidden="true">{form.op===op?'✓':''}</span></span>
                             <small>{desc}</small>
                           </button>
                         ))}
                       </div>
-                      <div className="style-free-design-entry"><button className="btn secondary small" aria-pressed={form.op==='free_design'} disabled={busy||active} onClick={()=>changeAction('free_design')}>自由衍生 · 修改设计</button><span className="dim small">按文字或多张参考图探索新设计</span></div>
-                      <ReferenceImages onResolved={rows=>setResolvedChoices(old=>[...new Map([...old,...rows].map(c=>[c.key,c])).values()])} templateId={templateId} items={form.mode==='image'?[form.source,...form.references.map(r=>r.source)].filter(Boolean):[]} model={selectedModel} availableLimit={Math.max(0,...models.map(m=>imageReferenceLimit(m.capabilities)))} choices={referenceChoices} disabled={busy||active} onError={fail} onUploaded={r=>setReferences(old=>mergeRecords(old,[r]))} onChange={setReferenceItems} />
+                      <div data-generation-section="references">
+                      <ReferenceImages onResolved={rows=>setResolvedChoices(old=>[...new Map([...old,...rows].map(c=>[c.key,c])).values()])} templateId={templateId} items={form.mode==='image'?[form.source,...form.references.map(r=>r.source)].filter(Boolean):[]} model={selectedModel} availableLimit={Math.max(0,...models.map(m=>imageReferenceLimit(m.capabilities)))} choices={referenceChoices} disabled={busy||active||!!pendingStart} onUploaded={r=>setReferences(old=>mergeRecords(old,[r]))} onChange={setReferenceItems} />
+                      {sectionError('references')}
+                      </div>
                       {["recolor", "detail_modify"].includes(form.op) && (
                         <div className="style-notice">
                           <h4>先保存设计变化</h4>
@@ -937,12 +958,7 @@ export default function StyleWorkspace({
                           placeholder={form.op==='white'?'例如：均匀打光，服装完整居中，保留颜色与结构':form.op==='scene'?'例如：换成简洁室内背景，保留服装配色和结构':form.op==='detail_shot'?'例如：展示袖口细节，材质和颜色保持一致':form.op==='free_design'?'例如：保留图1版型，改用图2领子与图3花色':'描述本次想调整的内容；已保存属性会自动关联'}
                         />
                       </label>
-                      <div className="style-linked-attributes"><span>已关联款式 V{version.number} 属性</span><button className="btn secondary small" onClick={()=>setTab('attributes')}>查看属性</button></div>
-                      {form.op==='free_design'&&<div className="style-notice">
-                        <p>{form.instruction.trim()&&form.instruction.trim()===version.design_note?'设计要求已保存，可确认费用生成':'填写设计变化，先保存为新版本，再确认费用生成。'}</p>
-                        <button className="btn secondary" disabled={busy||active||dirty||!form.instruction.trim()||form.instruction.trim()===version.design_note} onClick={saveTextDesign}>{busy?'正在保存…':form.instruction.trim()&&form.instruction.trim()===version.design_note?'要求已保存':'保存要求为新版本'}</button>
-                      </div>}
-                      <p className="style-outcome" role="status">{['free_design','recolor','detail_modify'].includes(form.op)?'设计变化保存为新版本，原版本与图片保留':'在当前设计版本新增图片，服装设计保持不变'}</p>
+                      {sectionError('instruction')}
                       <details><summary>高级设置与必须保留</summary>
                       <label className="style-field">
                         必须保留
@@ -975,7 +991,9 @@ export default function StyleWorkspace({
                       </>}
                       <details open={form.op==='detail_shot'?true:undefined}><summary>视角与取景 · {form.camera.view} / {form.camera.framing}</summary><CameraSettings value={form.camera} onChange={c=>update('camera',c)}/></details>
 
+                      {sectionError('camera')}
                       <h3>模型与输出</h3>
+                      {sectionError('output')}
                       {modelError&&<p role="alert" className="style-error">图片模型加载失败：{modelError}<button className="btn secondary small" onClick={()=>setQuoteNonce(n=>n+1)}>重试加载模型</button></p>}
                       <div className="style-model-output">
                       <label className="style-field">
@@ -1016,13 +1034,7 @@ export default function StyleWorkspace({
                           ))}
                         </select>
                       </label>
-                      {form.mode === "image" &&
-                        !selectedModel?.capabilities?.image_edit && (
-                          <p className="style-error">
-                            当前模型不支持所选参考图，请选择支持图片输入的模型。
-                          </p>
-                        )}
-                      <ImageOutputOptions model={selectedModel} size={form.size} quality={form.quality||''} onChange={values=>{setRetryJob(null);setForm(f=>({...f,...values}));}} />
+                      <ImageOutputOptions model={selectedModel} size={form.size} quality={form.quality||''} onChange={values=>{setRetryJob(null);setQuote(null);setForm(f=>({...f,...values}));}} />
                       <label className="style-field">
                         生成张数
                         <input
@@ -1045,7 +1057,7 @@ export default function StyleWorkspace({
                         <div className="style-notice">
                           <strong>生成确认</strong>
                           <p>
-                            设计 V{quote.style?.version_number} ·{" "}
+                            {quote.style?.pending_design ? `基于 V${quote.style.version_number}，确认生成时保存新版本` : `设计 V${quote.style?.version_number}`} ·{" "}
                             {actionLabels.find((a) => a[0] === quote.style?.op)?.[1]}{" "}
                             ·{" "}
                             {quote.style?.source_generation_id
@@ -1065,10 +1077,12 @@ export default function StyleWorkspace({
                           </p>
                         </div>
                       )}
+                      </fieldset>
                     </>
                   )}
                   {tab === "versions" && (
                     <>
+                      {sectionError('versions')}
                       <h3>设计版本</h3>
                       {data.template.source_available&&<button className="btn secondary small" onClick={()=>run(async()=>{await api.studio.setCover(templateId,null);await load();onChanged();notify('已使用原始参考图作展示图');})}>使用原始参考图作展示图</button>}
                       {data.versions.filter(v=>(collectionIds.versions||[]).includes(v.id)).sort((a,b)=>b.number-a.number).map((v) => (
@@ -1138,24 +1152,10 @@ export default function StyleWorkspace({
                       </button>
                     </>
                   )}
-                  {tab === "layout" && (<>
-                    <StyleLayoutEditor
-                      templateId={templateId}
-                      versionId={versionId}
-                      images={data.images}
-                      layouts={(data.layouts || []).filter(l=>(collectionIds.layouts||[]).includes(l.id))}
-                      onSaved={()=>fetchPage("layouts")}
-                      onSelectVersion={selectVersion}
-                      onResolveImages={async ids=>{const r=await api.studio.workspaceItems(templateId,"images",{ids:ids.join(","),limit:20},{signal:loadController.current?.signal});if(live.current)setData(d=>({...d,images:mergeRecords(d.images,r.items)}));}}
-                    />
-                    <CollectionMore name="排版" info={pages.layouts} onLoad={p=>fetchPage("layouts",p)}/>
-                    <CollectionMore name="图片" info={pages.layoutImages} onLoad={p=>fetchPage("layoutImages",p)}/>
-                    </>
-                  )}
                   <section className="style-results">
                     <div className="style-section-title">
                       <h3>生成结果与历史</h3>
-                      <button className="btn secondary small" disabled={busy||active} onClick={()=>{changeAction("variant");setTab("derive");setNotice("已选择再生成，沿用当前设计，请核对设置与报价");}}>再生成</button>
+                      <button className="btn secondary small" disabled={busy||active||!!pendingStart} onClick={()=>{changeAction("variant");setTab("derive");setNotice("已选择再生成，沿用当前设计，请核对设置与报价");}}>再生成</button>
                       <button
                         className="btn secondary small"
                         onClick={() => setShowHistory((h) => !h)}
@@ -1163,6 +1163,7 @@ export default function StyleWorkspace({
                         {showHistory ? "收起" : "展开"}
                       </button>
                     </div>
+                    {sectionError('history')}
                     {showHistory && (
                       <>
                         <StateTabs value={imageState} onChange={setImageState}/>
@@ -1241,7 +1242,7 @@ export default function StyleWorkspace({
                               </button>
                               <button
                                 className="btn secondary small"
-                                disabled={i.image_available===false||i.lifecycle==='trash'} onClick={() => chooseSource(i)}
+                                disabled={!!pendingStart||i.image_available===false||i.lifecycle==='trash'} onClick={() => chooseSource(i)}
                               >
                                 以此继续衍生
                               </button>
@@ -1256,7 +1257,7 @@ export default function StyleWorkspace({
                                       );
                                       await load();
                                       onChanged();
-                                    })
+                                    }, 'history')
                                   }
                                 >
                                   设为展示图
@@ -1269,7 +1270,7 @@ export default function StyleWorkspace({
                                         !i.archived,
                                       );
                                       await load();
-                                    })
+                                    }, 'history')
                                   }
                                 >
                                   {i.archived ? "恢复归档" : "归档（保留原图）"}
@@ -1284,7 +1285,7 @@ export default function StyleWorkspace({
                                       });
                                       onChanged();
                                       notify("已另存为新款式");
-                                    })
+                                    }, 'history')
                                   }
                                 >
                                   另存新款式
@@ -1358,7 +1359,7 @@ export default function StyleWorkspace({
                   放弃草稿并关闭
                 </button>
               </>
-            ) : draft ? (
+            ) : draft && tab === 'attributes' ? (
               <>
                 <span>基于 V{editVersion?.number} 的属性草稿</span>
                 <button
@@ -1380,16 +1381,17 @@ export default function StyleWorkspace({
               </>
             ) : tab === "derive" && panel ? (
               <>
+                {sectionError('quote')}
                 <span role="status">
-                  {active
+                  {pendingStart ? '提交结果尚未确认，请核对原请求；不会重复扣费' : active
                     ? `生成中 ${data.jobs.find((j) => j.status === "running")?.completed || 0}/${data.jobs.find((j) => j.status === "running")?.total || 0}，可安全关闭`
                     : quoteBusy
                       ? "正在更新报价…"
                       : quote
                         ? `${quote.indexes.length} 张 · 预计 ${quote.total} 积分`
-                        : "请完成生成设置"}
+                        : readiness?.message || "请完成生成设置"}
                 </span>
-                {!quote && !quoteBusy && (
+                {!quote && !quoteBusy && !readiness && !pendingStart && (
                   <button
                     className="btn secondary"
                     onClick={() => setQuoteNonce((n) => n + 1)}
@@ -1400,11 +1402,11 @@ export default function StyleWorkspace({
                 <button
                   className="btn primary"
                   disabled={
-                    busy || active || quoteBusy || !quote || (["recolor","detail_modify"].includes(form.op)&&!!target.trim())
+                    busy || (!pendingStart && (active || quoteBusy || !quote || !!readiness))
                   }
                   onClick={start}
                 >
-                  确认费用并生成
+                  {pendingStart ? '核对提交结果' : '确认费用并生成'}
                 </button>
               </>
             ) : (

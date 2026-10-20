@@ -22,7 +22,7 @@ export function useLifecycleActions({onChanged,showToast}){
  const modal=pending?<dialog ref={dialog} className="lifecycle-dialog" aria-label="永久移除确认" onCancel={e=>{e.preventDefault();close();}}>
   <h3>{pending.done?'记录已永久移除':'永久移除确认'}</h3>
   <p>{pending.row.name||pending.row.template_name||`记录 #${pending.row.id}`}</p>
-  <p>涉及 {pending.impact.versions} 个设计版本、{pending.impact.images} 张图片、{pending.impact.layouts} 个排版。必要历史和计费审计保留。</p>
+  <p>涉及 {pending.impact.versions} 个设计版本、{pending.impact.images} 张图片。必要历史和计费审计保留。</p>
   <p>这里只移除记录，共享图片文件继续保留；回收站不会自动清空。</p>
   {pending.impact.busy&&<p role="alert">存在生成中或待核对任务，暂不能永久移除。</p>}
   {!pending.done&&<label>输入“永久删除”确认<input aria-label="永久删除确认" value={confirm} onChange={e=>setConfirm(e.target.value)}/></label>}

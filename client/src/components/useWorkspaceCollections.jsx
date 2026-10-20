@@ -9,8 +9,8 @@ export default function useWorkspaceCollections(templateId,setData,context) {
   useEffect(()=>{live.current=true;return()=>{live.current=false;controllers.current.forEach(c=>c.abort());};},[]);
   const fetchPage=useCallback(async(collection,page=1,extra={})=>{
     const ctx=contexts.current;
-    const params={page,limit:20,...(collection==='images'?{version_id:ctx.versionId,state:ctx.imageState}:collection==='layoutImages'?{state:'active'}:{}),...extra};
-    const target=collection==='layoutImages'?'images':collection;
+    const params={page,limit:20,...(collection==='images'?{version_id:ctx.versionId,state:ctx.imageState}:{}),...extra};
+    const target=collection;
     controllers.current.get(collection)?.abort();
     const controller=new AbortController();controllers.current.set(collection,controller);
     setPages(p=>({...p,[collection]:{...p[collection],loading:true,error:''}}));

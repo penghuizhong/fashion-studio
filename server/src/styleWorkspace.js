@@ -17,7 +17,6 @@ import {
   saveVersion,
   setWorking,
   parse,
-  canonical,
 } from "./styleVersions.js";
 import { makeQuote, startJob, batchJobs, jobView } from "./exploreJobs.js";
 import { resolveExploreModel } from "./exploreModels.js";
@@ -117,11 +116,6 @@ export function mountStyleWorkspace(app) {
       if (req.query.view === "summary") return res.json(workspaceSummary(t, req.query));
       res.json({
         template: templateAvailability(t),
-        layouts: db
-          .prepare(
-            "SELECT * FROM style_layouts WHERE template_id=? ORDER BY id DESC",
-          )
-          .all(t.id),
         versions: db
           .prepare(
             "SELECT * FROM style_versions WHERE template_id=? ORDER BY number DESC",
@@ -269,7 +263,7 @@ export function mountStyleWorkspace(app) {
       if (!["create", "free_design"].includes(op) && mode !== "image")
         throw problem(
           "SOURCE_REQUIRED",
-          "款式修改和展示衍生需要明确选择底图及图片编辑模型",
+          "请选择参考图",
         );
       const source = mode === "image" ? imageFor(t, b.source, req) : null;
       if (source && !model.capabilities.image_edit)
@@ -313,7 +307,11 @@ export function mountStyleWorkspace(app) {
           )
           .join("; ")].filter(Boolean).join("\n");
       }
-      if((b.instruction_scope==='design'||op==='free_design') && (!instruction.trim()||String(v.design_note||'').trim()!==instruction.trim()))throw problem('DESIGN_VERSION_REQUIRED','请先把本次设计要求保存为新版本');
+      const pendingDesign = op === 'free_design' && instruction !== (v.design_note || '');
+      if (op === 'free_design' && !instruction) throw problem('MISSING_INSTRUCTION', '请描述本次设计变化');
+      if (b.instruction_scope === 'design' && op !== 'free_design' && instruction !== (v.design_note || ''))
+        throw problem('DESIGN_VERSION_REQUIRED', '请在款式属性中保存设计变化，或选择自由衍生');
+      const designNote = op === 'free_design' ? instruction : v.design_note || '';
       if (instruction.length > 1200)
         throw problem("INVALID_INSTRUCTION", "要求限 1200 字");
       if (["recolor", "detail_modify", "scene"].includes(op) && !instruction)
@@ -362,7 +360,7 @@ export function mountStyleWorkspace(app) {
       const prompt = [
         renderDnaPrompt({ dna:purpose === "white" ? {...dna,scene:{value:"pure white studio background"}} : dna, presetId: v.preset_id, camera }),
         ops[op],
-        v.design_note ? `Saved design change (takes precedence over unchanged structured attributes): ${v.design_note}` : "",
+        designNote ? `Saved design change (takes precedence over unchanged structured attributes): ${designNote}` : "",
         instruction ? `Specific requested change: ${instruction}` : "",
         String(b.keep || "").trim()
           ? `Preserve: ${String(b.keep).slice(0, 1000)}`
@@ -387,8 +385,9 @@ export function mountStyleWorkspace(app) {
         version_id: v.id,
         version_number: v.number,
         dna,
-        design_note:v.design_note||"",
-        instruction_scope:b.instruction_scope||"presentation",
+        design_note:designNote,
+        pending_design:pendingDesign,
+        instruction_scope:op === "free_design" ? "design" : b.instruction_scope||"presentation",
         preset_id: v.preset_id,
         op,
         mode,
@@ -440,10 +439,6 @@ export function mountStyleWorkspace(app) {
         .get(req.body.quote_id, batch.id, t.user_id);
       if (!row || parse(row.payload_json).style?.template_id !== t.id)
         throw problem("QUOTE_EXPIRED", "报价不存在", 409);
-      const context = parse(row.payload_json).style;
-      styleVersion(t, context.version_id);
-      if (context.source_path) localImage(context.source_path);
-      for (const r of context.references) localImage(r.path);
       res.status(202).json({ ok: true, ...startJob(batch, req, req.body) });
     }),
   );
@@ -483,89 +478,10 @@ export function mountStyleWorkspace(app) {
       });
     }),
   );
-  app.post(
-    "/api/studio/templates/:id/layouts",
-    ah(async (req, res) => {
-      const t = styleTemplate(req.params.id, req),
-        v = styleVersion(t, req.body.version_id),
-        c = req.body.config;
-      if (!/^[\w-]{8,100}$/.test(req.body.request_key || ""))
-        throw problem("INVALID_REQUEST_KEY", "保存排版需要请求标识");
-      if (
-        !c ||
-        !["selling", "spec", "collection"].includes(c.type) ||
-        c.confirmed !== true ||
-        !["zh", "en"].includes(c.language) ||
-        !Number.isInteger(c.width) ||
-        c.width < 600 ||
-        c.width > 2400 ||
-        !Number.isInteger(c.height) ||
-        c.height < 600 ||
-        c.height > 3200 ||
-        !Array.isArray(c.selected) ||
-        c.selected.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
-        c.selected.length < 1 ||
-        c.selected.length > 4 ||
-        new Set(c.selected).size !== c.selected.length
-      )
-        throw problem("INVALID_LAYOUT", "请核对排版、资料及输出尺寸");
-      for (const id of c.selected) imageFor(t, id, req);
-      for (const [key, max] of [
-        ["title", 100],
-        ["text", 800],
-        ["promotion", 150],
-      ])
-        if (typeof c[key] !== "string" || c[key].length > max)
-          throw problem("INVALID_LAYOUT", "排版文字过长或格式不正确");
-      if (
-        !Array.isArray(c.measurements) ||
-        c.measurements.length > 8 ||
-        c.measurements.some(
-          (r) =>
-            typeof r.label !== "string" ||
-            r.label.length > 40 ||
-            (r.cm !== "" &&
-              (!Number.isFinite(Number(r.cm)) ||
-                Number(r.cm) <= 0 ||
-                Number(r.cm) > 1000)),
-        )
-      )
-        throw problem("INVALID_LAYOUT", "请填写有效的测量数据");
-      if (
-        c.type === "spec" &&
-        !c.measurements.some((r) => r.label.trim() && Number(r.cm) > 0)
-      )
-        throw problem("INVALID_LAYOUT", "规格图需要真实测量数据");
-      if (
-        !c.labels ||
-        typeof c.labels !== "object" ||
-        Array.isArray(c.labels) ||
-        Object.entries(c.labels).some(
-          ([id, label]) =>
-            !c.selected.includes(Number(id)) ||
-            typeof label !== "string" ||
-            label.length > 50,
-        )
-      )
-        throw problem("INVALID_LAYOUT", "图片标签格式不正确");
-      const config = canonical(c),
-        prior = db
-          .prepare(
-            "SELECT * FROM style_layouts WHERE template_id=? AND request_key=?",
-          )
-          .get(t.id, req.body.request_key);
-      if (prior) {
-        if (prior.config_json !== config || prior.version_id !== v.id)
-          throw problem("IDEMPOTENCY_CONFLICT", "请求标识已用于其他排版", 409);
-        return res.json({ ok: true, id: prior.id });
-      }
-      const r = db.transaction(()=>{
-        for(const id of c.selected)imageFor(t,id,req);
-        return db.prepare("INSERT INTO style_layouts(template_id,version_id,request_key,config_json,created_at) VALUES(?,?,?,?,?)").run(t.id,v.id,req.body.request_key,config,stamp());
-      }).immediate();
-      res.json({ ok: true, id: Number(r.lastInsertRowid) });
-    }),
-  );
+  app.all('/api/studio/templates/:id/layouts', ah(async (req) => {
+    styleTemplate(req.params.id, req);
+    throw problem('FEATURE_RETIRED', '图文排版功能已下线，请使用原图查看与下载', 410);
+  }));
   app.get(
     "/api/studio/references",
     ah(async (req, res) => {
