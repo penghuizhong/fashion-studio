@@ -1,3 +1,4 @@
+import ProductImageReview from "./ProductImageReview.jsx";
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { downloadOriginals } from "./downloadStudioImages.js";
@@ -109,6 +110,7 @@ export default function StylePlanResults({
   };
   const picture = (i, title, number) => {
     const id = i.generation_id || i.id;
+    const context = snapshot?.item_contexts?.[i.proposal_idx];
     return (
       <article className="wizard-result-card" key={i.item_id || i.id}>
         <button
@@ -130,6 +132,53 @@ export default function StylePlanResults({
         </small>
         {i.image_path && (
           <>
+            <ProductImageReview
+              templateId={w.data.template.id}
+              image={i}
+              context={context}
+              onChanged={(review) =>
+                w.setJob((j) =>
+                  j
+                    ? {
+                        ...j,
+                        renders: j.renders.map((r) =>
+                          r.item_id === i.item_id ? { ...r, review } : r,
+                        ),
+                      }
+                    : j,
+                )
+              }
+            />
+            {context?.renderer === "composition" && (
+              <button
+                className="btn secondary small"
+                onClick={() =>
+                  w.work(async () => {
+                    await w.loadPlan(snapshot.plan_id);
+                    w.setStep(3);
+                  })
+                }
+              >
+                修改细节裁切与文案，再次排版
+              </button>
+            )}
+            {i.request_trace && (
+              <details>
+                <summary>本次实际生成依据</summary>
+                <p>
+                  {i.request_trace.model} · {i.request_trace.size} ·{" "}
+                  {i.request_trace.quality || "模型默认"}
+                </p>
+                <p>
+                  实际参考图：{i.request_trace.source_manifest?.length || 0}张
+                </p>
+                <textarea
+                  readOnly
+                  rows={5}
+                  value={i.request_trace.prompt || ""}
+                />
+              </details>
+            )}
             <label className="inline-check">
               <input
                 type="checkbox"

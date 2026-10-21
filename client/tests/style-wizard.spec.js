@@ -402,6 +402,7 @@ test("analysis thinking is an explicit switch and fixed reasoning models show th
   const toggle = page.getByRole("checkbox", { name: /思考模式/ });
   await expect(toggle).not.toBeChecked();
   await toggle.check();
+  await page.getByLabel("生成目标", { exact: true }).selectOption("creative");
   await page.getByLabel("移除参考图1").click();
   await page
     .getByLabel("商品分析模型", { exact: true })

@@ -1,3 +1,10 @@
+import { isProductTask, renderMode } from "../../shared/productImagePolicy.js";
+import { freezeImageSources } from "./productImageSources.js";
+import { composeProduct } from "./productComposition.js";
+import {
+  mountImageReview,
+  requireReviewedImage,
+} from "./productImageReview.js";
 import { applyAnalysisContent } from "../../shared/stylePrompt.js";
 import crypto from "node:crypto";
 import { getDb } from "./db.js";
@@ -43,6 +50,7 @@ const active = (t) => {
     throw problem("RESTORE_REQUIRED", "请先恢复款式再操作", 409);
 };
 export function mountStylePlans(app) {
+  mountImageReview(app);
   const db = getDb();
   const path = "/api/studio/templates/:id/plans";
   app.get(
@@ -183,7 +191,12 @@ export function mountStylePlans(app) {
         const available = new Set(input.references.map((r) => r.id));
         content.items = content.items.map((i) => ({
           ...i,
-          reference_ids: i.reference_ids.filter((id) => available.has(id)),
+          reference_ids:
+            !b.content &&
+            canonical(i.reference_ids) ===
+              canonical(oldInput.references.map((r) => r.id))
+              ? input.references.map((r) => r.id)
+              : i.reference_ids.filter((id) => available.has(id)),
           analyzed: false,
           manual_confirmed: false,
         }));
@@ -236,6 +249,21 @@ export function mountStylePlans(app) {
         ids.some((id) => !plan.content.items.some((i) => i.id === id))
       )
         throw problem("INVALID_SELECTION", "分析图片选择无效");
+      if (
+        plan.content.items.some(
+          (i) =>
+            ids.includes(i.id) &&
+            isProductTask(plan.input, i) &&
+            !plan.input.references.some(
+              (r) => r.role === "garment" && i.reference_ids.includes(r.id),
+            ),
+        )
+      )
+        throw problem(
+          "SOURCE_REQUIRED",
+          "请先为本张添加商品原图，再分析商品",
+          422,
+        );
       resolvePlanReferences(t, plan.input, req);
       const { model, budget, signature } = analysisBudget(req, plan, ids);
       res.json({
@@ -306,6 +334,35 @@ export function mountStylePlans(app) {
     }),
   );
   app.post(
+    path + "/:planId/items/:itemId/composition-preview",
+    ah(async (req, res) => {
+      const t = styleTemplate(req.params.id, req),
+        plan = readPlan(ownedPlan(t, req.params.planId), t);
+      if (req.body?.expected_revision !== plan.revision)
+        throw problem("PLAN_CONFLICT", "规划已更新，请保存后重新预览", 409);
+      const item = plan.content.items.find((i) => i.id === req.params.itemId);
+      if (!item || renderMode(plan.input, item) !== "composition")
+        throw problem("INVALID_LAYOUT", "本张不是原图排版任务");
+      const refs = itemReferences(
+        item,
+        resolvePlanReferences(t, plan.input, req),
+      );
+      requireReviewedImage(
+        refs.find((r) => r.id === item.layout?.main_reference_id),
+      );
+      const result = await composeProduct({
+        layout: item.layout,
+        references: await freezeImageSources(refs),
+        size: item.size || plan.input.size,
+        noText: /^(无|none|no text)$/i.test(plan.input.language),
+      });
+      res.json({
+        image_base64: result.imageBase64,
+        provenance: result.provenance,
+      });
+    }),
+  );
+  app.post(
     path + "/:planId/quote",
     ah(async (req, res) => {
       const t = styleTemplate(req.params.id, req);
@@ -328,6 +385,20 @@ export function mountStylePlans(app) {
       const selected = plan.content.items
         .map((item, index) => ({ item, index }))
         .filter(({ item }) => ids.includes(item.id));
+      if (
+        selected.some(
+          ({ item }) =>
+            isProductTask(plan.input, item) &&
+            !plan.input.references.some(
+              (r) => r.role === "garment" && item.reference_ids.includes(r.id),
+            ),
+        )
+      )
+        throw problem(
+          "SOURCE_REQUIRED",
+          "商品保真生成必须选择实际商品图，不能仅使用属性描述",
+          422,
+        );
       if (
         selected.some(
           ({ item }) => item.status !== "ready" || item.prompt_stale,
@@ -371,12 +442,35 @@ export function mountStylePlans(app) {
           );
         if (plan.input.op === "scene" && !plan.input.requirements.trim())
           throw problem("MISSING_INSTRUCTION", "请描述想要的场景", 422);
-        if (!imageTaskAllowed(model.capabilities, itemRefs.length))
+        if (
+          renderMode(plan.input, item) !== "composition" &&
+          !imageTaskAllowed(model.capabilities, itemRefs.length)
+        )
           throw problem(
             "MODEL_CAPABILITY_UNAVAILABLE",
             "图片模型不支持本图参考数量，请更换兼容模型或调整参考",
             422,
           );
+        const manifest = await freezeImageSources(itemRefs);
+        const renderer = renderMode(plan.input, item);
+        let composition;
+        if (renderer === "composition") {
+          requireReviewedImage(
+            itemRefs.find((r) => r.id === item.layout.main_reference_id),
+          );
+          // Validate fonts, text overflow and crop readability before any reservation.
+          await composeProduct({
+            layout: item.layout,
+            references: manifest,
+            size: item.size || plan.input.size,
+            noText: /^(无|none|no text)$/i.test(plan.input.language),
+          });
+          composition = {
+            layout: item.layout,
+            references: manifest,
+            noText: /^(无|none|no text)$/i.test(plan.input.language),
+          };
+        }
         const source = itemRefs[0],
           references = itemRefs.slice(1).map((r) => ({
             path: r.path,
@@ -384,6 +478,10 @@ export function mountStylePlans(app) {
             role: r.role,
           }));
         item_contexts[index] = {
+          renderer,
+          composition,
+          source_manifest: manifest,
+          generation_mode: plan.input.generation_mode,
           plan_item_id: item.id,
           module_id: item.module_id,
           title: item.title,

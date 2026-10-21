@@ -1,10 +1,12 @@
 {
   "dependencies": {
+    "@fontsource/noto-sans-sc": "^5.2.8",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.11.1",
     "cors": "^2.8.6",
     "express": "^4.21.2",
     "express-rate-limit": "^8.7.0",
+    "fontkit": "^2.0.4",
     "helmet": "^8.3.0",
     "sharp": "^0.34.2",
     "undici": "^6.21.0"
@@ -21,8 +23,9 @@
     "check:products": "node scripts/check-products.js",
     "check:models": "node scripts/check-model-management.js",
     "check:plans": "node scripts/check-style-plans.js",
-    "check:prompts": "node scripts/check-style-prompts.js"
+    "check:prompts": "node scripts/check-style-prompts.js",
+    "benchmark:products": "node scripts/benchmark-product-images.js"
   },
   "type": "module",
-  "version": "0.16.0"
+  "version": "0.17.0"
 }

@@ -27,6 +27,7 @@ jobs:
       - run: npm --prefix server run check:style
       - run: npm --prefix server run check:studio
       - run: npm --prefix server run check:models
+      - run: npm --prefix server run check:prompts
       - run: npm --prefix server run check:plans
       - run: npm --prefix server run check:products
       - run: npm --prefix server run check:studio:ux

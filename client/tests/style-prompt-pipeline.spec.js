@@ -46,6 +46,7 @@ test("manual prompt survives reload, upstream edits need confirmation and reanal
       .filter({ hasText: "提示词链路验收" })
       .getByRole("button", { name: "款式属性", exact: true })
       .click();
+    await page.locator(".wizard-steps button").first().click();
     await expect(page.getByLabel("设计版本", { exact: true })).not.toHaveValue(
       "",
     );
@@ -71,7 +72,7 @@ test("manual prompt survives reload, upstream edits need confirmation and reanal
   await prompt.fill("手工终稿：正面展示黑色西装");
   await prompt.blur();
   await expect
-    .poll(async () => (await read()).content.items[0].prompt)
+    .poll(async () => (await read()).content.items[0].prompt_override)
     .toBe("手工终稿：正面展示黑色西装");
   await page.getByLabel("关闭款式详情").click();
   await open();
@@ -102,7 +103,7 @@ test("manual prompt survives reload, upstream edits need confirmation and reanal
     page.getByRole("button", { name: "采用新方案，替换手工修改", exact: true }),
   ).toBeVisible();
   expect((await read()).revision).toBe(before.revision);
-  expect((await read()).content.items[0].prompt).toBe(
+  expect((await read()).content.items[0].prompt_override).toBe(
     "手工终稿：正面展示黑色西装",
   );
   await page

@@ -1,0 +1,11 @@
+{
+  "instruction": "完整展示同款服装，保留原有结构、颜色、图案和面料外观。一位模特自然静态站姿，简洁背景，无新增文字、拼图和放大圈。",
+  "fixtures": [
+    { "name": "蓝色礼服", "template_id": 1, "critical_points": ["挂脖领圈", "腰带", "侧腰斜褶", "鱼尾拖地裙摆"] },
+    { "name": "西装", "template_id": 2, "critical_points": ["驳领", "门襟扣数", "口袋", "肩部轮廓"] },
+    { "name": "印花服装", "template_id": 3, "critical_points": ["图案位置", "图案比例", "领口", "标识"] }
+  ],
+  "configurations": [
+    { "model_id": "替换为模型管理中的实际ID", "quality": "", "size": "1024x1024" }
+  ]
+}

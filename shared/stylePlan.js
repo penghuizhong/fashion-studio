@@ -9,11 +9,11 @@ export const PLAN_LIMITS = Object.freeze({ per_module: 16, total: 64 });
 // the plan standard generates a typography section.
 export const DETAIL_MODULES = [
   ["main", "主图展示", "首屏主视觉，完整展示服装", "商品展示", null,
-    "试穿主图：默认半身或全身镜头，主体正脸与眼神可见，自信自然的姿态，服装版型与关键细节完整可读。", "worn", true],
+    "单幅完整商品照片：一位模特自然静态站姿，按服装长度完整取景，长裙包含拖地裙摆；简洁背景，无新增文字、拼图、放大圈和参数表。", "worn", false],
   ["brand", "品牌介绍", "品牌定位与视觉印象", "品牌与服务", "brand",
     "品牌介绍：编辑式半身或 3/4 镜头，主体正脸与坚定眼神可见，把穿着中的服装作为品牌封面主角，构图克制有质感。", "worn", true],
   ["selling", "款式卖点", "突出本款独有的设计亮点", "设计细节", null,
-    "款式卖点：模特以富有表达力的姿态展现服装的核心卖点，构图允许时保留正脸与眼神；可在穿着部位叠加轻量的卖点标签或引线注释。", "worn", false],
+    "款式卖点：主展示图配1–4个原图局部与准确短文案，允许人台和商品本体，不强制模特或露脸。重点说明本款可见结构，局部不能各自重新设计。", "display", true],
   ["fabric", "面料工艺", "面料质感与局部工艺展示", "设计细节", null,
     "面料工艺：必须采用「可见正脸的穿着主画面 + 小型放大圆/嵌入图」组合，主画面保留模特正脸/眼神和被穿着的主 SKU；局部放大或引线注释指向穿着部位的面料、织纹、缝线、印花或工艺。严禁单独商品特写、无人脸纯宏观材质镜头或平铺图。", "worn", false],
   ["cut", "版型裁剪", "展示轮廓、肩线与垂坠", "设计细节", null,
@@ -59,14 +59,10 @@ export const DETAIL_MODULES = [
 // Global rules from the user's module-prompt doc, injected at compile time for
 // every image instead of being pasted into each item (user: 精简，不逐图重复).
 export const GLOBAL_MODULE_RULES = {
-  mandatory:
-    "服装必须自然穿在参考主体身上，保持参考主体身份/物种/体态一致，保持服装颜色/材质/版型/细节一致。",
-  subjectFirst:
-    "主体优先：默认必须看到模特，且优先呈现正脸、眼神与主 SKU 的穿着效果；只有当模块本身要求局部细节（袖口/下摆/腰线等）且全身镜头不可行时，才允许收紧到仍包含面部和主 SKU 可见穿着区域的半身或 3/4 镜头；下装、裙装、鞋履也必须用带脸的全身/3/4 主画面配合局部放大，禁止纯无脸躯干、纯下半身或纯腿部裁切。",
-  detailContext:
-    "详情模块约束：即使是面料、工艺、尺码或参数特写，也必须保留穿着中的身体上下文与可识别面部或上半身，并通过小型放大圈/嵌入图/引线注释承载细节，禁止平铺图、悬浮衣服、纯商品细节图或完全看不到主体的画面。",
-  antiCopy:
-    "反抄录约束：禁止照搬上传图中的水印、社交平台 UI（点赞/评论/分享）、海报文字、二维码、与本 SKU 无关的 logo 或参考图里的随机文字。",
+  mandatory: "保留商品原有结构、配色、图案和面料外观。真人穿着展示时服装应自然贴合，不改款。",
+  subjectFirst: "按当前模块决定主体和取景，商品结构优先。",
+  detailContext: "局部说明必须对应有来源的商品部位，不凭空补出不可见工艺。",
+  antiCopy: "禁止复制参考图水印、平台界面、二维码及无关文字；保留商品本身标识。",
 };
 // Per-image instantiated spec fields (the doc's 10 fields minus 图片类型,
 // which is the module itself). Analysis fills these per pipeline station.

@@ -802,3 +802,10 @@
   background: var(--success-bg);
   border-color: var(--success-border);
 }
+
+.product-crop-source { position: relative; width: min(100%, 340px); }
+.product-crop-source img { display: block; width: 100%; height: auto; }
+.product-crop-outline { position: absolute; border: 2px solid var(--accent); pointer-events: none; box-sizing: border-box; }
+.product-layout-preview { display: block; width: 100%; height: auto; margin-top: 16px; }
+.wizard-plan-content figure, .wizard-result-card figure { width: 120px; margin: 0; }
+.wizard-plan-content figure img, .wizard-result-card figure img { width: 100%; height: auto; }

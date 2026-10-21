@@ -42,10 +42,10 @@ export default function ModelPicker({ value, onChange, models, placeholder, open
         value={safeValue}
         onChange={(e) => {
           onChange(e.target.value);
-          if (safeModels.length > 0) setOpen(true);
+          setOpen(true);
         }}
         onFocus={() => {
-          if (safeModels.length > 0) setOpen(true);
+          setOpen(true);
         }}
         placeholder={placeholder}
         spellCheck={false}
