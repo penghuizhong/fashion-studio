@@ -20,8 +20,9 @@
     "check:studio:ux": "node scripts/check-studio-ux.js",
     "check:products": "node scripts/check-products.js",
     "check:models": "node scripts/check-model-management.js",
-    "check:plans": "node scripts/check-style-plans.js"
+    "check:plans": "node scripts/check-style-plans.js",
+    "check:prompts": "node scripts/check-style-prompts.js"
   },
   "type": "module",
-  "version": "0.15.0"
+  "version": "0.16.0"
 }

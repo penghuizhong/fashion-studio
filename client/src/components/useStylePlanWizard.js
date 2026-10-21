@@ -1,10 +1,10 @@
+import { cleanPlanContent } from "../../../shared/stylePrompt.js";
 import { mergeStylePlanDrafts } from "./mergeStylePlanDrafts.js";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { imageTaskAllowed, sizeAllowed } from "../../../shared/imageOptions.js";
 import { normalizeCamera } from "../../../shared/photography.js";
-import { DEFAULT_STANDARD } from "../../../shared/stylePlan.js";
 export const defaultPlanInput = () => ({
   modules: { main: 1 },
   references: [],
@@ -18,42 +18,7 @@ export const defaultPlanInput = () => ({
   style: "auto",
   op: "create",
 });
-export const cleanContent = (content) =>
-  content
-    ? {
-        standard: content.standard,
-        standard_edited: content.standard_edited || false,
-        items: content.items.map(
-          ({
-            id,
-            module_id,
-            title,
-            requirement,
-            copy,
-            camera,
-            reference_ids,
-            prompt_overrides,
-            selected,
-            manual_confirmed,
-            size,
-            quality,
-          }) => ({
-            id,
-            module_id,
-            title,
-            requirement,
-            copy: copy || "",
-            camera,
-            reference_ids,
-            prompt_overrides,
-            selected,
-            manual_confirmed,
-            size: size || "",
-            quality: quality || "",
-          }),
-        ),
-      }
-    : null;
+export const cleanContent = cleanPlanContent;
 const sign = (input, content) =>
   JSON.stringify({ input, content: cleanContent(content) });
 export default function useStylePlanWizard({
@@ -90,7 +55,8 @@ export default function useStylePlanWizard({
     [pending, setPending] = useState(null),
     [pendingAnalysis, setPendingAnalysis] = useState(null),
     [retryJobId, setRetryJobId] = useState(null),
-    [ready, setReady] = useState(false);
+    [ready, setReady] = useState(false),
+    [editingPrompt, setEditingPrompt] = useState(false);
   const refreshController = useRef(null);
   const refs = useRef({}),
     live = useRef(true),
@@ -100,6 +66,7 @@ export default function useStylePlanWizard({
     quoteKey = useRef(""),
     auto = useRef(false);
   refs.current = {
+    editingPrompt,
     data,
     versionId,
     plan,
@@ -486,7 +453,7 @@ export default function useStylePlanWizard({
       setAnalysis(r.analysis);
       if (r.analysis.status === "succeeded") {
         await loadPlan(submission.plan_id);
-        setStep(3);
+        if (!r.analysis.progress?.review_required) setStep(3);
       }
     } catch (e) {
       if (e.status && e.status < 500) setPendingAnalysis(null);
@@ -526,7 +493,8 @@ export default function useStylePlanWizard({
         setAnalysis(r.analysis);
         if (r.analysis.status !== "running") {
           if (r.analysis.status === "succeeded") {
-            setStep((current) => (current === 2 ? 3 : current));
+            if (!r.analysis.progress?.review_required)
+              setStep((current) => (current === 2 ? 3 : current));
             await loadPlan(plan.id);
           }
           return;
@@ -546,7 +514,10 @@ export default function useStylePlanWizard({
     content?.items.filter((i) => i.selected && i.status === "ready") || [];
   const selectedModel = models.find((m) => m.id === input.model_id);
   let readiness = "";
-  if (!selectedModel) readiness = "请选择有效图片模型";
+  if (editingPrompt) readiness = "请先完成提示词编辑";
+  else if (content?.items.some((i) => i.selected && i.prompt_stale))
+    readiness = "手工提示词的上游内容已变化，请同步或确认保留";
+  else if (!selectedModel) readiness = "请选择有效图片模型";
   else if (
     selected.some(
       (i) => !sizeAllowed(selectedModel.capabilities, i.size || input.size),
@@ -664,6 +635,11 @@ export default function useStylePlanWizard({
   }, [quote]);
   const startGeneration = () =>
     work(async () => {
+      if (
+        !pending &&
+        (refs.current.editingPrompt || changed || readiness || !quote)
+      )
+        throw new Error("请完成编辑、保存并重新确认报价");
       const body = pending || {
         quote_id: quote.id,
         request_key: quoteKey.current,
@@ -805,6 +781,8 @@ export default function useStylePlanWizard({
       setConflict(null);
     });
   return {
+    editingPrompt,
+    setEditingPrompt,
     conflict,
     openConflict,
     resolveConflict,

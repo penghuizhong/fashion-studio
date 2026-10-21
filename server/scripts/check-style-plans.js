@@ -1,3 +1,4 @@
+import { cleanPlanContent } from "../../shared/stylePrompt.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -41,6 +42,12 @@ global.fetch = async (url, opts = {}) => {
     const body = JSON.parse(opts.body);
     const details = JSON.parse(body.messages[1].content[0].text);
     const lines = [
+      {
+        type: "recognition",
+        references: [{ number: 1, observation: "商品图可见黑色服装与贴兜" }],
+        requirements: "完整展示服装",
+        conflicts: "",
+      },
       { type: "standard", standard: details.standard },
       ...details.items.map((i, n) => ({
         type: "item",
@@ -48,6 +55,11 @@ global.fetch = async (url, opts = {}) => {
         title: `规划${n + 1}`,
         requirement: `${i.requirement} 展示本款第${n + 1}个设计重点`,
         copy: "",
+        spec: {
+          lighting: "柔光",
+          garment: "可见贴兜",
+          composition: "居中完整展示",
+        },
         observation: "图片可见纹理，实际成分未知",
       })),
     ];
@@ -58,7 +70,7 @@ global.fetch = async (url, opts = {}) => {
             message: {
               content: broken
                 ? "invalid"
-                : (truncate ? lines.slice(0, 2) : lines)
+                : (truncate ? lines.slice(0, 3) : lines)
                     .map((i) => JSON.stringify(i))
                     .join("\n"),
             },
@@ -616,6 +628,97 @@ try {
       new Set(rows.map((r) => JSON.parse(r.settings_json).plan_item_id)).size,
       64,
     );
+  });
+  await test("compiled prompts use natural language, dedicated templates, style and confirmed facts", async () => {
+    plan = await newPlan(
+      { main: 1 },
+      { style: "luxury", facts: { brand: "樱紫" } },
+    );
+    await analyze();
+    const item = plan.content.items[0];
+    assert.match(item.prompt, /版型为常规/);
+    assert.doesNotMatch(item.prompt, /confidence|"value"|dna_json/);
+    assert.match(item.prompt, /专用画面规则/);
+    assert.match(item.prompt, /refined materials/);
+    assert.match(item.prompt, /用户生成需求：完整展示服装/);
+    assert.match(item.prompt, /## 整体设计规范/);
+    assert.match(item.prompt, /品牌资料：樱紫/);
+    assert.ok(!item.prompt.includes(item.id));
+    const call = calls
+      .filter((c) => c.url.endsWith("/chat/completions"))
+      .at(-1);
+    const details = JSON.parse(
+      JSON.parse(call.body).messages[1].content[0].text,
+    );
+    assert.match(details.version.garment_description, /版型为常规/);
+    assert.ok(details.items[0].prompt_template.includes("主图展示"));
+    assert.match(details.style_prompt, /refined materials/);
+  });
+  await test("browser save payload retains full prompts and analyzed specs; upstream changes require synchronization", async () => {
+    const originalSpec = plan.content.items[0].spec;
+    const content = cleanPlanContent(plan.content);
+    content.items[0].prompt_override = "人工最终提示词：展示黑色西装";
+    plan = await save({ content });
+    assert.equal(
+      plan.content.items[0].prompt,
+      content.items[0].prompt_override,
+    );
+    assert.deepEqual(plan.content.items[0].spec, originalSpec);
+    assert.equal(plan.content.items[0].prompt_stale, false);
+    const legacy = cleanPlanContent(plan.content);
+    delete legacy.items[0].spec;
+    plan = await save({ content: legacy });
+    assert.deepEqual(plan.content.items[0].spec, originalSpec);
+    const next = cleanPlanContent(plan.content);
+    next.standard.photography = "修改为侧逆光";
+    plan = await save({ content: next });
+    assert.equal(plan.content.items[0].prompt_stale, true);
+    await req(
+      "POST",
+      plans(plan.id) + "/quote",
+      { expected_revision: plan.revision },
+      422,
+    );
+    const confirmed = cleanPlanContent(plan.content);
+    confirmed.items[0].prompt_override_basis =
+      plan.content.items[0].automatic_signature;
+    plan = await save({ content: confirmed });
+    assert.equal(plan.content.items[0].prompt_stale, false);
+    const quote = (
+      await req("POST", plans(plan.id) + "/quote", {
+        expected_revision: plan.revision,
+      })
+    ).quote;
+    assert.deepEqual(quote.prompts, ["人工最终提示词：展示黑色西装"]);
+  });
+  await test("reanalysis leaves manual drafts untouched until an explicit adoption", async () => {
+    const before = structuredClone(plan);
+    const { analysis } = await analyze();
+    assert.equal(analysis.progress.review_required, true);
+    assert.equal(plan.revision, before.revision);
+    assert.equal(plan.content.items[0].prompt, before.content.items[0].prompt);
+    plan = (
+      await req("POST", plans(plan.id) + "/apply-analysis", {
+        analysis_id: analysis.id,
+        expected_revision: plan.revision,
+        replace_manual: true,
+      })
+    ).plan;
+    assert.equal(plan.content.items[0].prompt_override, "");
+    assert.match(plan.content.items[0].prompt, /侧逆光/);
+    assert.equal(plan.content.items[0].prompt_stale, false);
+    const next = cleanPlanContent(plan.content);
+    next.items[0].prompt_override = "另一次手工修改";
+    plan = await save({ content: next });
+    const review = await analyze();
+    plan = (
+      await req("POST", plans(plan.id) + "/apply-analysis", {
+        analysis_id: review.analysis.id,
+        expected_revision: plan.revision,
+        replace_manual: false,
+      })
+    ).plan;
+    assert.equal(plan.content.items[0].prompt, "另一次手工修改");
   });
   await test("migration is repeatable and leaves original and historical files intact", async () => {
     const file = getDb()

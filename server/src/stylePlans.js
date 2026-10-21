@@ -1,3 +1,4 @@
+import { applyAnalysisContent } from "../../shared/stylePrompt.js";
 import crypto from "node:crypto";
 import { getDb } from "./db.js";
 import { ah } from "./asyncHandler.js";
@@ -16,6 +17,7 @@ import {
   DEFAULT_STANDARD,
 } from "../../shared/stylePlan.js";
 import {
+  compilePlanItem,
   normalizePlanInput,
   normalizeContent,
   seedItems,
@@ -193,6 +195,21 @@ export function mountStylePlans(app) {
           manual_confirmed: false,
         }));
       const checked = normalizeContent(content, input, content);
+      for (const item of checked.items) {
+        const prior = oldContent.items.find((i) => i.id === item.id);
+        if (
+          item.prompt_override &&
+          (!item.prompt_override_basis ||
+            item.prompt_override !== prior?.prompt_override)
+        ) {
+          item.prompt_override_basis = compilePlanItem(
+            { input, content: checked, version_id: row.version_id },
+            item,
+            t,
+          ).automatic_signature;
+        }
+        if (!item.prompt_override) item.prompt_override_basis = "";
+      }
       if (
         canonical(oldInput) === canonical(input) &&
         canonical(oldContent) === canonical(checked)
@@ -274,16 +291,13 @@ export function mountStylePlans(app) {
       );
       if (!available.size)
         throw problem("INVALID_ANALYSIS", "没有可采用的有效分析项");
-      const content = parse(row.content_json);
+      const original = parse(row.content_json);
+      const content = applyAnalysisContent(original, analysis.progress, {
+        replaceManual: req.body?.replace_manual === true,
+        full: available.size === original.items.length,
+      });
       content.items = content.items.map((i) =>
-        available.has(i.id)
-          ? {
-              ...i,
-              ...available.get(i.id),
-              analyzed: true,
-              analysis_id: analysis.id,
-            }
-          : i,
+        available.has(i.id) ? { ...i, analysis_id: analysis.id } : i,
       );
       const saved = db.transaction(() =>
         savePlanRevision(row, parse(row.input_json), content, "partial"),
@@ -314,7 +328,11 @@ export function mountStylePlans(app) {
       const selected = plan.content.items
         .map((item, index) => ({ item, index }))
         .filter(({ item }) => ids.includes(item.id));
-      if (selected.some(({ item }) => item.status !== "ready"))
+      if (
+        selected.some(
+          ({ item }) => item.status !== "ready" || item.prompt_stale,
+        )
+      )
         throw problem(
           "PLAN_NOT_READY",
           "所选规划尚未分析、缺少资料或存在冲突，请先补齐或确认手工要求",

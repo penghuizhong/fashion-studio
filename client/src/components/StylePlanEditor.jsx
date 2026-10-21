@@ -1,8 +1,11 @@
+import {
+  assembleStandardText,
+  parseStandardText,
+} from "../../../shared/stylePrompt.js";
 import { useEffect, useState } from "react";
 import {
   DETAIL_MODULES,
   FACT_FIELDS,
-  STANDARD_SECTIONS,
 } from "../../../shared/stylePlan.js";
 import StudioImage from "./StudioImage.jsx";
 const STATUS_TEXT = {
@@ -11,61 +14,36 @@ const STATUS_TEXT = {
   invalid: "需要调整",
   needs_analysis: "待分析或确认",
 };
-function PromptText({ item, index, disabled, onCommit }) {
-  const auto = item.prompt || "",
-    [draft, setDraft] = useState(item.prompt_override || auto),
-    [dirty, setDirty] = useState(false);
-  useEffect(() => {
-    if (!dirty) setDraft(item.prompt_override || auto);
-  }, [item.prompt, item.prompt_override]);
+function PromptText({ item, index, disabled, onCommit, onEditing }) {
   return (
     <label className="style-field">
       提示词模块
       <textarea
         aria-label={`图片${index + 1}提示词`}
         rows={10}
+        maxLength={12000}
         disabled={disabled}
-        placeholder="正在编译，保存后显示"
-        value={draft}
+        placeholder="正在编排，保存后显示"
+        value={
+          item.prompt_override || item.automatic_prompt || item.prompt || ""
+        }
         onChange={(e) => {
-          setDraft(e.target.value);
-          setDirty(true);
+          onEditing(true);
+          onCommit(e.target.value);
         }}
-        onBlur={() => {
-          if (!dirty) return;
-          setDirty(false);
-          onCommit(draft.trim() === auto.trim() ? "" : draft);
-        }}
+        onBlur={() => onEditing(false)}
       />
     </label>
   );
 }
-function assembleStandardText(standard = {}) {
-  return STANDARD_SECTIONS.map(
-    ([key, label]) => `${label}：${standard[key] || ""}`,
-  ).join("\n");
-}
-function parseStandardText(textValue, fallback = {}) {
-  const out = { ...fallback },
-    labels = STANDARD_SECTIONS.map(([key, label]) => [key, label]);
-  let currentKey = null;
-  for (const line of String(textValue || "").split("\n")) {
-    const hit = labels.find(([, label]) => line.startsWith(`${label}：`) || line.startsWith(`${label}:`));
-    if (hit) {
-      currentKey = hit[0];
-      out[currentKey] = line.slice(hit[1].length + 1).trim();
-    } else if (currentKey) {
-      out[currentKey] = `${out[currentKey]}\n${line}`.trim();
-    }
-  }
-  return out;
-}
-function StandardText({ content, setContent, disabled }) {
-  const [draft, setDraft] = useState(() => assembleStandardText(content.standard)),
-    [dirty, setDirty] = useState(false);
+function StandardText({ content, setContent, disabled, onEditing }) {
+  const [draft, setDraft] = useState(() =>
+    assembleStandardText(content.standard),
+  );
+  const [dirty, setDirty] = useState(false);
   useEffect(() => {
     if (!dirty) setDraft(assembleStandardText(content.standard));
-  }, [content.standard]);
+  }, [content.standard, dirty]);
   return (
     <textarea
       aria-label="整体设计规范"
@@ -73,17 +51,19 @@ function StandardText({ content, setContent, disabled }) {
       disabled={disabled}
       value={draft}
       onChange={(e) => {
-        setDraft(e.target.value);
+        const value = e.target.value;
+        setDraft(value);
         setDirty(true);
-      }}
-      onBlur={() => {
-        if (!dirty) return;
-        setDirty(false);
+        onEditing(true);
         setContent((c) => ({
           ...c,
-          standard: parseStandardText(draft, c.standard),
+          standard: parseStandardText(value),
           standard_edited: true,
         }));
+      }}
+      onBlur={() => {
+        setDirty(false);
+        onEditing(false);
       }}
     />
   );
@@ -98,7 +78,18 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
   const patch = (id, updates) =>
     setContent((c) => ({
       ...c,
-      items: c.items.map((i) => (i.id === id ? { ...i, ...updates } : i)),
+      items: c.items.map((i) =>
+        i.id === id
+          ? {
+              ...i,
+              ...updates,
+              ...(updates.title !== undefined ||
+              updates.requirement !== undefined
+                ? { edited: true }
+                : {}),
+            }
+          : i,
+      ),
     }));
   const current =
     content.items.find((i) => i.id === focused) || content.items[0];
@@ -117,7 +108,13 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
   const quote = w.quote,
     generateCount = quote?.indexes.length ?? w.selected?.length ?? 0,
     generateDisabled =
-      disabled || !quote || w.quoteBusy || w.changed || w.busy;
+      disabled ||
+      !quote ||
+      w.quoteBusy ||
+      w.changed ||
+      w.busy ||
+      w.editingPrompt ||
+      !!w.readiness;
   return (
     <div className="wizard-plan-editor">
       <div className="wizard-section-head">
@@ -177,12 +174,14 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
             <div>
               <strong>{current.title}</strong>
               <p>{current.requirement}</p>
-              <span>图内文案：{current.copy || current.spec?.text || "未添加"}</span>
+              <span>
+                图内文案：{current.copy || current.spec?.text || "未添加"}
+              </span>
             </div>
           </div>
           <p>
-            {current.spec?.strategy || current.spec?.composition || "待分析"}{" "}
-            · {current.size || input.size}
+            {current.spec?.strategy || current.spec?.composition || "待分析"} ·{" "}
+            {current.size || input.size}
           </p>
           <button
             className="btn secondary"
@@ -244,7 +243,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                       改过的内容会作为这张图的要求一起生成。
                     </p>
                     <label className="style-field">
-                      图片标题
+                      图片标题（功能卡名称，不作为图内文字）
                       <input
                         aria-label={`图片${index + 1}标题`}
                         maxLength={200}
@@ -255,7 +254,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                       />
                     </label>
                     <label className="style-field">
-                      画面描述
+                      画面描述（识别依据与本图任务）
                       <textarea
                         aria-label={`图片${index + 1}画面要求`}
                         rows={4}
@@ -270,10 +269,50 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                       item={item}
                       index={index}
                       disabled={disabled}
+                      onEditing={w.setEditingPrompt}
                       onCommit={(prompt_override) =>
-                        patch(item.id, { prompt_override })
+                        patch(item.id, {
+                          prompt_override,
+                          prompt_override_basis: item.automatic_signature || "",
+                        })
                       }
                     />
+                    {item.prompt_override && (
+                      <div className="wizard-inline">
+                        <span className="dim small">
+                          已手动编辑
+                          {item.prompt_stale
+                            ? " · 上游内容已变化，需要同步"
+                            : ""}
+                        </span>
+                        <button
+                          className="btn secondary small"
+                          disabled={disabled}
+                          onClick={() =>
+                            patch(item.id, {
+                              prompt_override: "",
+                              prompt_override_basis: "",
+                              prompt_overrides: {},
+                            })
+                          }
+                        >
+                          重新编排提示词
+                        </button>
+                        {item.prompt_stale && (
+                          <button
+                            className="btn secondary small"
+                            disabled={disabled}
+                            onClick={() =>
+                              patch(item.id, {
+                                prompt_override_basis: item.automatic_signature,
+                              })
+                            }
+                          >
+                            确认保留手工提示词
+                          </button>
+                        )}
+                      </div>
+                    )}
                     {item.missing?.length > 0 && (
                       <p className="wizard-pending">
                         待补充：
@@ -301,9 +340,15 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
             content={content}
             setContent={setContent}
             disabled={disabled}
+            onEditing={w.setEditingPrompt}
           />
         </fieldset>
       </details>
+      {w.readiness && (
+        <p role="status" className="dim small">
+          {w.readiness}
+        </p>
+      )}
       <section className="wizard-section wizard-module-card wizard-gen-card">
         <div>
           <h3>生成图片</h3>

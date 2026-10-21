@@ -1,3 +1,8 @@
+import {
+  describeStyleVersion,
+  stylePresetPrompt,
+  modulePromptTemplate,
+} from "../../shared/stylePrompt.js";
 import crypto from "node:crypto";
 import {
   DETAIL_MODULES,
@@ -249,7 +254,12 @@ export function normalizeContent(raw, input, old) {
       throw problem("INVALID_PLAN", "图片规格格式无效");
     const spec = {};
     for (const [k] of SPEC_FIELDS)
-      spec[k] = i.spec?.[k] === undefined ? "" : text(i.spec[k], 2000);
+      spec[k] =
+        i.spec === undefined
+          ? prior?.spec?.[k] || ""
+          : i.spec?.[k] === undefined
+            ? ""
+            : text(i.spec[k], 2000);
     const item = {
       id: i.id,
       module_id: i.module_id,
@@ -260,6 +270,19 @@ export function normalizeContent(raw, input, old) {
         i.prompt_override === undefined
           ? prior?.prompt_override || ""
           : text(i.prompt_override, 12000),
+      prompt_override_basis: text(
+        i.prompt_override_basis ?? prior?.prompt_override_basis ?? "",
+        64,
+      ),
+      edited:
+        i.edited === true ||
+        prior?.edited === true ||
+        !!(
+          prior &&
+          ((i.title !== undefined && i.title !== prior.title) ||
+            (i.requirement !== undefined &&
+              i.requirement !== prior.requirement))
+        ),
       spec,
       camera: normalizeCamera(i.camera),
       reference_ids,
@@ -327,13 +350,10 @@ export function compilePlanItem(plan, item, t) {
   const specLine = (key, label) => (spec[key] ? `${label}：${spec[key]}` : "");
   const worn = module.subject === "worn";
   const base = {
-    goal: `模块：${module.name}\n模块画面指引：${module.guide}\n图片目标：${item.requirement}\n任务：${input.op}；风格：${input.style}`,
+    goal: `${modulePromptTemplate(module.id)}\n图片目标：${item.requirement}\n任务：${input.op}。`,
     design: [
-      `设计版本：V${v.number}`,
-      `已保存属性：${v.dna_json}`,
+      `服装基础描述：${describeStyleVersion(v)}`,
       `已保存设计说明：${v.design_note || "无"}`,
-      `服装基础特征：${standard.garment}`,
-      `主体识别摘要：${standard.subject}`,
       specLine("garment", "本图服装识别"),
       specLine("subject", "本图主体识别"),
       `必须保留：${input.keep || "保存版本的设计特征"}`,
@@ -345,13 +365,19 @@ export function compilePlanItem(plan, item, t) {
       ? refs
           .map(
             (r) =>
-              `图${input.references.indexOf(r) + 1} / 引用${r.id}：${REFERENCE_ROLES[r.role]}。仅采用其指定角色；款式主体以图1和保存版本为准。`,
+              `图${refs.indexOf(r) + 1}：${REFERENCE_ROLES[r.role]}。${r.role === "model" ? "仅采用其人物外观、发型与体态，不采用该图服装。" : r.role === "fabric" ? "仅采用可见纹理细节，不据此确认成分。" : "仅采用服装结构与颜色，不借用人物身份。"} 服装以保存属性为准；图片与属性冲突时不擅自修改属性。`,
           )
           .join("\n")
       : "无参考图片，使用已保存属性。",
+    requirements: `用户生成需求：${input.requirements || "按所选模块展示本款服装"}\n本图画面描述：${item.requirement}\n图片识别依据：${item.observation || "尚未识图，不推测参考图内容"}`,
+    style: stylePresetPrompt(input.style),
+    standard: `整套图片共同遵循：\n${Object.entries(standard)
+      .map(
+        ([key, value]) =>
+          `${{ tone: "视觉基调与色彩背景", photography: "光影与摄影", subject: "人物一致性", garment: "服装一致性", typography: "文字排版", facts: "真实性" }[key] || key}：${value}`,
+      )
+      .join("\n")}`,
     composition: [
-      `核心视觉基调：${standard.tone}`,
-      `全局摄影参数：${standard.photography}`,
       specLine("strategy", "试穿策略"),
       specLine("composition", "构图方案"),
       specLine("lighting", "光影方案"),
@@ -361,22 +387,25 @@ export function compilePlanItem(plan, item, t) {
       module.subject === "text"
         ? "纯文字与装饰元素的章节过渡卡；允许无服装、无人物，不要求全身或露脸。"
         : "",
-      item.delivery_slot
-        ? photographyPrompt(camera, v.preset_id)
-        : "",
+      item.delivery_slot ? photographyPrompt(camera, v.preset_id) : "",
       item.delivery_slot === "side_right" ? "展示服装另一侧（右侧）。" : "",
     ]
       .filter(Boolean)
       .join("\n"),
-    copy: [
-      standard.typography
-        ? `文字系统规范：${standard.typography}`
-        : "本图不叠加成段文字；如需少量标签，简洁清晰，不遮挡服装。",
-      `新增文字使用${input.language}。管理标题不是图内文字。`,
-      `本图文案：${item.copy || spec.text || "不添加未经确认的文字"}`,
-      `商品资料：${JSON.stringify(input.facts)}`,
-      "商品原有logo、标识及技术单位保持原样。",
-    ].join("\n"),
+    copy: isNoTextLanguage(input.language)
+      ? "不叠加任何新增文字、标签或宣传文案；保留商品原有标识。"
+      : [
+          standard.typography
+            ? `文字系统规范：${standard.typography}`
+            : "本图不叠加成段文字；如需少量标签，简洁清晰，不遮挡服装。",
+          `新增文字使用${input.language}。管理标题不是图内文字。`,
+          `本图文案：${item.copy || spec.text || "不添加未经确认的文字"}`,
+          ...Object.entries(input.facts).map(
+            ([key, value]) =>
+              `${{ brand: "品牌资料", sizes: "尺码资料", colors: "真实颜色", promotion: "价格优惠", specs: "规格参数", care: "洗护资料", service: "售后政策", faq: "常见问题" }[key]}：${value}`,
+          ),
+          "商品原有logo、标识及技术单位保持原样。",
+        ].join("\n"),
     limits: [
       ...(worn
         ? [
@@ -390,6 +419,9 @@ export function compilePlanItem(plan, item, t) {
               : "本模块为展示型画面，不出现模特；服装完整、轮廓清楚。",
           ]),
       GLOBAL_MODULE_RULES.antiCopy,
+      isNoTextLanguage(input.language)
+        ? "用户选择无文字，禁止新增标题、标签和宣传文字。"
+        : "",
       standard.facts,
       ["buyer", "blogger"].includes(item.module_id)
         ? "AI模拟穿搭，不代表真实买家评价或人物背书。"
@@ -413,6 +445,13 @@ export function compilePlanItem(plan, item, t) {
   return {
     parts,
     automatic_parts: base,
+    automatic_prompt: assembled,
+    automatic_signature: hash(assembled),
+    prompt_stale: !!(
+      item.prompt_override &&
+      item.prompt_override_basis &&
+      item.prompt_override_basis !== hash(assembled)
+    ),
     prompt,
     missing,
     status: missing.length

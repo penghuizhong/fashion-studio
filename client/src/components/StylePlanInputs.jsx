@@ -77,7 +77,10 @@ export default function StylePlanInputs({
         (i) =>
           (modules[i.module_id] || 0) <
             content.items.filter((a) => a.module_id === i.module_id).length &&
-          (Object.keys(i.prompt_overrides || {}).length || i.manual_confirmed),
+          (i.prompt_override ||
+            i.edited ||
+            Object.keys(i.prompt_overrides || {}).length ||
+            i.manual_confirmed),
       ) &&
       !window.confirm(
         "减少数量可能移除已编辑图片；将优先保留人工修改项。继续？",
@@ -89,11 +92,15 @@ export default function StylePlanInputs({
       const ordered = [...content.items].sort(
         (a, b) =>
           Number(
-            !!b.manual_confirmed ||
+            !!b.prompt_override ||
+              !!b.edited ||
+              !!b.manual_confirmed ||
               Object.keys(b.prompt_overrides || {}).length > 0,
           ) -
           Number(
-            !!a.manual_confirmed ||
+            !!a.prompt_override ||
+              !!a.edited ||
+              !!a.manual_confirmed ||
               Object.keys(a.prompt_overrides || {}).length > 0,
           ),
       );

@@ -36,6 +36,9 @@ jobs:
       - name: Style planning, analysis, snapshots and billing regression
         working-directory: server
         run: npm run check:plans
+      - name: Style prompt serialization and template contracts
+        working-directory: server
+        run: npm run check:prompts
       - name: Design delivery, pattern standards and sample production regression
         working-directory: server
         run: npm run check:products

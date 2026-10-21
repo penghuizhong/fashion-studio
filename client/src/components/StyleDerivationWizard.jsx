@@ -20,13 +20,7 @@ import OriginalImageViewer from "./OriginalImageViewer.jsx";
 import OriginalImageLink from "./OriginalImageLink.jsx";
 import { mergeRecords } from "./useWorkspaceCollections.jsx";
 export default function StyleDerivationWizard(props) {
-  const {
-    templateId,
-    initialImage,
-    onClose,
-    onChanged,
-    onViewImage,
-  } = props;
+  const { templateId, initialImage, onClose, onChanged, onViewImage } = props;
   const [viewerOnly, setViewerOnly] = useState(!props.initialPanel),
     [actual, setActual] = useState(false);
   const w = useStylePlanWizard({ ...props, enablePlanning: !viewerOnly }),
@@ -241,7 +235,13 @@ export default function StyleDerivationWizard(props) {
       : w.step === 2
         ? locked || !w.input.model_id || !w.input.analysis_model_id || !counts
         : w.step === 3
-          ? !w.quote || w.quoteBusy || w.changed || active || locked
+          ? !w.quote ||
+            w.quoteBusy ||
+            w.changed ||
+            active ||
+            locked ||
+            w.editingPrompt ||
+            !!w.readiness
           : false);
   const status =
     w.step === 1
@@ -570,10 +570,22 @@ export default function StyleDerivationWizard(props) {
                         已规划 {w.analysis.progress.completed || 0}/
                         {w.analysis.progress.total || counts} 张
                       </p>
+                      {w.analysis.progress.references?.map((r) => (
+                        <p key={r.number}>
+                          图{r.number}识别：{r.observation}
+                        </p>
+                      ))}
+                      {w.analysis.progress.conflicts && (
+                        <p role="alert">
+                          参考冲突：{w.analysis.progress.conflicts}
+                        </p>
+                      )}
                       {w.analysis.progress.standard && (
                         <article className="wizard-section">
                           <strong>整体规范已形成</strong>
-                          <p>{w.analysis.progress.standard.photography}</p>
+                          {Object.entries(w.analysis.progress.standard).map(
+                            ([key, value]) => value && <p key={key}>{value}</p>,
+                          )}
                         </article>
                       )}
                       {w.analysis.progress.items?.map((i, n) => (
@@ -584,10 +596,12 @@ export default function StyleDerivationWizard(props) {
                           <p>{i.requirement}</p>
                         </article>
                       ))}
-                      {w.analysis.status === "failed" &&
+                      {(w.analysis.status === "failed" ||
+                        w.analysis.progress.review_required) &&
                         w.analysis.progress.items?.length > 0 && (
                           <button
                             className="btn secondary"
+                            disabled={locked}
                             onClick={() =>
                               w.work(async () => {
                                 const r = await api.studio.applyPlanAnalysis(
@@ -599,21 +613,67 @@ export default function StyleDerivationWizard(props) {
                                   },
                                 );
                                 w.adopt(r.plan);
+                                w.setAnalysis((a) => ({
+                                  ...a,
+                                  progress: {
+                                    ...a.progress,
+                                    review_required: false,
+                                  },
+                                }));
                                 w.setStep(3);
                               })
                             }
                           >
-                            采用已完成项，继续补齐其余规划
+                            {w.analysis.progress.review_required
+                              ? "采用新结果，保留手工修改"
+                              : "采用已完成项，继续补齐其余规划"}
                           </button>
                         )}
-                      {w.analysis.status === "succeeded" && (
-                        <button
-                          className="btn secondary"
-                          onClick={() => goto(3)}
-                        >
-                          查看已生成方案
-                        </button>
+                      {w.analysis.progress.review_required && (
+                        <div className="wizard-section">
+                          <p>
+                            新方案为候选结果，原有手工内容尚未替换。上方可核对新画面描述和整体规范。
+                          </p>
+                          <button
+                            className="btn secondary"
+                            disabled={locked}
+                            onClick={() =>
+                              w.work(async () => {
+                                await w.flush();
+                                const r = await api.studio.applyPlanAnalysis(
+                                  templateId,
+                                  w.plan.id,
+                                  {
+                                    analysis_id: w.analysis.id,
+                                    expected_revision: w.plan.revision,
+                                    replace_manual: true,
+                                  },
+                                );
+                                w.adopt(r.plan);
+                                w.setAnalysis((a) => ({
+                                  ...a,
+                                  progress: {
+                                    ...a.progress,
+                                    review_required: false,
+                                  },
+                                }));
+                                w.setStep(3);
+                              })
+                            }
+                          >
+                            采用新方案，替换手工修改
+                          </button>
+                        </div>
                       )}
+                      {w.analysis.status === "succeeded" &&
+                        !w.analysis.progress.review_required && (
+                          <button
+                            className="btn secondary"
+                            onClick={() => goto(3)}
+                          >
+                            查看已生成方案
+                          </button>
+                        )}
                     </>
                   ) : (
                     <>
