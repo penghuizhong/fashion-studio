@@ -2,7 +2,7 @@ import { imageReferenceLimit, imageTaskAllowed } from '../../../shared/imageOpti
 import { useEffect, useRef, useState } from 'react';
 import StudioImage from './StudioImage.jsx';
 import { api } from '../api.js';
-export default function ReferenceImages({items,onChange,choices,model,availableLimit=0,onUploaded,onResolved,disabled,templateId,strictLimit=false}){
+export default function ReferenceImages({items,onChange,choices,model,availableLimit=0,onUploaded,onResolved,disabled,templateId,strictLimit=false,uploadLabel="上传参考图"}){
  const [uploading,setUploading]=useState(false),[picker,setPicker]=useState(false),[tab,setTab]=useState('current');
  const [search,setSearch]=useState(''),[page,setPage]=useState(1),[result,setResult]=useState({rows:[],total:0}),[selected,setSelected]=useState([]);
  const [loading,setLoading]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0);
@@ -68,7 +68,7 @@ export default function ReferenceImages({items,onChange,choices,model,availableL
   <div className="reference-strip">{items.map((key,i)=>{const c=choices.find(c=>c.key===key);return <article key={key}><StudioImage thumbnail={c?.thumb_path} original={c?.image_path} alt={`参考图${i+1}`}/><strong>图{i+1}{i===0?' · 款式主体':''}</strong><div><button className="btn secondary small" type="button" aria-label={`前移参考图${i+1}`} disabled={disabled||uploading||i===0} onClick={()=>{const next=[...items];[next[i],next[i-1]]=[next[i-1],next[i]];onChange(next);}}>前移</button><button className="btn secondary small" type="button" aria-label={`移除参考图${i+1}`} disabled={disabled||uploading} onClick={()=>onChange(items.filter((_,j)=>j!==i))}>移除</button></div></article>;})}</div>
   <div className="reference-entry-actions">
    <label className={`btn secondary reference-file-button${disabled||uploading||!limit?' disabled':''}`}>
-    {uploading?'正在添加…':'上传图片'}<input aria-label="上传参考图" type="file" accept="image/*" multiple onChange={upload} disabled={disabled||uploading||!limit||items.length>=limit}/>
+    {uploading?'正在添加…':'上传图片'}<input aria-label={uploadLabel} type="file" accept="image/*" multiple onChange={upload} disabled={disabled||uploading||!limit||items.length>=limit}/>
    </label>
    <button className="btn secondary" disabled={disabled||uploading||!limit} aria-expanded={picker} onClick={()=>{setPicker(v=>!v);setSelected([]);}}>从图库选择</button>
   </div>

@@ -16,6 +16,8 @@
 
 0.16.0 优化五步生图提示词链路：属性自然语言化、模块专用模板、参考角色识别、整体规范注入与手稿同步，实施和验证见 [TODO 清单](docs/STYLE_PROMPT_PIPELINE_TODO.md)。
 
+0.17.0 将主图与卖点页拆成专用链路：商品原图强校验、调用追溯、原图裁切加中文字体排版，以及逐项成图验收。使用与实测边界见 [实施说明](docs/RELEASE_NOTES_0.17.0.md)，进度见 [质量优化 TODO](docs/IMAGE_QUALITY_OPTIMIZATION_TODO.md)。
+
 ## 技术
 
 - 前端：React + Vite（`client/`）

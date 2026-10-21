@@ -1,4 +1,14 @@
 import {
+  generationMode,
+  isProductTask,
+  renderMode,
+  imagePolicyIssues,
+  CORE_IMAGE_RULES,
+  FIDELITY_RULES,
+  riskyInstructions,
+} from "../../shared/productImagePolicy.js";
+import { normalizeLayout } from "./productLayoutSchema.js";
+import {
   describeStyleVersion,
   stylePresetPrompt,
   modulePromptTemplate,
@@ -6,6 +16,7 @@ import {
 import crypto from "node:crypto";
 import {
   DETAIL_MODULES,
+  FACT_FIELDS,
   PLAN_LIMITS,
   DEFAULT_STANDARD,
   GLOBAL_MODULE_RULES,
@@ -118,7 +129,13 @@ export function normalizePlanInput(b = {}) {
     throw problem("INVALID_OPERATION", "衍生方向无效");
   if (b.thinking !== undefined && typeof b.thinking !== "boolean")
     throw problem("INVALID_THINKING", "思考开关须为布尔值");
+  if (
+    b.generation_mode !== undefined &&
+    !["product", "creative"].includes(b.generation_mode)
+  )
+    throw problem("INVALID_MODE", "生成模式无效");
   const result = {
+    generation_mode: generationMode(b),
     modules: Object.fromEntries(Object.entries(counts).filter(([, n]) => n)),
     requirements: text(b.requirements || "", 3000),
     keep: text(b.keep || "", 1000),
@@ -164,6 +181,7 @@ export function seedItems(input, old = []) {
           module_id: m.id,
           title: `${m.name}${count > 1 ? ` ${n + 1}` : ""}`,
           requirement: `${m.description}。${n ? `采用第${n + 1}种构图，区别于本组其他图片。` : ""}`,
+          render_mode: renderMode(input, { module_id: m.id }),
           copy: "",
           prompt_override: "",
           spec: {},
@@ -283,6 +301,15 @@ export function normalizeContent(raw, input, old) {
             (i.requirement !== undefined &&
               i.requirement !== prior.requirement))
         ),
+      render_mode: i.render_mode || prior?.render_mode || renderMode(input, i),
+      layout:
+        i.layout !== undefined || prior?.layout || i.module_id === "selling"
+          ? normalizeLayout(
+              i.layout ?? prior?.layout,
+              input.references.find((r) => r.role === "garment")?.id || "",
+            )
+          : undefined,
+      risk_ack: text(i.risk_ack || "", 64),
       spec,
       camera: normalizeCamera(i.camera),
       reference_ids,
@@ -294,6 +321,11 @@ export function normalizeContent(raw, input, old) {
       analyzed: prior?.analyzed || false,
       manual_confirmed: i.manual_confirmed === true,
     };
+    if (
+      !["image", "composition"].includes(item.render_mode) ||
+      (item.render_mode === "composition" && i.module_id !== "selling")
+    )
+      throw problem("INVALID_LAYOUT", "当前模块不支持该输出方式");
     if (prior?.delivery_slot) item.delivery_slot = prior.delivery_slot;
     return item;
   });
@@ -304,6 +336,8 @@ export function normalizeContent(raw, input, old) {
     throw problem("INVALID_COUNT", "单模块图片过多");
   return {
     reference_paths: old?.reference_paths || [],
+    reference_conflicts: old?.reference_conflicts || "",
+    conflict_ack: text(raw.conflict_ack || "", 64),
     standard,
     standard_edited:
       raw.standard_edited === true ||
@@ -349,11 +383,50 @@ export function compilePlanItem(plan, item, t) {
   const spec = item.spec || {};
   const specLine = (key, label) => (spec[key] ? `${label}：${spec[key]}` : "");
   const worn = module.subject === "worn";
+  const renderer = renderMode(input, item);
+  const policyIssues = imagePolicyIssues(input, item);
+  const conflictSignature = hash({
+    conflicts: plan.content.reference_conflicts || "",
+    references: input.references,
+    version: plan.version_id,
+  });
+  if (
+    isProductTask(input, item) &&
+    plan.content.reference_conflicts &&
+    plan.content.conflict_ack !== conflictSignature
+  )
+    policyIssues.push("参考图与已保存属性有冲突，请先核对商品事实");
+  const warnings = isProductTask(input, item)
+    ? riskyInstructions(
+        {
+          ...item,
+          requirement: [input.requirements, item.requirement]
+            .filter(Boolean)
+            .join("\n"),
+        },
+        standard,
+      )
+    : [];
+  const riskSignature = hash({
+    input_requirements: input.requirements,
+    references: refs,
+    version: plan.version_id,
+    requirement: item.requirement,
+    spec: item.spec,
+    standard,
+    override: item.prompt_override,
+  });
+  if (warnings.length && item.risk_ack !== riskSignature)
+    policyIssues.push("请核对并确认可能改变商品的要求");
   const base = {
-    goal: `${modulePromptTemplate(module.id)}\n图片目标：${item.requirement}\n任务：${input.op}。`,
+    goal: `${isProductTask(input, item) ? FIDELITY_RULES + "\n" : ""}${modulePromptTemplate(module.id)}\n图片目标：${item.requirement}\n任务：${input.op}。`,
     design: [
       `服装基础描述：${describeStyleVersion(v)}`,
       `已保存设计说明：${v.design_note || "无"}`,
+      ...Object.entries(input.facts).map(
+        ([key, value]) =>
+          `${FACT_FIELDS[key]}：${value}（用于事实约束，不自动作为图内文案）`,
+      ),
       specLine("garment", "本图服装识别"),
       specLine("subject", "本图主体识别"),
       `必须保留：${input.keep || "保存版本的设计特征"}`,
@@ -365,19 +438,21 @@ export function compilePlanItem(plan, item, t) {
       ? refs
           .map(
             (r) =>
-              `图${refs.indexOf(r) + 1}：${REFERENCE_ROLES[r.role]}。${r.role === "model" ? "仅采用其人物外观、发型与体态，不采用该图服装。" : r.role === "fabric" ? "仅采用可见纹理细节，不据此确认成分。" : "仅采用服装结构与颜色，不借用人物身份。"} 服装以保存属性为准；图片与属性冲突时不擅自修改属性。`,
+              `图${refs.indexOf(r) + 1}：${REFERENCE_ROLES[r.role]}。${r.role === "model" ? "仅采用其人物外观、发型与体态，不采用该图服装。" : r.role === "fabric" ? "仅采用可见纹理细节，不据此确认成分。" : "仅采用服装结构与颜色，不借用人物身份。"} 服装以核对后的商品事实与原图为依据；图片与属性冲突须先核对，不擅自修改商品。`,
           )
           .join("\n")
       : "无参考图片，使用已保存属性。",
     requirements: `用户生成需求：${input.requirements || "按所选模块展示本款服装"}\n本图画面描述：${item.requirement}\n图片识别依据：${item.observation || "尚未识图，不推测参考图内容"}`,
     style: stylePresetPrompt(input.style),
     standard: `整套图片共同遵循：\n${Object.entries(standard)
+      .filter(([key]) => key !== "typography" || item.module_id !== "main")
       .map(
         ([key, value]) =>
           `${{ tone: "视觉基调与色彩背景", photography: "光影与摄影", subject: "人物一致性", garment: "服装一致性", typography: "文字排版", facts: "真实性" }[key] || key}：${value}`,
       )
       .join("\n")}`,
     composition: [
+      CORE_IMAGE_RULES[item.module_id] || "",
       specLine("strategy", "试穿策略"),
       specLine("composition", "构图方案"),
       specLine("lighting", "光影方案"),
@@ -392,34 +467,32 @@ export function compilePlanItem(plan, item, t) {
     ]
       .filter(Boolean)
       .join("\n"),
-    copy: isNoTextLanguage(input.language)
-      ? "不叠加任何新增文字、标签或宣传文案；保留商品原有标识。"
-      : [
-          standard.typography
-            ? `文字系统规范：${standard.typography}`
-            : "本图不叠加成段文字；如需少量标签，简洁清晰，不遮挡服装。",
-          `新增文字使用${input.language}。管理标题不是图内文字。`,
-          `本图文案：${item.copy || spec.text || "不添加未经确认的文字"}`,
-          ...Object.entries(input.facts).map(
-            ([key, value]) =>
-              `${{ brand: "品牌资料", sizes: "尺码资料", colors: "真实颜色", promotion: "价格优惠", specs: "规格参数", care: "洗护资料", service: "售后政策", faq: "常见问题" }[key]}：${value}`,
-          ),
-          "商品原有logo、标识及技术单位保持原样。",
-        ].join("\n"),
+    copy:
+      item.module_id === "main" || isNoTextLanguage(input.language)
+        ? "不叠加任何新增文字、标签或宣传文案；保留商品原有标识。"
+        : [
+            standard.typography
+              ? `文字系统规范：${standard.typography}`
+              : "本图不叠加成段文字；如需少量标签，简洁清晰，不遮挡服装。",
+            `新增文字使用${input.language}。管理标题不是图内文字。`,
+            `本图文案：${item.copy || spec.text || "不添加未经确认的文字"}`,
+            ...Object.entries(input.facts).map(
+              ([key, value]) =>
+                `${{ brand: "品牌资料", sizes: "尺码资料", colors: "真实颜色", promotion: "价格优惠", specs: "规格参数", care: "洗护资料", service: "售后政策", faq: "常见问题" }[key]}：${value}`,
+            ),
+            "商品原有logo、标识及技术单位保持原样。",
+          ].join("\n"),
     limits: [
       ...(worn
-        ? [
-            GLOBAL_MODULE_RULES.mandatory,
-            GLOBAL_MODULE_RULES.subjectFirst,
-            GLOBAL_MODULE_RULES.detailContext,
-          ]
+        ? [GLOBAL_MODULE_RULES.mandatory]
         : [
             module.subject === "text"
               ? "本模块为纯文字过渡卡，不出现模特与商品。"
               : "本模块为展示型画面，不出现模特；服装完整、轮廓清楚。",
           ]),
+      CORE_IMAGE_RULES[item.module_id] || "",
       GLOBAL_MODULE_RULES.antiCopy,
-      isNoTextLanguage(input.language)
+      item.module_id === "main" || isNoTextLanguage(input.language)
         ? "用户选择无文字，禁止新增标题、标签和宣传文字。"
         : "",
       standard.facts,
@@ -431,6 +504,11 @@ export function compilePlanItem(plan, item, t) {
     ]
       .filter(Boolean)
       .join("\n"),
+    ...(renderer === "composition"
+      ? {
+          composition: `使用原图裁切与真实字体合成。页面标题：${item.layout?.headline || ""}。卖点：${(item.layout?.details || []).map((d) => d.title + "：" + d.body).join("；")}。请在卖点排版中编辑图片裁切与逐字文案。`,
+        }
+      : {}),
     output: `尺寸：${item.size || input.size || "待选择"}；质量：${item.quality || input.quality || "模型默认"}。`,
   };
   const parts = { ...base, ...item.prompt_overrides };
@@ -440,9 +518,17 @@ export function compilePlanItem(plan, item, t) {
     .join("\n\n");
   // A user-edited full prompt (提示词模块) wins over the assembled parts.
   const prompt = item.prompt_override?.trim()
-    ? item.prompt_override
+    ? item.prompt_override +
+      (isProductTask(input, item)
+        ? `\n\n【商品展示执行边界】\n${FIDELITY_RULES}\n${CORE_IMAGE_RULES[item.module_id] || ""}`
+        : "")
     : assembled;
   return {
+    render_mode: renderer,
+    policy_issues: policyIssues,
+    quality_warnings: warnings,
+    risk_signature: riskSignature,
+    conflict_signature: conflictSignature,
     parts,
     automatic_parts: base,
     automatic_prompt: assembled,
@@ -454,11 +540,13 @@ export function compilePlanItem(plan, item, t) {
     ),
     prompt,
     missing,
-    status: missing.length
+    status: policyIssues.length
       ? "needs_info"
-      : !item.analyzed && !item.manual_confirmed
-        ? "needs_analysis"
-        : "ready",
+      : missing.length
+        ? "needs_info"
+        : !item.analyzed && !item.manual_confirmed
+          ? "needs_analysis"
+          : "ready",
   };
 }
 export function readPlan(row, t) {

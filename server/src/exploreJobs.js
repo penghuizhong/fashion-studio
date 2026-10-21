@@ -1,3 +1,6 @@
+import { composeProduct } from './productComposition.js';
+import { assertImageSources, frozenJobSources } from './productImageSources.js';
+import { imageReview } from './productImageReview.js';
 import { imageTaskAllowed } from '../../shared/imageOptions.js';
 import { DESIGN_STANDARD_MAX_LENGTH } from '../../shared/exploreDesign.js';
 import { imageAvailability,studioFileExists } from './imageLifecycle.js';
@@ -61,6 +64,7 @@ export function jobView(id) {
     renders: rows.map((i) => imageAvailability({
       ...JSON.parse(i.result_json),
       status: i.status,
+      review: JSON.parse(i.result_json).generation_id ? imageReview(JSON.parse(i.result_json).generation_id) : undefined,
       item_id: i.id,
     })),
     completed: rows.filter((i) => !["queued", "running"].includes(i.status))
@@ -218,8 +222,10 @@ export function makeQuote(batch, req, b, context = null) {
     b.render_model_id || source?.snapshot.model.id || batch.render_model_id,
     "image",
   );
-  const inputCount=context?.style?.source_path?1+(context.style.references||[]).length:0;
-  const referenceCounts=context?.style?.item_contexts?indexes.map(i=>context.style.item_contexts[i]).filter(Boolean).map(c=>c.source_path?1+(c.references||[]).length:0):[inputCount];
+  const effectiveStyle=context?.style || source?.snapshot.style;
+  const imageIndexes=indexes.filter(i=>effectiveStyle?.item_contexts?.[i]?.renderer!=="composition");
+  const inputCount=effectiveStyle?.source_path?1+(effectiveStyle.references||[]).length:0;
+  const referenceCounts=effectiveStyle?.item_contexts?imageIndexes.map(i=>effectiveStyle.item_contexts[i]).filter(Boolean).map(c=>c.source_path?1+(c.references||[]).length:0):[inputCount];
   if(referenceCounts.some(n=>!imageTaskAllowed(model.capabilities,n)))throw problem('MODEL_CAPABILITY_UNAVAILABLE','所选模型不支持此任务，或该功能最近验证失败，请更换模型或复测',422);
   const size = b.render_size || source?.snapshot.size || model.sizes[0];
   const quality = b.quality ?? source?.snapshot.quality ?? "";
@@ -244,11 +250,11 @@ export function makeQuote(batch, req, b, context = null) {
   const outputs = itemOutputs ? Object.fromEntries(indexes.map(i => {
     const spec=itemOutputs[i];if(!spec)throw problem('INVALID_SIZE','图片输出规格缺失');
     const selected=chooseOutput(model,spec.size,spec.quality||'');
-    return [i,{size:selected.size,quality:selected.quality,unit_price:model.billable?selected.unit:0}];
+    return [i,{size:selected.size,quality:selected.quality,unit_price:effectiveStyle?.item_contexts?.[i]?.renderer==="composition"?0:model.billable?selected.unit:0}];
   })) : null;
   const payload = {
     indexes,
-    ...(context?.style ? { style: context.style } : {}),
+    ...(effectiveStyle ? { style: effectiveStyle } : {}),
     ...(camera ? { camera } : {}),
     ...(designStandard ? { design_standard: designStandard } : {}),
     model: publicModel(model),
@@ -286,6 +292,7 @@ export function makeQuote(batch, req, b, context = null) {
   const id = randomUUID();
   db.transaction(()=>{
     for(const file of [payload.style?.source_path,...(payload.style?.references||[]).map(r=>r.path)].filter(Boolean))if(!studioFileExists(file))throw problem('SOURCE_MISSING','参考图片已失效，请重新选择',404);
+    assertImageSources(frozenJobSources(payload.style));
     db.prepare("INSERT INTO explore_quotes VALUES(?,?,?,?,?)").run(id,batch.id,owner(req),JSON.stringify(payload),payload.expires_at);
   }).immediate();
   return { id, ...payload };
@@ -329,7 +336,9 @@ export async function executeJob(id, model) {
       status = "succeeded",
       generatedComplete = false;
     try {
-      const generated = await generateImage({
+      assertImageSources(itemStyle?.source_manifest || []);
+      const localComposition=itemStyle?.renderer==='composition';
+      const generated = localComposition ? await composeProduct({...itemStyle.composition,size:spec.size}) : await generateImage({
         userId: job.user_id,
         modelId: model.id,
         prompt: result.prompt_snapshot,
@@ -366,7 +375,10 @@ export async function executeJob(id, model) {
       result = {
         ...result,
         ...files,
-        model: model.model_id,
+        model: localComposition ? 'source-compositor-v1' : model.model_id,
+        request_trace: {model:localComposition?'source-compositor-v1':model.model_id,size:spec.size,quality:spec.quality,source_manifest:itemStyle?.source_manifest || [],prompt:result.prompt_snapshot},
+        provenance: generated.provenance,
+        review_status: 'pending',
         size: spec.size,
         price: spec.unit_price,
       };
@@ -491,6 +503,7 @@ export function startJob(batch, req, b) {
       const parent = styleVersion(template, q.style.version_id);
       for (const file of [q.style.source_path, ...(q.style.references || []).map(r => r.path)].filter(Boolean))
         if (!studioFileExists(file)) throw problem('SOURCE_MISSING', '参考图片已失效，请重新选择', 404);
+      assertImageSources(frozenJobSources(q.style));
       // Save inside the job/ledger transaction: failed validation or reservation rolls back the branch too.
       if (q.style.pending_design) {
         if (q.style.op !== 'free_design' || !q.style.design_note?.trim())

@@ -109,9 +109,13 @@ export function cleanPlanContent(content) {
   return content
     ? {
         standard: content.standard,
+        conflict_ack: content.conflict_ack || "",
         standard_edited: content.standard_edited || false,
         items: content.items.map((i) => ({
           id: i.id,
+          render_mode: i.render_mode,
+          layout: i.layout,
+          risk_ack: i.risk_ack || "",
           module_id: i.module_id,
           title: i.title,
           requirement: i.requirement,
@@ -141,6 +145,7 @@ export function hasManualPlanEdits(
       (i) =>
         ids.includes(i.id) &&
         (i.edited ||
+          i.layout?.details?.some((d) => d.confirmed) ||
           i.prompt_override ||
           i.manual_confirmed ||
           Object.keys(i.prompt_overrides || {}).length),
@@ -156,6 +161,9 @@ export function applyAnalysisContent(
   const candidates = new Map((progress.items || []).map((i) => [i.id, i]));
   return {
     ...content,
+    ...(progress.conflicts !== undefined
+      ? { reference_conflicts: progress.conflicts, conflict_ack: "" }
+      : {}),
     standard:
       full && progress.standard && (replaceManual || !content.standard_edited)
         ? normalizeStandard(progress.standard)

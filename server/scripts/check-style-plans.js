@@ -166,6 +166,7 @@ const newPlan = async (modules = { main: 2 }, extra = {}) =>
       request_key: crypto.randomUUID(),
       input: {
         modules,
+        generation_mode: "creative",
         requirements: "完整展示服装，保留原色",
         model_id: image.id,
         size: "512x512",
@@ -515,6 +516,7 @@ try {
   await test("create idempotency, revision snapshots and manual-copy boundaries do not duplicate records", async () => {
     const key = crypto.randomUUID(),
       input = {
+        generation_mode: "creative",
         modules: { main: 1 },
         model_id: image.id,
         size: "512x512",
@@ -719,6 +721,390 @@ try {
       })
     ).plan;
     assert.equal(plan.content.items[0].prompt, "另一次手工修改");
+  });
+  await test("product mode blocks text-only analysis and generation, while creative tasks stay separate", async () => {
+    plan = await newPlan(
+      { main: 1 },
+      { generation_mode: "product", references: [] },
+    );
+    await req("POST", plans(plan.id) + "/analysis-estimate", {}, 422);
+    await req(
+      "POST",
+      plans(plan.id) + "/quote",
+      { expected_revision: plan.revision },
+      422,
+    );
+    assert.match(plan.content.items[0].policy_issues.join(" "), /缺少商品原图/);
+    plan = await newPlan(
+      { main: 1 },
+      { generation_mode: "creative", references: [] },
+    );
+    await analyze();
+    await req("POST", plans(plan.id) + "/quote", {
+      expected_revision: plan.revision,
+    });
+  });
+  let productMainGeneration;
+  await test("real product bytes, role order and digests reach edits and remain inspectable in results", async () => {
+    plan = await newPlan({ main: 1 }, { generation_mode: "product" });
+    await analyze();
+    assert.match(plan.content.items[0].prompt, /无新增文字|不添加新文字/);
+    const quote = (
+      await req("POST", plans(plan.id) + "/quote", {
+        expected_revision: plan.revision,
+      })
+    ).quote;
+    const manifest = quote.style.item_contexts[0].source_manifest;
+    assert.equal(manifest.length, 1);
+    assert.equal(
+      manifest[0].sha256,
+      crypto.createHash("sha256").update(png).digest("hex"),
+    );
+    const job = (
+      await req(
+        "POST",
+        `/api/studio/templates/${template.id}/jobs`,
+        { quote_id: quote.id, request_key: crypto.randomUUID(), confirm: true },
+        202,
+      )
+    ).job;
+    const finished = await waitJob(job.id);
+    assert.equal(finished.status, "succeeded");
+    const imageCall = calls
+      .filter((c) => c.url.endsWith("/images/edits"))
+      .at(-1);
+    const uploaded = imageCall.body.get("image");
+    assert.deepEqual(Buffer.from(await uploaded.arrayBuffer()), png);
+    assert.equal(
+      finished.renders[0].request_trace.source_manifest[0].sha256,
+      manifest[0].sha256,
+    );
+    assert.equal(finished.renders[0].review.status, "pending");
+    productMainGeneration = finished.renders[0].generation_id;
+  });
+  await test("fact conflicts and risky directions require acknowledgement tied to the current source revision", async () => {
+    const row = db
+      .prepare("SELECT content_json FROM style_plans WHERE id=?")
+      .get(plan.id);
+    const content = JSON.parse(row.content_json);
+    content.reference_conflicts = "已保存颜色与原图不一致，请核对";
+    db.prepare("UPDATE style_plans SET content_json=? WHERE id=?").run(
+      JSON.stringify(content),
+      plan.id,
+    );
+    plan = (await req("GET", plans(plan.id))).plan;
+    assert.ok(
+      plan.content.items[0].policy_issues.some((v) => v.includes("冲突")),
+    );
+    await req(
+      "POST",
+      plans(plan.id) + "/quote",
+      { expected_revision: plan.revision },
+      422,
+    );
+    const fixed = cleanPlanContent(plan.content);
+    fixed.conflict_ack = plan.content.items[0].conflict_signature;
+    plan = await save({ content: fixed });
+    await req("POST", plans(plan.id) + "/quote", {
+      expected_revision: plan.revision,
+    });
+    const stale = cleanPlanContent(plan.content);
+    stale.conflict_ack = "old-revision";
+    plan = await save({ content: stale });
+    await req(
+      "POST",
+      plans(plan.id) + "/quote",
+      { expected_revision: plan.revision },
+      422,
+    );
+    const restored = cleanPlanContent(plan.content);
+    restored.conflict_ack = plan.content.items[0].conflict_signature;
+    plan = await save({ content: restored });
+    const originalRequirements = plan.input.requirements;
+    plan = await save({
+      input: { ...plan.input, requirements: "裙摆飞扬，增加动态模糊" },
+    });
+    assert.ok(plan.content.items[0].quality_warnings.length > 0);
+    await req(
+      "POST",
+      plans(plan.id) + "/quote",
+      { expected_revision: plan.revision },
+      422,
+    );
+    const risk = cleanPlanContent(plan.content);
+    risk.items[0].manual_confirmed = true;
+    risk.items[0].risk_ack = plan.content.items[0].risk_signature;
+    plan = await save({ content: risk });
+    await req("POST", plans(plan.id) + "/quote", {
+      expected_revision: plan.revision,
+    });
+    plan = await save({
+      input: { ...plan.input, requirements: originalRequirements },
+    });
+    const confirmed = cleanPlanContent(plan.content);
+    confirmed.items[0].manual_confirmed = true;
+    plan = await save({ content: confirmed });
+  });
+  await test("changed source bytes invalidate a quote before billing or provider calls", async () => {
+    const quote = (
+      await req("POST", plans(plan.id) + "/quote", {
+        expected_revision: plan.revision,
+      })
+    ).quote;
+    const file = path.join(dir, quote.style.source_path),
+      before = calls.length;
+    fs.writeFileSync(file, await sharp(png).negate().png().toBuffer());
+    await req(
+      "POST",
+      `/api/studio/templates/${template.id}/jobs`,
+      { quote_id: quote.id, request_key: crypto.randomUUID(), confirm: true },
+      409,
+    );
+    assert.equal(calls.length, before);
+    fs.writeFileSync(file, png);
+  });
+  await test("source composition renders exact text and source crops without any image-model request or charge", async () => {
+    plan = await newPlan({ selling: 1 }, { generation_mode: "product" });
+    const content = cleanPlanContent(plan.content);
+    content.items[0].manual_confirmed = true;
+    content.items[0].layout = {
+      headline: "款式特点",
+      subtitle: "原图细节",
+      main_reference_id: "reference-main",
+      main_crop: { x: 0, y: 0, width: 1, height: 1 },
+      details: [
+        {
+          title: "可见纹理",
+          body: "仅展示原图可见内容",
+          reference_id: "reference-main",
+          crop: { x: 0.1, y: 0.1, width: 0.5, height: 0.5 },
+          confirmed: true,
+        },
+      ],
+    };
+    plan = await save({ content });
+    assert.equal(plan.content.items[0].status, "ready");
+    const preview = await req(
+      "POST",
+      plans(plan.id) + `/items/${plan.content.items[0].id}/composition-preview`,
+      { expected_revision: plan.revision },
+    );
+    const before = calls.length,
+      quote = (
+        await req("POST", plans(plan.id) + "/quote", {
+          expected_revision: plan.revision,
+        })
+      ).quote;
+    assert.equal(quote.total, 0);
+    const job = (
+      await req(
+        "POST",
+        `/api/studio/templates/${template.id}/jobs`,
+        { quote_id: quote.id, request_key: crypto.randomUUID(), confirm: true },
+        202,
+      )
+    ).job;
+    const finished = await waitJob(job.id);
+    assert.equal(finished.status, "succeeded");
+    assert.equal(finished.cost_actual, 0);
+    assert.equal(calls.length, before);
+    const result = finished.renders[0];
+    assert.equal(result.model, "source-compositor-v1");
+    assert.equal(
+      result.provenance.layout.details[0].body,
+      "仅展示原图可见内容",
+    );
+    assert.deepEqual(
+      fs.readFileSync(path.join(dir, result.image_path)),
+      Buffer.from(preview.image_base64, "base64"),
+    );
+  });
+  await test("composition requires source confirmation, valid crops and readable typography", async () => {
+    const original = cleanPlanContent(plan.content),
+      changed = structuredClone(original);
+    changed.items[0].layout.details[0].confirmed = false;
+    plan = await save({ content: changed });
+    await req(
+      "POST",
+      plans(plan.id) + "/quote",
+      { expected_revision: plan.revision },
+      422,
+    );
+    const invalid = structuredClone(original);
+    invalid.items[0].layout.details[0].crop.width = 2;
+    await req(
+      "PUT",
+      plans(plan.id),
+      { expected_revision: plan.revision, content: invalid },
+      400,
+    );
+    plan = await save({ content: original });
+    const lowContrast = cleanPlanContent(plan.content);
+    lowContrast.items[0].layout.color = lowContrast.items[0].layout.background;
+    plan = await save({ content: lowContrast });
+    const unreadable = await req(
+      "POST",
+      plans(plan.id) + "/quote",
+      { expected_revision: plan.revision },
+      400,
+    );
+    assert.equal(unreadable.code, "LOW_TEXT_CONTRAST");
+    plan = await save({ content: original });
+    const overflow = cleanPlanContent(plan.content);
+    overflow.items[0].layout.headline =
+      "无法显示的字符" + String.fromCodePoint(0x10ffff);
+    plan = await save({ content: overflow });
+    await req(
+      "POST",
+      plans(plan.id) + "/quote",
+      { expected_revision: plan.revision },
+      400,
+    );
+    plan = await save({ content: original });
+  });
+  await test("reviews are private and revisioned, and generated hero reuse requires all checks", async () => {
+    const reviewPath = `/api/studio/templates/${template.id}/images/${productMainGeneration}/review`;
+    await req("GET", reviewPath, undefined, 404, "bob");
+    await req(
+      "POST",
+      reviewPath,
+      { expected_revision: 0, checks: { structure: false }, note: "" },
+      400,
+    );
+    const checks = Object.fromEntries(
+      [
+        "structure",
+        "color",
+        "material",
+        "pattern",
+        "identity",
+        "composition",
+        "text",
+      ].map((k) => [k, true]),
+    );
+    const rejected = await req("POST", reviewPath, {
+      expected_revision: 0,
+      checks: { ...checks, structure: false },
+      note: "领口需修改",
+    });
+    assert.equal(rejected.review.status, "rejected");
+    const source = {
+      id: "reviewed-image-source",
+      source: String(productMainGeneration),
+      role: "garment",
+    };
+    plan = await newPlan(
+      { selling: 1 },
+      {
+        generation_mode: "product",
+        references: [
+          { id: "reference-main", source: "original", role: "garment" },
+          source,
+        ],
+      },
+    );
+    const content = cleanPlanContent(plan.content);
+    content.items[0].manual_confirmed = true;
+    content.items[0].layout = {
+      headline: "款式特点",
+      main_reference_id: source.id,
+      main_crop: { x: 0, y: 0, width: 1, height: 1 },
+      details: [
+        {
+          title: "原图局部",
+          body: "结构对照",
+          reference_id: "reference-main",
+          crop: { x: 0, y: 0, width: 0.5, height: 0.5 },
+          confirmed: true,
+        },
+      ],
+    };
+    plan = await save({ content });
+    await req(
+      "POST",
+      plans(plan.id) + "/quote",
+      { expected_revision: plan.revision },
+      422,
+    );
+    const accepted = await req("POST", reviewPath, {
+      expected_revision: 1,
+      checks,
+      note: "原图逐项核对通过",
+    });
+    assert.equal(accepted.review.status, "accepted");
+    await req(
+      "POST",
+      reviewPath,
+      { expected_revision: 1, checks, note: "" },
+      409,
+    );
+    await req("POST", plans(plan.id) + "/quote", {
+      expected_revision: plan.revision,
+    });
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) n FROM style_image_reviews WHERE generation_id=?",
+        )
+        .get(productMainGeneration).n,
+      2,
+    );
+  });
+  await test("benchmark dry run prepares nine comparisons and rejects overspending without invoking providers", async () => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const run = promisify(execFile),
+      manifestFile = path.join(dir, "benchmark-fixtures.json"),
+      reportFile = path.join(dir, "benchmark-report.json");
+    fs.writeFileSync(
+      manifestFile,
+      JSON.stringify({
+        fixtures: ["fixture-1", "fixture-2", "fixture-3"].map((name) => ({
+          name,
+          template_id: template.id,
+          critical_points: ["领口"],
+        })),
+        configurations: [{ model_id: image.id, size: "1024x1024" }],
+      }),
+    );
+    const script = new URL("./benchmark-product-images.js", import.meta.url)
+      .pathname;
+    const args = [
+      script,
+      "--manifest",
+      manifestFile,
+      "--output",
+      reportFile,
+      "--base-url",
+      base,
+    ];
+    const env = { ...process.env, BENCHMARK_COOKIE: "soulchat_session=alice" };
+    const before = calls.length,
+      jobs = db.prepare("SELECT COUNT(*) n FROM explore_jobs").get().n;
+    await run(process.execPath, args, { env });
+    const report = JSON.parse(fs.readFileSync(reportFile));
+    assert.equal(report.runs.length, 9);
+    assert.ok(report.estimated_total > 0);
+    assert.ok(
+      report.runs.every((r) => r.source_manifest[0].sha256 && r.prompt),
+    );
+    await assert.rejects(
+      () =>
+        run(
+          process.execPath,
+          [...args, "--resume", "--execute", "--max-points", "0"],
+          { env },
+        ),
+      /总预计积分超过上限/,
+    );
+    assert.equal(calls.length, before);
+    assert.equal(
+      db.prepare("SELECT COUNT(*) n FROM explore_jobs").get().n,
+      jobs,
+    );
+    assert.ok(
+      !fs.readFileSync(reportFile, "utf8").includes("soulchat_session"),
+    );
   });
   await test("migration is repeatable and leaves original and historical files intact", async () => {
     const file = getDb()

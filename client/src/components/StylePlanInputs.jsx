@@ -1,3 +1,7 @@
+import {
+  generationMode,
+  renderMode,
+} from "../../../shared/productImagePolicy.js";
 import { useState } from "react";
 import {
   DETAIL_MODULES,
@@ -29,6 +33,7 @@ export function reconcileItems(input, old = []) {
               module_id: m.id,
               title: `${m.name}${count > 1 ? ` ${n + 1}` : ""}`,
               requirement: m.description,
+              render_mode: renderMode(input, { module_id: m.id }),
               copy: "",
               prompt_override: "",
               spec: {},
@@ -170,12 +175,43 @@ export default function StylePlanInputs({
   return (
     <fieldset className="wizard-inputs" disabled={disabled}>
       <section className="wizard-section">
+        <label className="style-field">
+          生成目标
+          <select
+            aria-label="生成目标"
+            value={generationMode(input)}
+            onChange={(e) => {
+              const nextMode = e.target.value;
+              update({ generation_mode: nextMode });
+              if (content)
+                setContent((c) => ({
+                  ...c,
+                  items: c.items.map((i) => ({
+                    ...i,
+                    render_mode:
+                      i.module_id === "selling"
+                        ? nextMode === "product"
+                          ? "composition"
+                          : "image"
+                        : i.render_mode,
+                  })),
+                }));
+            }}
+          >
+            <option value="product">同款商品保真（必须提供商品图）</option>
+            <option value="creative">创意设计（允许重新设计）</option>
+          </select>
+        </label>
+        <p className="dim small">
+          商品主图默认无文字、无拼图；卖点图使用原图细节和真实字体排版。创意设计不保证与原商品结构一致。
+        </p>
         <h3>商品图</h3>
         <p className="dim small">
           服装本体依据：第一张为款式主体，其余可标注为面料细节。
         </p>
         <ReferenceImages
           strictLimit
+          uploadLabel="上传商品图"
           templateId={w.data.template.id}
           items={garmentRefs.map((r) => r.source)}
           choices={choices}
@@ -211,6 +247,7 @@ export default function StylePlanInputs({
         </p>
         <ReferenceImages
           strictLimit
+          uploadLabel="上传模特图"
           templateId={w.data.template.id}
           items={modelRefs.map((r) => r.source)}
           choices={choices}

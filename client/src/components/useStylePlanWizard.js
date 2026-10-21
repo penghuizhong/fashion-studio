@@ -1,3 +1,4 @@
+import { imagePolicyIssues, renderMode } from '../../../shared/productImagePolicy.js';
 import { cleanPlanContent } from "../../../shared/stylePrompt.js";
 import { mergeStylePlanDrafts } from "./mergeStylePlanDrafts.js";
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -6,6 +7,7 @@ import { useAuth } from "../auth.jsx";
 import { imageTaskAllowed, sizeAllowed } from "../../../shared/imageOptions.js";
 import { normalizeCamera } from "../../../shared/photography.js";
 export const defaultPlanInput = () => ({
+  generation_mode: "product",
   modules: { main: 1 },
   references: [],
   requirements: "",
@@ -517,6 +519,7 @@ export default function useStylePlanWizard({
   if (editingPrompt) readiness = "请先完成提示词编辑";
   else if (content?.items.some((i) => i.selected && i.prompt_stale))
     readiness = "手工提示词的上游内容已变化，请同步或确认保留";
+  else if (content?.items.some(i=>i.selected&&imagePolicyIssues(input,i).length)) readiness = content.items.flatMap(i=>i.selected?imagePolicyIssues(input,i):[])[0];
   else if (!selectedModel) readiness = "请选择有效图片模型";
   else if (
     selected.some(
@@ -527,7 +530,7 @@ export default function useStylePlanWizard({
   else if (
     selected.some(
       (i) =>
-        !imageTaskAllowed(selectedModel.capabilities, i.reference_ids.length),
+        renderMode(input,i)!=="composition" && !imageTaskAllowed(selectedModel.capabilities, i.reference_ids.length),
     )
   )
     readiness = "请调整参考数量或选择兼容模型";

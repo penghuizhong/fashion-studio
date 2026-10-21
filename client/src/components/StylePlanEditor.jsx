@@ -1,12 +1,11 @@
+import ProductLayoutEditor from "./ProductLayoutEditor.jsx";
+import { renderMode } from "../../../shared/productImagePolicy.js";
 import {
   assembleStandardText,
   parseStandardText,
 } from "../../../shared/stylePrompt.js";
 import { useEffect, useState } from "react";
-import {
-  DETAIL_MODULES,
-  FACT_FIELDS,
-} from "../../../shared/stylePlan.js";
+import { DETAIL_MODULES, FACT_FIELDS } from "../../../shared/stylePlan.js";
 import StudioImage from "./StudioImage.jsx";
 const STATUS_TEXT = {
   ready: "可生成",
@@ -117,6 +116,29 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
       !!w.readiness;
   return (
     <div className="wizard-plan-editor">
+      {content.reference_conflicts && (
+        <section className="wizard-section">
+          <p role="alert">商品事实冲突：{content.reference_conflicts}</p>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              disabled={disabled}
+              checked={
+                content.conflict_ack === content.items[0]?.conflict_signature
+              }
+              onChange={(e) =>
+                setContent((c) => ({
+                  ...c,
+                  conflict_ack: e.target.checked
+                    ? content.items[0].conflict_signature
+                    : "",
+                }))
+              }
+            />
+            已对照原图与保存属性核对，确认按已核对商品事实执行
+          </label>
+        </section>
+      )}
       <div className="wizard-section-head">
         <div>
           <h3>图片规划</h3>
@@ -265,18 +287,84 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                         }
                       />
                     </label>
-                    <PromptText
-                      item={item}
-                      index={index}
-                      disabled={disabled}
-                      onEditing={w.setEditingPrompt}
-                      onCommit={(prompt_override) =>
-                        patch(item.id, {
-                          prompt_override,
-                          prompt_override_basis: item.automatic_signature || "",
-                        })
-                      }
-                    />
+                    {renderMode(input, item) === "composition" ? (
+                      <ProductLayoutEditor
+                        w={w}
+                        item={item}
+                        choices={choices}
+                        disabled={disabled}
+                        patch={(updates) => patch(item.id, updates)}
+                      />
+                    ) : (
+                      <>
+                        <PromptText
+                          item={item}
+                          index={index}
+                          disabled={disabled}
+                          onEditing={w.setEditingPrompt}
+                          onCommit={(prompt_override) =>
+                            patch(item.id, {
+                              prompt_override,
+                              prompt_override_basis:
+                                item.automatic_signature || "",
+                            })
+                          }
+                        />
+                      </>
+                    )}
+                    <div className="wizard-inline">
+                      {input.references
+                        .filter((r) => item.reference_ids.includes(r.id))
+                        .map((r, n) => {
+                          const image = choices.find((c) => c.key === r.source);
+                          return (
+                            <figure key={r.id}>
+                              <StudioImage
+                                thumbnail={image?.thumb_path}
+                                original={image?.image_path}
+                                alt={`本张参考图${n + 1}`}
+                              />
+                              <figcaption>
+                                图{n + 1} ·{" "}
+                                {r.role === "model"
+                                  ? "参考模特"
+                                  : r.role === "fabric"
+                                    ? "面料细节"
+                                    : "商品原图"}
+                              </figcaption>
+                            </figure>
+                          );
+                        })}
+                    </div>
+                    {(item.policy_issues || []).map((issue) => (
+                      <p className="wizard-pending" key={issue}>
+                        {issue}
+                      </p>
+                    ))}
+                    {item.quality_warnings?.length > 0 && (
+                      <label className="inline-check">
+                        <input
+                          type="checkbox"
+                          checked={item.risk_ack === item.risk_signature}
+                          disabled={disabled}
+                          onChange={(e) =>
+                            patch(item.id, {
+                              risk_ack: e.target.checked
+                                ? item.risk_signature
+                                : "",
+                            })
+                          }
+                        />
+                        已对照原图核对以下要求：
+                        {item.quality_warnings.join("；")}
+                      </label>
+                    )}
+                    {item.prompt_override && (
+                      <details>
+                        <summary>完整执行提示词（含商品展示边界）</summary>
+                        <textarea readOnly rows={5} value={item.prompt || ""} />
+                      </details>
+                    )}
                     {item.prompt_override && (
                       <div className="wizard-inline">
                         <span className="dim small">

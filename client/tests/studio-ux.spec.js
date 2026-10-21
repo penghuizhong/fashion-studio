@@ -77,11 +77,11 @@ test('one reference picker paginates searchable assets, preserves staged selecti
  test.setTimeout(60000);const source=await makeStyle(request,'图库分页资产');await generate(request,source,16);await generate(request,source,16);
  await makeStyle(request,'图库目标款式');await openStyle(page,'图库目标款式',true);await derive(page);await page.getByLabel('图片模型',{exact:true}).selectOption('browser-image-two');
  await page.getByLabel('移除参考图1').click();let assets=0;page.on('request',r=>{if(new URL(r.url()).pathname==='/api/studio/assets')assets++;});expect(assets).toBe(0);
- await page.getByRole('button',{name:'从图库选择',exact:true}).click();await page.getByRole('tab',{name:'资产库',exact:true}).click();await page.getByLabel('搜索参考图').fill('图库分页资产');
+ await page.getByRole('button',{name:'从图库选择',exact:true}).first().click();await page.getByRole('tab',{name:'资产库',exact:true}).click();await page.getByLabel('搜索参考图').fill('图库分页资产');
  await expect(page.locator('.reference-picker-grid button')).toHaveCount(24);await page.locator('.reference-picker-grid button').first().click();
  await page.getByRole('button',{name:'下一页',exact:true}).click();await expect(page.locator('.reference-picker-grid button')).toHaveCount(8);await page.locator('.reference-picker-grid button').first().click();
  await expect(page.getByText('待添加 2 张',{exact:true})).toBeVisible();await page.getByRole('button',{name:'添加所选参考图',exact:true}).click();await expect(page.locator('.reference-strip article')).toHaveCount(2);
- await page.getByRole('button',{name:'从图库选择',exact:true}).click();await page.getByRole('tab',{name:'已上传',exact:true}).click();await expect(page.locator('.reference-picker-grid button:disabled')).toHaveCount(2);
+ await page.getByRole('button',{name:'从图库选择',exact:true}).first().click();await page.getByRole('tab',{name:'已上传',exact:true}).click();await expect(page.locator('.reference-picker-grid button:disabled')).toHaveCount(2);
  await page.getByRole('button',{name:'取消',exact:true}).click();await expect(page.locator('.reference-strip article')).toHaveCount(2);expect(assets).toBeGreaterThan(0);
 });
 
