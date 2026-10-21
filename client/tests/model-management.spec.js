@@ -107,14 +107,15 @@ test('failed deletion keeps the model and editing draft', async ({ page }) => {
 
 test('late model cache from previous provider cannot overwrite current suggestions', async ({ page }) => {
   await setup(page, 1440);
-  let release;
+  let release, releaseCurrent;
+  const currentGate = new Promise(resolve => releaseCurrent = resolve);
   const gate = new Promise(resolve => release = resolve);
   await page.route('**/api/admin/providers/main-provider/models', async route => { await gate; await route.fulfill({ json: { models: [{ id: 'old-provider-only' }] } }); });
-  await page.route('**/api/admin/providers/dash-provider/models', route => route.fulfill({ json: { models: [{ id: 'current-provider-only' }] } }));
+  await page.route('**/api/admin/providers/dash-provider/models', async route => { await currentGate; await route.fulfill({ json: { models: [{ id: 'current-provider-only' }] } }); });
   const first = page.waitForRequest('**/api/admin/providers/main-provider/models');
   await page.getByRole('button', { name: '上架图片模型', exact: true }).click(); await first;
   await page.getByLabel('模型供应商').selectOption('dash-provider');
-  await page.locator('.model-picker input').focus(); await expect(page.locator('.model-dropdown')).toContainText('current-provider-only');
+  await page.locator('.model-picker input').focus(); releaseCurrent(); await expect(page.locator('.model-dropdown')).toContainText('current-provider-only');
   const response = page.waitForResponse('**/api/admin/providers/main-provider/models'); release(); await (await response).finished();
   await expect(page.locator('.model-dropdown')).toContainText('current-provider-only'); await expect(page.locator('.model-dropdown')).not.toContainText('old-provider-only');
 });
