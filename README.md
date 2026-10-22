@@ -18,6 +18,8 @@
 
 0.17.0 将主图与卖点页拆成专用链路：商品原图强校验、调用追溯、原图裁切加中文字体排版，以及逐项成图验收。使用与实测边界见 [实施说明](docs/RELEASE_NOTES_0.17.0.md)，进度见 [质量优化 TODO](docs/IMAGE_QUALITY_OPTIMIZATION_TODO.md)。
 
+0.17.2 修正分析与逐图提示词的作用范围，清除固定跨模块规则和无条件多图说明，并提供真实识图附件及图生图调用记录，见 [链路说明](docs/RELEASE_NOTES_0.17.2.md)。
+
 ## 技术
 
 - 前端：React + Vite（`client/`）

@@ -570,6 +570,38 @@ export default function StyleDerivationWizard(props) {
                         已规划 {w.analysis.progress.completed || 0}/
                         {w.analysis.progress.total || counts} 张
                       </p>
+                      {w.analysis.request_trace && (
+                        <details className="wizard-section">
+                          <summary>
+                            本次实际识图：{w.analysis.request_trace.image_count}
+                            张
+                          </summary>
+                          <p className="dim small">
+                            图片以真实图片数据附件发送，下面按实际发送顺序列出来源。
+                          </p>
+                          <div className="wizard-inline wizard-analysis-sources">
+                            {w.analysis.request_trace.source_manifest.map(
+                              (r) => (
+                                <figure key={r.id}>
+                                  <ProgressiveStudioImage
+                                    original={r.path}
+                                    alt={`识图来源图${r.number}`}
+                                  />
+                                  <figcaption>
+                                    图{r.number} ·{" "}
+                                    {r.role === "model"
+                                      ? "模特图"
+                                      : r.role === "fabric"
+                                        ? "细节图"
+                                        : "商品图"}
+                                  </figcaption>
+                                  <OriginalImageLink path={r.path} />
+                                </figure>
+                              ),
+                            )}
+                          </div>
+                        </details>
+                      )}
                       {w.analysis.progress.references?.map((r) => (
                         <p key={r.number}>
                           图{r.number}识别：{r.observation}

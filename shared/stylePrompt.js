@@ -63,26 +63,59 @@ export function describeStyleVersion(version = {}) {
     ? `本款服装${lines.join("，")}。`
     : "本款尚无可用的明确属性，请按商品参考图可见特征展示，不推测未知参数。";
 }
-export function stylePresetPrompt(style = "auto") {
+export function stylePresetPrompt(style = "auto", { singleImage = true } = {}) {
   const preset = PRESENTATION_STYLES.find(([id]) => id === style);
   return preset
     ? `${preset[1]}：${preset[2]} 仅调整展示环境与摄影，不改变服装原有颜色、结构与模特身份。`
-    : "根据本款服装与所选模块选择协调的摄影风格，整套图片保持一致；不改变服装原有颜色与结构。";
+    : singleImage
+      ? "本图采用与服装协调的摄影、背景及光影，不改变商品原有颜色和结构。"
+      : "所选图片采用协调的摄影、背景与配色；各图片独立完成各自模块任务。";
 }
-export function modulePromptTemplate(moduleId) {
+// The image executor always requests one output; batch planning counts are metadata only.
+export function modulePromptTemplate(
+  moduleId,
+  { phase = "image", count = 1, index = 0 } = {},
+) {
   const module = DETAIL_MODULES.find((m) => m.id === moduleId);
   if (!module) return "";
   return [
     `你正在制作「${module.name}」图片。表达目标：${module.description}。`,
+    phase === "analysis" && count > 1
+      ? `本项规划本模块第${index + 1}/${count}张独立图片；本项只对应一张成图。`
+      : "本次仅输出1张当前模块图片。",
     `专用画面规则：${module.guide}`,
     module.subject === "text"
-      ? "内容层级：标题、辅助短句、留白；不出现商品或模特。"
-      : "内容层级：服装主体优先，模块信息次之，背景与装饰辅助；商品细节清晰，避免元素遮挡核心展示区域。",
-    module.text
-      ? "文字仅使用已确认的本图文案；管理标题不自动上图。未提供品牌、价格或承诺时不得虚构。"
-      : "优先用画面表达卖点；没有明确文案要求时不叠加宣传文字。",
-    "同模块多图分别展示不同重点、姿态或构图，避免重复。不得照抄参考图水印与平台界面。",
+      ? "内容层级：标题、辅助短句、留白。"
+      : "内容层级：商品主体优先，背景与装饰辅助；不遮挡核心展示区域。",
+    moduleId === "main"
+      ? "主图不添加新增文字。"
+      : module.text
+        ? "文字仅使用本图已确认文案；管理标题不自动上图。不虚构品牌、价格或承诺。"
+        : "没有明确文字要求时不添加宣传文案。",
   ].join("\n");
+}
+export function cleanImageDescription(value = "") {
+  return String(value)
+    .replace(/(?:基于|根据)?\s*(?:ID\s*)?model_[a-z0-9_-]+(?:\s*生成的)?/gi, "")
+    .trim();
+}
+export function moduleFacts(moduleId, facts = {}) {
+  const keys =
+    {
+      brand: ["brand"],
+      selling: ["specs"],
+      fabric: ["specs"],
+      color_size: ["colors", "sizes"],
+      colors: ["colors"],
+      promotion: ["promotion"],
+      specs: ["specs"],
+      care: ["care"],
+      service: ["service"],
+      faq: ["faq"],
+    }[moduleId] || [];
+  return Object.fromEntries(
+    keys.filter((k) => facts[k]).map((k) => [k, facts[k]]),
+  );
 }
 export function assembleStandardText(standard = {}) {
   return STANDARD_SECTIONS.map(
@@ -109,13 +142,11 @@ export function cleanPlanContent(content) {
   return content
     ? {
         standard: content.standard,
-        conflict_ack: content.conflict_ack || "",
         standard_edited: content.standard_edited || false,
         items: content.items.map((i) => ({
           id: i.id,
           render_mode: i.render_mode,
           layout: i.layout,
-          risk_ack: i.risk_ack || "",
           module_id: i.module_id,
           title: i.title,
           requirement: i.requirement,
@@ -162,7 +193,7 @@ export function applyAnalysisContent(
   return {
     ...content,
     ...(progress.conflicts !== undefined
-      ? { reference_conflicts: progress.conflicts, conflict_ack: "" }
+      ? { reference_conflicts: progress.conflicts }
       : {}),
     standard:
       full && progress.standard && (replaceManual || !content.standard_edited)

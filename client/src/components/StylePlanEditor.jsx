@@ -119,24 +119,6 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
       {content.reference_conflicts && (
         <section className="wizard-section">
           <p role="alert">商品事实冲突：{content.reference_conflicts}</p>
-          <label className="inline-check">
-            <input
-              type="checkbox"
-              disabled={disabled}
-              checked={
-                content.conflict_ack === content.items[0]?.conflict_signature
-              }
-              onChange={(e) =>
-                setContent((c) => ({
-                  ...c,
-                  conflict_ack: e.target.checked
-                    ? content.items[0].conflict_signature
-                    : "",
-                }))
-              }
-            />
-            已对照原图与保存属性核对，确认按已核对商品事实执行
-          </label>
         </section>
       )}
       <div className="wizard-section-head">
@@ -261,8 +243,30 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
               {open && (
                 <div className="wizard-plan-content">
                   <fieldset disabled={disabled}>
-                    <p className="dim small">
-                      改过的内容会作为这张图的要求一起生成。
+                    <p className="dim small wizard-request-summary">
+                      本张：{name} · 仅输出1张 ·{" "}
+                      {renderMode(input, item) === "composition"
+                        ? "原图排版"
+                        : item.reference_ids.length
+                          ? "图生图"
+                          : "文生图"}{" "}
+                      · 商品/细节图
+                      {
+                        input.references.filter(
+                          (r) =>
+                            item.reference_ids.includes(r.id) &&
+                            r.role !== "model",
+                        ).length
+                      }
+                      张 · 模特图
+                      {
+                        input.references.filter(
+                          (r) =>
+                            item.reference_ids.includes(r.id) &&
+                            r.role === "model",
+                        ).length
+                      }
+                      张
                     </p>
                     <label className="style-field">
                       图片标题（功能卡名称，不作为图内文字）
@@ -342,22 +346,9 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                       </p>
                     ))}
                     {item.quality_warnings?.length > 0 && (
-                      <label className="inline-check">
-                        <input
-                          type="checkbox"
-                          checked={item.risk_ack === item.risk_signature}
-                          disabled={disabled}
-                          onChange={(e) =>
-                            patch(item.id, {
-                              risk_ack: e.target.checked
-                                ? item.risk_signature
-                                : "",
-                            })
-                          }
-                        />
-                        已对照原图核对以下要求：
+                      <p className="dim small">
                         {item.quality_warnings.join("；")}
-                      </label>
+                      </p>
                     )}
                     {item.prompt_override && (
                       <details>

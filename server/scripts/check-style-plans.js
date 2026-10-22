@@ -30,6 +30,7 @@ const db = getDb(),
   })
     .png()
     .toBuffer();
+let analysisMutator = null;
 let calls = [],
   broken = false,
   usageMissing = false,
@@ -63,6 +64,7 @@ global.fetch = async (url, opts = {}) => {
         observation: "图片可见纹理，实际成分未知",
       })),
     ];
+    if (analysisMutator) analysisMutator(lines, details);
     return new Response(
       JSON.stringify({
         choices: [
@@ -83,6 +85,23 @@ global.fetch = async (url, opts = {}) => {
       { headers: { "Content-Type": "application/json" } },
     );
   }
+  if (String(url).includes("/multimodal-generation/generation"))
+    return new Response(
+      JSON.stringify({
+        output: {
+          choices: [
+            {
+              message: {
+                content: [
+                  { image: "data:image/png;base64," + png.toString("base64") },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
   return new Response(
     JSON.stringify({ data: [{ b64_json: png.toString("base64") }] }),
     { headers: { "Content-Type": "application/json" } },
@@ -782,68 +801,53 @@ try {
     assert.equal(finished.renders[0].review.status, "pending");
     productMainGeneration = finished.renders[0].generation_id;
   });
-  await test("fact conflicts and risky directions require acknowledgement tied to the current source revision", async () => {
+  await test("fact and model-reference notices remain informative without acknowledgement gates", async () => {
     const row = db
       .prepare("SELECT content_json FROM style_plans WHERE id=?")
       .get(plan.id);
     const content = JSON.parse(row.content_json);
     content.reference_conflicts = "已保存颜色与原图不一致，请核对";
+    content.conflict_ack = "legacy-unused-ack";
+    content.items[0].risk_ack = "legacy-unused-ack";
+    content.items[0].spec.subject = "虚拟模特 model_audit_001";
     db.prepare("UPDATE style_plans SET content_json=? WHERE id=?").run(
       JSON.stringify(content),
       plan.id,
     );
     plan = (await req("GET", plans(plan.id))).plan;
+    assert.ok(plan.content.reference_conflicts);
     assert.ok(
-      plan.content.items[0].policy_issues.some((v) => v.includes("冲突")),
+      plan.content.items[0].quality_warnings.some((w) =>
+        w.includes("模特编号不是图片"),
+      ),
     );
-    await req(
-      "POST",
-      plans(plan.id) + "/quote",
-      { expected_revision: plan.revision },
-      422,
+    assert.deepEqual(plan.content.items[0].policy_issues, []);
+    assert.equal(plan.content.items[0].status, "ready");
+    const clean = cleanPlanContent(plan.content);
+    assert.ok(!Object.hasOwn(clean, "conflict_ack"));
+    assert.ok(!Object.hasOwn(clean.items[0], "risk_ack"));
+    plan = await save({ content: clean });
+    assert.ok(!Object.hasOwn(plan.content, "conflict_ack"));
+    assert.ok(!Object.hasOwn(plan.content.items[0], "risk_ack"));
+    const quote = (
+      await req("POST", plans(plan.id) + "/quote", {
+        expected_revision: plan.revision,
+      })
+    ).quote;
+    const job = (
+      await req(
+        "POST",
+        `/api/studio/templates/${template.id}/jobs`,
+        { quote_id: quote.id, request_key: crypto.randomUUID(), confirm: true },
+        202,
+      )
+    ).job;
+    const finished = await waitJob(job.id);
+    assert.equal(finished.status, "succeeded");
+    assert.equal(
+      finished.renders[0].request_trace.prompt,
+      plan.content.items[0].prompt,
     );
-    const fixed = cleanPlanContent(plan.content);
-    fixed.conflict_ack = plan.content.items[0].conflict_signature;
-    plan = await save({ content: fixed });
-    await req("POST", plans(plan.id) + "/quote", {
-      expected_revision: plan.revision,
-    });
-    const stale = cleanPlanContent(plan.content);
-    stale.conflict_ack = "old-revision";
-    plan = await save({ content: stale });
-    await req(
-      "POST",
-      plans(plan.id) + "/quote",
-      { expected_revision: plan.revision },
-      422,
-    );
-    const restored = cleanPlanContent(plan.content);
-    restored.conflict_ack = plan.content.items[0].conflict_signature;
-    plan = await save({ content: restored });
-    const originalRequirements = plan.input.requirements;
-    plan = await save({
-      input: { ...plan.input, requirements: "裙摆飞扬，增加动态模糊" },
-    });
-    assert.ok(plan.content.items[0].quality_warnings.length > 0);
-    await req(
-      "POST",
-      plans(plan.id) + "/quote",
-      { expected_revision: plan.revision },
-      422,
-    );
-    const risk = cleanPlanContent(plan.content);
-    risk.items[0].manual_confirmed = true;
-    risk.items[0].risk_ack = plan.content.items[0].risk_signature;
-    plan = await save({ content: risk });
-    await req("POST", plans(plan.id) + "/quote", {
-      expected_revision: plan.revision,
-    });
-    plan = await save({
-      input: { ...plan.input, requirements: originalRequirements },
-    });
-    const confirmed = cleanPlanContent(plan.content);
-    confirmed.items[0].manual_confirmed = true;
-    plan = await save({ content: confirmed });
   });
   await test("changed source bytes invalidate a quote before billing or provider calls", async () => {
     const quote = (
@@ -1104,6 +1108,322 @@ try {
     );
     assert.ok(
       !fs.readFileSync(reportFile, "utf8").includes("soulchat_session"),
+    );
+  });
+  await test("main and brand reach separate provider requests with exact matching prompts, including reversed sparse selection and manual overrides", async () => {
+    for (const scenario of [
+      "automatic",
+      "reversed-sparse",
+      "manual-override",
+    ]) {
+      plan = await newPlan(
+        { main: scenario === "reversed-sparse" ? 2 : 1, brand: 1 },
+        {
+          generation_mode: "product",
+          facts: { brand: "AUDIT_CONFIRMED_BRAND" },
+        },
+      );
+      const content = cleanPlanContent(plan.content);
+      for (const [index, item] of content.items.entries()) {
+        item.manual_confirmed = true;
+        item.requirement = `仅用于本图的核对标记 AUDIT_${scenario}_${item.module_id}_${index}`;
+        if (scenario === "manual-override")
+          item.prompt_override = `独立手工终稿 AUDIT_${item.module_id}_OVERRIDE`;
+      }
+      plan = await save({ content });
+      const main = plan.content.items.find((i) => i.module_id === "main"),
+        brand = plan.content.items.find((i) => i.module_id === "brand");
+      const quote = (
+        await req("POST", plans(plan.id) + "/quote", {
+          expected_revision: plan.revision,
+          item_ids: [brand.id, main.id],
+        })
+      ).quote;
+      assert.deepEqual(
+        quote.indexes,
+        scenario === "reversed-sparse" ? [0, 2] : [0, 1],
+      );
+      assert.deepEqual(quote.prompts, [main.prompt, brand.prompt]);
+      const before = calls.length;
+      const job = (
+        await req(
+          "POST",
+          `/api/studio/templates/${template.id}/jobs`,
+          {
+            quote_id: quote.id,
+            request_key: crypto.randomUUID(),
+            confirm: true,
+          },
+          202,
+        )
+      ).job;
+      const finished = await waitJob(job.id);
+      assert.equal(finished.status, "succeeded");
+      const requests = calls
+        .slice(before)
+        .filter((c) => c.url.endsWith("/images/edits"));
+      assert.equal(requests.length, 2);
+      for (const item of [main, brand]) {
+        const expected = item.prompt;
+        assert.equal(
+          requests.filter((c) => c.body.get("prompt") === expected).length,
+          1,
+        );
+        const render = finished.renders.find(
+          (r) =>
+            finished.snapshot.style.item_contexts[r.proposal_idx]
+              .plan_item_id === item.id,
+        );
+        assert.ok(render);
+        assert.equal(render.prompt_snapshot, expected);
+        assert.equal(render.request_trace.prompt, expected);
+        const module =
+          finished.snapshot.style.item_contexts[render.proposal_idx].module_id;
+        assert.equal(module, item.module_id);
+        const other = item === main ? brand : main;
+        if (scenario === "manual-override") {
+          assert.ok(expected.startsWith(item.prompt_override));
+          assert.ok(!expected.includes(other.prompt_override));
+        } else {
+          assert.ok(expected.includes(item.requirement));
+          assert.ok(!expected.includes(other.requirement));
+          assert.ok(
+            expected.includes(
+              `你正在制作「${module === "main" ? "主图展示" : "品牌介绍"}」图片`,
+            ),
+          );
+          assert.ok(
+            !expected.includes(
+              `你正在制作「${module === "main" ? "品牌介绍" : "主图展示"}」图片`,
+            ),
+          );
+        }
+      }
+      console.log(
+        "PROMPT_ROUTE_AUDIT " +
+          JSON.stringify({
+            scenario,
+            indexes: quote.indexes,
+            requests: requests.length,
+            modules: ["main", "brand"],
+            exact_snapshot_match: true,
+          }),
+      );
+    }
+  });
+  await test("single main analysis attaches real garment/model images and executes exactly one isolated image edit", async () => {
+    const modelPng = await sharp({
+      create: { width: 240, height: 360, channels: 3, background: "#CC7744" },
+    })
+      .png()
+      .toBuffer();
+    const modelRef = await req("POST", "/api/studio/references", {
+      image_base64: modelPng.toString("base64"),
+    });
+    const references = [
+      { id: "audit-garment", source: "original", role: "garment" },
+      { id: "audit-model-image", source: `ref:${modelRef.id}`, role: "model" },
+    ];
+    for (const protocol of ["openai_images", "dashscope_multimodal"]) {
+      const model =
+        protocol === "openai_images"
+          ? image
+          : createModel({
+              provider_id: p.id,
+              kind: "image",
+              model_id: "test-native-image",
+              pricing: { per_call: 5 },
+              extra: {
+                sizes: ["512x512"],
+                image_config: {
+                  protocol,
+                  text: true,
+                  edit: true,
+                  max_images: 4,
+                },
+              },
+            });
+      plan = await newPlan(
+        { main: 1 },
+        {
+          generation_mode: "product",
+          model_id: model.id,
+          facts: { brand: "BRAND_DATA_MUST_NOT_LEAK" },
+          requirements:
+            "主图完整展示服装；仅品牌介绍使用GLOBAL_BRAND_REQUIREMENT",
+          references,
+        },
+      );
+      analysisMutator = (lines) => {
+        lines.find((l) => l.type === "standard").standard.subject =
+          "基于ID model_fake_001 生成的虚拟女性形象";
+        lines.find((l) => l.type === "item").spec.subject =
+          "模特 model_fake_001 自然站立";
+      };
+      const { analysis } = await analyze();
+      analysisMutator = null;
+      assert.equal(analysis.status, "succeeded");
+      const analysisCall = calls
+          .filter((c) => c.url.endsWith("/chat/completions"))
+          .at(-1),
+        body = JSON.parse(analysisCall.body),
+        data = JSON.parse(body.messages[1].content[0].text);
+      const attachments = body.messages[1].content.filter(
+        (c) => c.type === "image_url",
+      );
+      assert.equal(attachments.length, 2);
+      assert.deepEqual(
+        data.items.map((i) => i.module_id),
+        ["main"],
+      );
+      assert.deepEqual(data.items[0].reference_numbers, [1, 2]);
+      assert.doesNotMatch(
+        body.messages[0].content,
+        /款式卖点|品牌介绍|render_mode=composition/,
+      );
+      assert.doesNotMatch(JSON.stringify(data), /BRAND_DATA_MUST_NOT_LEAK/);
+      assert.equal(analysis.request_trace.image_count, 2);
+      for (const [n, bytes] of [png, modelPng].entries()) {
+        const actual = Buffer.from(
+          attachments[n].image_url.url.split(",")[1],
+          "base64",
+        );
+        assert.ok((await sharp(actual).metadata()).width > 0);
+        assert.equal(
+          analysis.request_trace.source_manifest[n].sha256,
+          crypto.createHash("sha256").update(bytes).digest("hex"),
+        );
+        assert.equal(
+          analysis.request_trace.source_manifest[n].payload_sha256,
+          crypto.createHash("sha256").update(actual).digest("hex"),
+        );
+      }
+      assert.doesNotMatch(
+        plan.content.items[0].prompt,
+        /同模块多图|款式卖点|品牌介绍|model_|BRAND_DATA_MUST_NOT_LEAK|GLOBAL_BRAND_REQUIREMENT|整套图片共同遵循/,
+      );
+      assert.match(plan.content.items[0].prompt, /本次仅输出1张/);
+      assert.equal(plan.content.items[0].request_mode, "image_edit");
+      const quote = (
+          await req("POST", plans(plan.id) + "/quote", {
+            expected_revision: plan.revision,
+          })
+        ).quote,
+        before = calls.length;
+      const job = (
+        await req(
+          "POST",
+          `/api/studio/templates/${template.id}/jobs`,
+          {
+            quote_id: quote.id,
+            request_key: crypto.randomUUID(),
+            confirm: true,
+          },
+          202,
+        )
+      ).job;
+      const finished = await waitJob(job.id);
+      assert.equal(finished.status, "succeeded");
+      const imageCalls = calls.slice(before);
+      assert.equal(imageCalls.length, 1);
+      if (protocol === "openai_images") {
+        assert.ok(imageCalls[0].url.endsWith("/images/edits"));
+        assert.equal(imageCalls[0].body.get("n"), "1");
+        const files = imageCalls[0].body.getAll("image[]");
+        assert.equal(files.length, 2);
+        assert.deepEqual(Buffer.from(await files[0].arrayBuffer()), png);
+        assert.deepEqual(Buffer.from(await files[1].arrayBuffer()), modelPng);
+        assert.equal(
+          imageCalls[0].body.get("prompt"),
+          plan.content.items[0].prompt,
+        );
+      } else {
+        const sent = JSON.parse(imageCalls[0].body),
+          content = sent.input.messages[0].content;
+        assert.equal(sent.parameters.n, 1);
+        assert.equal(content.filter((c) => c.image).length, 2);
+        assert.deepEqual(
+          Buffer.from(content[0].image.split(",")[1], "base64"),
+          png,
+        );
+        assert.deepEqual(
+          Buffer.from(content[1].image.split(",")[1], "base64"),
+          modelPng,
+        );
+        assert.equal(
+          content.find((c) => c.text).text,
+          plan.content.items[0].prompt,
+        );
+      }
+      const trace = finished.renders[0].request_trace;
+      assert.equal(trace.operation, "image_edit");
+      assert.equal(trace.image_count, 2);
+      assert.equal(trace.output_count, 1);
+      assert.equal(trace.module_id, "main");
+      assert.equal(trace.protocol, protocol);
+    }
+  });
+  await test("targeted module analysis excludes other module templates and rebases global image numbers to each item's actual attachments", async () => {
+    const extra = await req("POST", "/api/studio/references", {
+      image_base64: (await sharp(png).negate().png().toBuffer()).toString(
+        "base64",
+      ),
+    });
+    const face = await req("POST", "/api/studio/references", {
+      image_base64: (
+        await sharp(png).modulate({ brightness: 0.4 }).png().toBuffer()
+      ).toString("base64"),
+    });
+    plan = await newPlan(
+      { main: 1, brand: 1 },
+      {
+        generation_mode: "product",
+        facts: { brand: "CONFIRMED_BRAND_ONLY" },
+        references: [
+          { id: "global-garment", source: "original", role: "garment" },
+          { id: "global-detail", source: `ref:${extra.id}`, role: "fabric" },
+          { id: "global-model", source: `ref:${face.id}`, role: "model" },
+        ],
+      },
+    );
+    const content = cleanPlanContent(plan.content);
+    content.items.find((i) => i.module_id === "main").reference_ids = [
+      "global-garment",
+      "global-model",
+    ];
+    plan = await save({ content });
+    analysisMutator = (lines, details) => {
+      const main = lines.find(
+        (l) =>
+          l.type === "item" &&
+          details.items.find((i) => i.id === l.id)?.module_id === "main",
+      );
+      if (main) main.spec.subject = "采用图3的人物身份";
+    };
+    await analyze();
+    analysisMutator = null;
+    const main = plan.content.items.find((i) => i.module_id === "main");
+    assert.match(main.spec.subject, /图2/);
+    assert.doesNotMatch(main.spec.subject, /图3/);
+    const mainPrompt = main.prompt;
+    const brand = plan.content.items.find((i) => i.module_id === "brand");
+    await analyze([brand.id]);
+    const request = JSON.parse(
+        calls.filter((c) => c.url.endsWith("/chat/completions")).at(-1).body,
+      ),
+      data = JSON.parse(request.messages[1].content[0].text);
+    assert.deepEqual(
+      data.items.map((i) => i.module_id),
+      ["brand"],
+    );
+    assert.doesNotMatch(
+      request.messages[0].content,
+      /主图规则|款式卖点|品牌介绍：编辑式/,
+    );
+    assert.equal(data.items[0].facts.brand, "CONFIRMED_BRAND_ONLY");
+    assert.equal(
+      plan.content.items.find((i) => i.id === main.id).prompt,
+      mainPrompt,
     );
   });
   await test("migration is repeatable and leaves original and historical files intact", async () => {

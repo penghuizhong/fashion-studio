@@ -20,5 +20,5 @@
     "check:theme": "node scripts/check-theme.mjs"
   },
   "type": "module",
-  "version": "0.17.0"
+  "version": "0.17.2"
 }
