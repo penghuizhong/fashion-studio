@@ -9,7 +9,7 @@ export const PLAN_LIMITS = Object.freeze({ per_module: 16, total: 64 });
 // the plan standard generates a typography section.
 export const DETAIL_MODULES = [
   ["main", "主图展示", "首屏主视觉，完整展示服装", "商品展示", null,
-    "单幅完整商品照片：一位模特自然静态站姿，按服装长度完整取景，长裙包含拖地裙摆；简洁背景，无新增文字、拼图、放大圈和参数表。", "worn", false],
+    "单幅完整商品照片：一位模特自然静态站姿，按服装长度完整取景，按原图保留实际裙摆形态；简洁背景，无新增文字、拼图、放大圈和参数表。", "worn", false],
   ["brand", "品牌介绍", "品牌定位与视觉印象", "品牌与服务", "brand",
     "品牌介绍：编辑式半身或 3/4 镜头，主体正脸与坚定眼神可见，把穿着中的服装作为品牌封面主角，构图克制有质感。", "worn", true],
   ["selling", "款式卖点", "突出本款独有的设计亮点", "设计细节", null,

@@ -809,3 +809,6 @@
 .product-layout-preview { display: block; width: 100%; height: auto; margin-top: 16px; }
 .wizard-plan-content figure, .wizard-result-card figure { width: 120px; margin: 0; }
 .wizard-plan-content figure img, .wizard-result-card figure img { width: 100%; height: auto; }
+
+.wizard-analysis-sources figure { width: 120px; margin: 0; }
+.wizard-analysis-sources img { width: 100%; height: auto; }

@@ -28,6 +28,17 @@ for (const module of DETAIL_MODULES) {
   assert.ok(modulePromptTemplate(module.id).includes(module.guide));
 }
 assert.notEqual(modulePromptTemplate("main"), modulePromptTemplate("brand"));
+assert.doesNotMatch(
+  modulePromptTemplate("main"),
+  /同模块多图|品牌介绍|款式卖点/,
+);
+assert.match(modulePromptTemplate("main"), /仅输出1张/);
+assert.match(
+  modulePromptTemplate("main", { phase: "analysis", count: 2, index: 1 }),
+  /第2\/2张/,
+);
+assert.doesNotMatch(modulePromptTemplate("brand"), /主图展示|款式卖点/);
+
 const blank = parseStandardText("");
 assert.ok(Object.values(blank).every((value) => value === ""));
 assert.equal(parseStandardText("暖光、灰色背景。").tone, "暖光、灰色背景。");

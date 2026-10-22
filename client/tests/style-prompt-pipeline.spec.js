@@ -66,9 +66,19 @@ test("manual prompt survives reload, upstream edits need confirmation and reanal
   await open();
   await derive(page);
   await analyze(page);
+  await page.locator(".wizard-steps button").nth(1).click();
+  await page.getByText("本次实际识图：1张", { exact: true }).click();
+  await expect(page.getByAltText("识图来源图1", { exact: true })).toBeVisible();
+  await page.locator(".wizard-steps button").nth(2).click();
   await page.locator(".wizard-plan-title").first().click();
+  await expect(page.locator(".wizard-request-summary")).toContainText(
+    "仅输出1张",
+  );
+  await expect(page.locator(".wizard-request-summary")).toContainText("图生图");
+
   const prompt = page.getByLabel("图片1提示词", { exact: true });
   await expect(prompt).toHaveValue(/版型为常规/);
+  await expect(prompt).not.toHaveValue(/同模块多图|款式卖点|model_/);
   await prompt.fill("手工终稿：正面展示黑色西装");
   await prompt.blur();
   await expect

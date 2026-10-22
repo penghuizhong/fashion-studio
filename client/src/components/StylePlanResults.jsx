@@ -170,7 +170,23 @@ export default function StylePlanResults({
                   {i.request_trace.quality || "模型默认"}
                 </p>
                 <p>
-                  实际参考图：{i.request_trace.source_manifest?.length || 0}张
+                  调用方式：
+                  {{
+                    image_edit: "图生图",
+                    text_to_image: "文生图",
+                    source_composition: "原图排版",
+                    mock: "模拟生成",
+                  }[i.request_trace.operation] || "历史记录未保存"}
+                  {i.request_trace.endpoint
+                    ? ` · ${i.request_trace.endpoint}`
+                    : ""}
+                </p>
+                <p>
+                  实际参考图：
+                  {i.request_trace.image_count ??
+                    i.request_trace.source_manifest?.length ??
+                    0}
+                  张
                 </p>
                 <textarea
                   readOnly
