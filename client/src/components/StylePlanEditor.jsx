@@ -1,40 +1,48 @@
 import ProductLayoutEditor from "./ProductLayoutEditor.jsx";
 import { renderMode } from "../../../shared/productImagePolicy.js";
 import {
+  promptLength,
   assembleStandardText,
   parseStandardText,
 } from "../../../shared/stylePrompt.js";
 import { useEffect, useState } from "react";
-import { DETAIL_MODULES, FACT_FIELDS, SPEC_FIELDS, isNoTextLanguage } from "../../../shared/stylePlan.js";
+import { DETAIL_MODULES, FACT_FIELDS, SPEC_FIELDS } from "../../../shared/stylePlan.js";
 import StudioImage from "./StudioImage.jsx";
 const STATUS_TEXT = {
   ready: "可生成",
   needs_info: "待补充资料",
   invalid: "需要调整",
-  needs_analysis: "待分析或确认",
+  needs_analysis: "待分析",
 };
 function PromptText({ item, index, disabled, onCommit, onEditing }) {
   return (
-    <label className="style-field">
-      提示词模块
-      <textarea
-        aria-label={`图片${index + 1}提示词`}
-        rows={10}
-        maxLength={12000}
-        disabled={disabled}
-        placeholder="正在编排，保存后显示"
-        value={
-          item.prompt_override || item.automatic_prompt || item.prompt || ""
-        }
-        onChange={(e) => {
-          onEditing(true);
-          onCommit(e.target.value);
-        }}
-        onBlur={() => onEditing(false)}
-      />
-    </label>
+    <div className="style-field">
+      <span>提示词模块</span>
+      {[
+        ["description_prompt", "主要描述"],
+        ["attributes_prompt", "基本属性"],
+      ].map(([key, label]) => (
+        <label className="style-field" key={key}>
+          {label}（{promptLength(item[key] || "")}/200字）
+          <textarea
+            aria-label={`图片${index + 1}${label}`}
+            rows={4}
+            disabled={disabled}
+            value={item[key] || ""}
+            placeholder="分析商品后生成"
+            onChange={(e) => {
+              if (promptLength(e.target.value) > 200) return;
+              onEditing(true);
+              onCommit({ [key]: e.target.value, edited: true });
+            }}
+            onBlur={() => onEditing(false)}
+          />
+        </label>
+      ))}
+    </div>
   );
 }
+
 function StandardText({ content, setContent, disabled, onEditing }) {
   const [draft, setDraft] = useState(() =>
     assembleStandardText(content.standard),
@@ -111,7 +119,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdj
     <div className="wizard-plan-editor">
       <section className="wizard-section wizard-plan-overview" aria-label="方案核对">
         <h3>核对本次图片方案</h3>
-        <p className="dim small">先统一整套视觉，再逐张核对描述、设计内容与参考图。仅勾选且可生成的图片计入本次费用。</p>
+        <p className="dim small">先核对整体规范，再逐张编辑主要描述与基本属性。仅勾选且可生成的图片计入本次费用。</p>
         <div className="wizard-plan-counts">
           <span>共 {content.items.length} 张</span>
           <span>本次生成 {generateCount} 张</span>
@@ -135,24 +143,6 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdj
       {content.reference_conflicts && (
         <section className="wizard-section">
           <p role="alert">商品事实冲突：{content.reference_conflicts}</p>
-          <label className="inline-check">
-            <input
-              type="checkbox"
-              disabled={disabled}
-              checked={
-                content.conflict_ack === content.items[0]?.conflict_signature
-              }
-              onChange={(e) =>
-                setContent((c) => ({
-                  ...c,
-                  conflict_ack: e.target.checked
-                    ? content.items[0].conflict_signature
-                    : "",
-                }))
-              }
-            />
-            已对照原图与保存属性核对，确认按已核对商品事实执行
-          </label>
         </section>
       )}
       <div className="wizard-section-head">
@@ -211,7 +201,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdj
             />
             <div>
               <strong>{current.title}</strong>
-              <p>{current.requirement}</p>
+              <p>{current.description_prompt || current.requirement}</p>
               <span>
                 图内文案：{current.copy || current.spec?.text || "未添加"}
               </span>
@@ -219,7 +209,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdj
           </div>
           <p>
             {current.spec?.strategy || current.spec?.composition || "待分析"} ·{" "}
-            {current.size || input.size}
+            {input.size}
           </p>
           <button
             className="btn secondary"
@@ -266,7 +256,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdj
                   <span>
                     <strong>{item.title || name}</strong>
                     <small>
-                      {name} · {item.size || input.size} ·{" "}
+                      {name} · {input.size} ·{" "}
                       {STATUS_TEXT[status] || STATUS_TEXT.needs_analysis}
                     </small>
                     <small>{item.requirement.slice(0, 110)}</small>
@@ -278,7 +268,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdj
                 <div className="wizard-card-blocker" role="status">
                   <p>{item.missing?.length
                     ? `待补充：${item.missing.map((key) => FACT_FIELDS[key] || key).join("、")}`
-                    : item.error || item.policy_issues?.[0] || "本图尚未分析，请先分析或核对后确认。"}；本次不会生成此图。</p>
+                    : item.error || item.policy_issues?.[0] || "本图尚未分析，请先完成商品分析。"}；本次不会生成此图。</p>
                   <button className="btn secondary small" disabled={disabled} onClick={onAdjust}>
                     {item.missing?.length ? "补充资料" : "调整需求"}
                   </button>
@@ -287,8 +277,30 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdj
               {open && (
                 <div className="wizard-plan-content">
                   <fieldset disabled={disabled}>
-                    <p className="dim small">
-                      改过的内容会作为这张图的要求一起生成。
+                    <p className="dim small wizard-request-summary">
+                      本张：{name} · 仅输出1张 ·{" "}
+                      {renderMode(input, item) === "composition"
+                        ? "原图排版"
+                        : item.reference_ids.length
+                          ? "图生图"
+                          : "文生图"}{" "}
+                      · 商品/细节图
+                      {
+                        input.references.filter(
+                          (r) =>
+                            item.reference_ids.includes(r.id) &&
+                            r.role !== "model",
+                        ).length
+                      }
+                      张 · 模特图
+                      {
+                        input.references.filter(
+                          (r) =>
+                            item.reference_ids.includes(r.id) &&
+                            r.role === "model",
+                        ).length
+                      }
+                      张
                     </p>
                     <label className="style-field">
                       图片标题（功能卡名称，不作为图内文字）
@@ -301,73 +313,27 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdj
                         }
                       />
                     </label>
-                    <label className="style-field">
-                      画面描述（识别依据与本图任务）
-                      <textarea
-                        aria-label={`图片${index + 1}画面要求`}
-                        rows={4}
-                        maxLength={3000}
-                        value={item.requirement}
-                        onChange={(e) =>
-                          patch(item.id, { requirement: e.target.value })
-                        }
-                      />
-                    </label>
-                    <section className="wizard-image-design" aria-label={`图片${index + 1}设计内容`}>
-                      <h4>本图设计内容</h4>
-                      <p className="dim small">模块规则与整体规范自动应用；以下参数决定这张图的具体画面。</p>
-                      <div className="wizard-design-grid">
+                    <details className="wizard-design-reference">
+                      <summary>查看九维分析参考</summary>
+                      <p className="dim small">以下为分析时的设计资料。生图以本图两段提示词和整体规范为准；修改画面请编辑下方主要描述与基本属性。</p>
+                      <dl className="wizard-design-grid" aria-label={`图片${index + 1}设计参考`}>
                         {SPEC_FIELDS.map(([key, label]) => (
-                          <label className="style-field" key={key}>
-                            {label}
-                            <textarea
-                              aria-label={`图片${index + 1}${label}`}
-                              rows={2}
-                              maxLength={2000}
-                              disabled={disabled || (key === "text" && (item.module_id === "main" || isNoTextLanguage(input.language)))}
-                              placeholder={key === "text" && (item.module_id === "main" || isNoTextLanguage(input.language)) ? "本图不新增文字" : "待补充具体设计参数"}
-                              value={key === "text" && (item.module_id === "main" || isNoTextLanguage(input.language)) ? "" : (key === "text" ? item.copy || item.spec?.[key] : item.spec?.[key]) || ""}
-                              onChange={(e) => patch(item.id, { spec: { ...item.spec, [key]: e.target.value }, ...(key === "text" ? { copy: e.target.value } : {}) })}
-                            />
-                          </label>
+                          <div key={key}><dt>{label}</dt><dd>{item.spec?.[key] || "未提供"}</dd></div>
                         ))}
-                      </div>
-                    </section>
-                    {renderMode(input, item) === "composition" ? (
-                      <ProductLayoutEditor
-                        w={w}
-                        item={item}
-                        choices={choices}
-                        disabled={disabled}
-                        patch={(updates) => patch(item.id, updates)}
-                      />
-                    ) : (
-                      <>
-                        <details className="wizard-execution-layers">
-                          <summary>查看自动编排的六层提示词</summary>
-                          {(item.prompt_layers || []).map((layer, layerIndex) => (
-                            <section key={layer.id}>
-                              <h4>{layerIndex + 1}. {layer.label}</h4>
-                              <pre>{layer.text}</pre>
-                            </section>
-                          ))}
-                          {item.prompt_override && <p className="dim small">当前采用手工提示词。自动编排内容供核对，重新编排后生效。</p>}
-                        </details>
-                        <PromptText
-                          item={item}
-                          index={index}
-                          disabled={disabled}
-                          onEditing={w.setEditingPrompt}
-                          onCommit={(prompt_override) =>
-                            patch(item.id, {
-                              prompt_override,
-                              prompt_override_basis:
-                                item.automatic_signature || "",
-                            })
-                          }
-                        />
-                      </>
+                      </dl>
+                    </details>
+                    <PromptText item={item} index={index} disabled={disabled}
+                      onEditing={w.setEditingPrompt}
+                      onCommit={(updates) => patch(item.id, updates)} />
+                    {renderMode(input, item) === "composition" && (
+                      <ProductLayoutEditor w={w} item={item} choices={choices}
+                        disabled={disabled} patch={(updates) => patch(item.id, updates)} />
                     )}
+                    <details className="wizard-execution-layers">
+                      <summary>查看实际执行提示词</summary>
+                      <pre>{item.prompt || "尚未生成执行提示词"}</pre>
+                      <p className="dim small">由本图两段提示词与非空整体规范组成；尺寸、质量和真实参考图片通过独立参数发送。</p>
+                    </details>
                     <div className="wizard-inline">
                       {input.references
                         .filter((r) => item.reference_ids.includes(r.id))
@@ -398,64 +364,9 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdj
                       </p>
                     ))}
                     {item.quality_warnings?.length > 0 && (
-                      <label className="inline-check">
-                        <input
-                          type="checkbox"
-                          checked={item.risk_ack === item.risk_signature}
-                          disabled={disabled}
-                          onChange={(e) =>
-                            patch(item.id, {
-                              risk_ack: e.target.checked
-                                ? item.risk_signature
-                                : "",
-                            })
-                          }
-                        />
-                        已对照原图核对以下要求：
+                      <p className="dim small">
                         {item.quality_warnings.join("；")}
-                      </label>
-                    )}
-                    {item.prompt_override && (
-                      <details>
-                        <summary>完整执行提示词（含商品展示边界）</summary>
-                        <textarea readOnly rows={5} value={item.prompt || ""} />
-                      </details>
-                    )}
-                    {item.prompt_override && (
-                      <div className="wizard-inline">
-                        <span className="dim small">
-                          已手动编辑
-                          {item.prompt_stale
-                            ? " · 上游内容已变化，需要同步"
-                            : ""}
-                        </span>
-                        <button
-                          className="btn secondary small"
-                          disabled={disabled}
-                          onClick={() =>
-                            patch(item.id, {
-                              prompt_override: "",
-                              prompt_override_basis: "",
-                              prompt_overrides: {},
-                            })
-                          }
-                        >
-                          重新编排提示词
-                        </button>
-                        {item.prompt_stale && (
-                          <button
-                            className="btn secondary small"
-                            disabled={disabled}
-                            onClick={() =>
-                              patch(item.id, {
-                                prompt_override_basis: item.automatic_signature,
-                              })
-                            }
-                          >
-                            确认保留手工提示词
-                          </button>
-                        )}
-                      </div>
+                      </p>
                     )}
                     {item.missing?.length > 0 && (
                       <p className="wizard-pending">

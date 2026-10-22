@@ -376,7 +376,7 @@ export async function executeJob(id, model) {
         ...result,
         ...files,
         model: localComposition ? 'source-compositor-v1' : model.model_id,
-        request_trace: {model:localComposition?'source-compositor-v1':model.model_id,size:spec.size,quality:spec.quality,source_manifest:itemStyle?.source_manifest || [],prompt:result.prompt_snapshot},
+        request_trace: {...(localComposition?{operation:'source_composition',image_count:itemStyle?.source_manifest?.length||0,output_count:1}:generated.request_transport),module_id:itemStyle?.module_id,model:localComposition?'source-compositor-v1':model.model_id,size:spec.size,quality:spec.quality,source_manifest:itemStyle?.source_manifest || [],prompt:result.prompt_snapshot},
         provenance: generated.provenance,
         review_status: 'pending',
         size: spec.size,

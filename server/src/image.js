@@ -126,7 +126,8 @@ async function openaiText2Image({ baseUrl, apiKey, model, prompt, size, seed, qu
   if(options.response_format!=='omit')body.response_format=options.response_format;
   if (options.seed && seed != null) body.seed = seed;
   if (quality) body.quality = quality;
-  const res = await fetch(options.generation_path?baseUrl.replace(/\/$/,'')+options.generation_path:imageApiUrl(baseUrl,'generations'), {
+  const requestUrl=options.generation_path?baseUrl.replace(/\/$/,'')+options.generation_path:imageApiUrl(baseUrl,'generations');
+  const res = await fetch(requestUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -136,7 +137,7 @@ async function openaiText2Image({ baseUrl, apiKey, model, prompt, size, seed, qu
   if (!res.ok) throw Object.assign(new Error('生图失败'),{status:res.status});
   const b64 = json?.data?.[0]?.b64_json || (json?.data?.[0]?.url ? await downloadToBase64(json.data[0].url) : null);
   if (!b64) throw new Error('上游未返回图片数据');
-  return { imageBase64: b64, seed };
+  return { imageBase64: b64, seed, request_transport:{operation:'text_to_image',protocol:'openai_images',endpoint:new URL(requestUrl).pathname,image_count:0,output_count:1} };
 }
 
 async function openaiEditImage({ baseUrl, apiKey, model, prompt, size, imageBase64, referenceImages = [], quality, options }) {
@@ -145,11 +146,13 @@ async function openaiEditImage({ baseUrl, apiKey, model, prompt, size, imageBase
   const images=[buf,...referenceImages.map(b=>Buffer.from(b,'base64'))];
   for(const [index,bytes] of images.entries()){const metadata=await sharp(bytes).metadata();const ext=metadata.format==='jpeg'?'jpg':metadata.format;form.append(images.length>1?'image[]':'image',new Blob([bytes],{type:`image/${metadata.format==='jpg'?'jpeg':metadata.format}`}),`source_${index}.${ext}`);}
   if(quality) form.append('quality',quality);
+  form.append('n', '1');
   form.append('model', model);
   form.append('prompt', prompt);
   form.append('size', String(size || '1024x1024').replace('*', 'x'));
   if(options.response_format!=='omit')form.append('response_format', options.response_format);
-  const res = await fetch(options.edit_path?baseUrl.replace(/\/$/,'')+options.edit_path:imageApiUrl(baseUrl,'edits'), {
+  const requestUrl=options.edit_path?baseUrl.replace(/\/$/,'')+options.edit_path:imageApiUrl(baseUrl,'edits');
+  const res = await fetch(requestUrl, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
@@ -159,7 +162,7 @@ async function openaiEditImage({ baseUrl, apiKey, model, prompt, size, imageBase
   if (!res.ok) throw Object.assign(new Error('图生图失败'),{status:res.status});
   const b64 = json?.data?.[0]?.b64_json || (json?.data?.[0]?.url ? await downloadToBase64(json.data[0].url) : null);
   if (!b64) throw new Error('上游未返回图片数据');
-  return { imageBase64: b64 };
+  return { imageBase64: b64, request_transport:{operation:'image_edit',protocol:'openai_images',endpoint:new URL(requestUrl).pathname,image_count:images.length,output_count:1} };
 }
 
 async function downloadToBase64(url) {
@@ -179,7 +182,7 @@ export async function generateImage({ userId, modelId, prompt, size, seed, quali
   if (!m) throw new Error('图片模型不存在或已停用');
   // P4: mock 模式——保留模型存在性校验，跳过上游网络调用，不扣费（供回归）
   if (getConfig().mockLlm) {
-    return { imageBase64: MOCK_PLACEHOLDER_PNG, seed: seed != null ? seed : 1, model: m.model_id, size, price: 0 };
+    return { imageBase64: MOCK_PLACEHOLDER_PNG, seed: seed != null ? seed : 1, model: m.model_id, size, price: 0, request_transport:{operation:'mock',image_count:(sourceImageBase64?1:0)+referenceImages.length,output_count:1} };
   }
   const creds = executionModel || getProviderCreds(m.provider_id);
   const apiKey = creds && creds.apiKey;
@@ -205,12 +208,13 @@ export async function generateImage({ userId, modelId, prompt, size, seed, quali
     if(!response.ok)throw Object.assign(new Error('图像请求失败'),{status:response.status});
     const output=json.output?.choices?.[0]?.message?.content?.find(x=>x.image)?.image;
     if(!output)throw new Error('上游未返回图片');
-    result={imageBase64:output.startsWith('data:')?output.split(',')[1]:await downloadToBase64(output),seed:useSeed};
+    result={imageBase64:output.startsWith('data:')?output.split(',')[1]:await downloadToBase64(output),seed:useSeed,request_transport:{operation:sourceImageBase64?'image_edit':'text_to_image',protocol:options.protocol,endpoint:new URL(url).pathname,image_count:content.filter(c=>c.image).length,output_count:1}};
   } else if (options.protocol === 'dashscope') {
     if (sourceImageBase64) throw new Error('DashScope 适配器暂不支持图生图，请选用 openai_compatible 供应商');
     result = await dashscopeText2Image({ baseUrl, apiKey, model: m.model_id, prompt, size, seed: useSeed, promptExtend: m.prompt_extend });
     result.imageBase64 = await downloadToBase64(result.imageUrl);
     delete result.imageUrl;
+    result.request_transport={operation:'text_to_image',protocol:options.protocol,endpoint:'/api/v1/services/aigc/multimodal-generation/generation',image_count:0,output_count:1};
   } else if(options.protocol === 'openai_images') {
     result = sourceImageBase64
       ? await openaiEditImage({ baseUrl, apiKey, model: m.model_id, prompt, size, imageBase64: sourceImageBase64, referenceImages, quality, options })
@@ -221,7 +225,7 @@ export async function generateImage({ userId, modelId, prompt, size, seed, quali
   if (!deferBilling && price > 0 && userId) {
     deductPoints(userId, price, 'studio_image', 'models', m.id, { model: m.model_id, size });
   }
-  return { imageBase64: result.imageBase64, seed: result.seed != null ? result.seed : useSeed, model: m.model_id, size, price };
+  return { imageBase64: result.imageBase64, seed: result.seed != null ? result.seed : useSeed, model: m.model_id, size, price, request_transport: result.request_transport };
 }
 
 // ---------- 落盘：原图 + sharp 缩略图，返回相对路径 ----------

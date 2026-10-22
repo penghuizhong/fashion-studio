@@ -3,17 +3,13 @@ import {
   isProductTask,
   renderMode,
   imagePolicyIssues,
-  CORE_IMAGE_RULES,
-  FIDELITY_RULES,
   riskyInstructions,
 } from "../../shared/productImagePolicy.js";
 import { normalizeLayout } from "./productLayoutSchema.js";
 import {
-  describeStyleVersion,
-  stylePresetPrompt,
-  moduleDesignText,
-  imageSystemPrompt,
-  imagePromptLayers,
+  assembleModulePrompt,
+  assembleExecutionPrompt,
+  promptLength,
 } from "../../shared/stylePrompt.js";
 import crypto from "node:crypto";
 import {
@@ -21,7 +17,6 @@ import {
   FACT_FIELDS,
   PLAN_LIMITS,
   DEFAULT_STANDARD,
-  GLOBAL_MODULE_RULES,
   SPEC_FIELDS,
   REFERENCE_ROLES,
   EDITABLE_PROMPT_PARTS,
@@ -32,10 +27,9 @@ import {
 } from "../../shared/stylePlan.js";
 import {
   normalizeCamera,
-  photographyPrompt,
   validateCameraIntent,
 } from "../../shared/photography.js";
-import { canonical, parse, styleVersion } from "./styleVersions.js";
+import { canonical, parse } from "./styleVersions.js";
 import { imageFor } from "./styleWorkspace.js";
 import { problem } from "./exploreErrors.js";
 import { getDb } from "./db.js";
@@ -43,6 +37,13 @@ const object = (v) => v && typeof v === "object" && !Array.isArray(v);
 export function text(value, max = 2000) {
   if (typeof value !== "string" || value.length > max)
     throw problem("INVALID_PLAN", `文字格式无效或超过${max}字`);
+  return value.trim();
+}
+export function shortPrompt(value = "") {
+  if (typeof value !== "string" || promptLength(value) > 200)
+    throw problem("INVALID_PROMPT", "主要描述与基本属性分别不得超过200字");
+  if (/\b\d{3,5}\s*[x×*]\s*\d{3,5}\b/i.test(value))
+    throw problem("INVALID_PROMPT", "图片尺寸请在第二步设置，不要写入提示词");
   return value.trim();
 }
 const idPattern = /^[a-zA-Z0-9_-]{8,100}$/;
@@ -184,6 +185,8 @@ export function seedItems(input, old = []) {
           requirement: `${m.description}。${n ? `采用第${n + 1}种构图，区别于本组其他图片。` : ""}`,
           render_mode: renderMode(input, { module_id: m.id }),
           copy: "",
+          description_prompt: "",
+          attributes_prompt: "",
           prompt_override: "",
           spec: {},
           camera:
@@ -285,6 +288,8 @@ export function normalizeContent(raw, input, old) {
       title: text(i.title || "", 200),
       requirement: text(i.requirement || "", 3000),
       copy: text(i.copy || "", 3000),
+      description_prompt: shortPrompt(i.description_prompt ?? prior?.description_prompt ?? ""),
+      attributes_prompt: shortPrompt(i.attributes_prompt ?? prior?.attributes_prompt ?? ""),
       prompt_override:
         i.prompt_override === undefined
           ? prior?.prompt_override || ""
@@ -298,13 +303,14 @@ export function normalizeContent(raw, input, old) {
         prior?.edited === true ||
         !!(
           prior &&
-          ((i.title !== undefined && i.title !== prior.title) ||
-            (i.requirement !== undefined &&
-              i.requirement !== prior.requirement) ||
+          ((i.description_prompt !== undefined && i.description_prompt !== prior.description_prompt) ||
+            (i.attributes_prompt !== undefined && i.attributes_prompt !== prior.attributes_prompt) ||
+            (i.title !== undefined && i.title !== prior.title) ||
+            (i.requirement !== undefined && i.requirement !== prior.requirement) ||
             (i.spec !== undefined && canonical(spec) !== canonical(
-              Object.fromEntries(SPEC_FIELDS.map(([key]) => [key, prior.spec?.[key] || ""]))
+              Object.fromEntries(SPEC_FIELDS.map(([key]) => [key, prior.spec?.[key] || ""])),
             )) ||
-            (i.copy !== undefined && i.copy !== prior.copy))
+            (i.copy !== undefined && i.copy !== (prior.copy || "")))
         ),
       render_mode: i.render_mode || prior?.render_mode || renderMode(input, i),
       layout:
@@ -314,7 +320,6 @@ export function normalizeContent(raw, input, old) {
               input.references.find((r) => r.role === "garment")?.id || "",
             )
           : undefined,
-      risk_ack: text(i.risk_ack || "", 64),
       spec,
       camera: normalizeCamera(i.camera),
       reference_ids,
@@ -342,7 +347,6 @@ export function normalizeContent(raw, input, old) {
   return {
     reference_paths: old?.reference_paths || [],
     reference_conflicts: old?.reference_conflicts || "",
-    conflict_ack: text(raw.conflict_ack || "", 64),
     standard,
     standard_edited:
       raw.standard_edited === true ||
@@ -369,198 +373,67 @@ export function itemReferences(item, refs) {
 export function compilePlanItem(plan, item, t) {
   const input = plan.input,
     standard = plan.content.standard,
-    v = styleVersion(t, plan.version_id),
     module = DETAIL_MODULES.find((m) => m.id === item.module_id);
   const missing =
     module.required && !input.facts[module.required] ? [module.required] : [];
   const camera = normalizeCamera(item.camera);
-  validateCameraIntent(camera, item.requirement);
+  const intent = item.description_prompt || item.requirement;
+  validateCameraIntent(camera, intent);
   if (
     input.op === "white" &&
     /海滩|海岛|街道|森林|沙滩|非白|黑色背景|beach|forest|street|black background/i.test(
-      item.requirement,
+      intent,
     )
   )
     throw problem("CONFLICTING_BACKGROUND", "白底商品图与场景要求冲突");
   const refs = input.references.filter((r) =>
     item.reference_ids.includes(r.id),
   );
-  const spec = item.spec || {};
-  const worn = module.subject === "worn";
   const renderer = renderMode(input, item);
   const policyIssues = imagePolicyIssues(input, item);
-  const conflictSignature = hash({
-    conflicts: plan.content.reference_conflicts || "",
-    references: input.references,
-    version: plan.version_id,
-  });
-  if (
-    isProductTask(input, item) &&
-    plan.content.reference_conflicts &&
-    plan.content.conflict_ack !== conflictSignature
-  )
-    policyIssues.push("参考图与已保存属性有冲突，请先核对商品事实");
   const warnings = isProductTask(input, item)
     ? riskyInstructions(
         {
           ...item,
-          requirement: [input.requirements, item.requirement]
+          requirement: [input.requirements, intent, item.attributes_prompt]
             .filter(Boolean)
             .join("\n"),
         },
         standard,
       )
     : [];
-  const riskSignature = hash({
-    input_requirements: input.requirements,
-    references: refs,
-    version: plan.version_id,
-    requirement: item.requirement,
-    spec: item.spec,
-    standard,
-    override: item.prompt_override,
-  });
-  if (warnings.length && item.risk_ack !== riskSignature)
-    policyIssues.push("请核对并确认可能改变商品的要求");
-  const siblings = plan.content.items.filter((i) => i.module_id === item.module_id);
-  const moduleDesign = moduleDesignText(
-    {
-      ...item,
-      spec: {
-        ...spec,
-        text: item.module_id === "main" || isNoTextLanguage(input.language)
-          ? "不新增文字"
-          : item.copy || spec.text || "",
-      },
-    },
-    { index: siblings.findIndex((i) => i.id === item.id) + 1, total: siblings.length },
-  );
-  const base = {
-    system: imageSystemPrompt({ creative: generationMode(input) === "creative" }),
-    description: item.requirement,
-    goal: `${isProductTask(input, item) ? FIDELITY_RULES + "\n" : ""}${moduleDesign}\n任务：${input.op}。`,
-    design: [
-      `服装基础描述：${describeStyleVersion(v)}`,
-      `已保存设计说明：${v.design_note || "无"}`,
-      ...Object.entries(input.facts).map(
-        ([key, value]) =>
-          `${FACT_FIELDS[key]}：${value}（用于事实约束，不自动作为图内文案）`,
-      ),
-      `必须保留：${input.keep || "保存版本的设计特征"}`,
-      "保持服装本身配色和结构；展示风格不能改写设计。",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    references: refs.length
-      ? refs
-          .map(
-            (r) =>
-              `图${refs.indexOf(r) + 1}：${REFERENCE_ROLES[r.role]}。${r.role === "model" ? "仅采用其人物外观、发型与体态，不采用该图服装。" : r.role === "fabric" ? "仅采用可见纹理细节，不据此确认成分。" : "仅采用服装结构与颜色，不借用人物身份。"} 服装以核对后的商品事实与原图为依据；图片与属性冲突须先核对，不擅自修改商品。`,
-          )
-          .join("\n")
-      : "无参考图片，使用已保存属性。",
-    requirements: `用户生成需求：${input.requirements || "按所选模块展示本款服装"}\n图片识别依据：${item.observation || "尚未识图，不推测参考图内容"}`,
-    style: stylePresetPrompt(input.style),
-    standard: `整套图片共同遵循：\n${Object.entries(standard)
-      .filter(([key]) =>
-        (key !== "typography" || (item.module_id !== "main" && !isNoTextLanguage(input.language))) &&
-        (key !== "subject" || worn),
-      )
-      .map(
-        ([key, value]) =>
-          `${{ tone: "视觉基调与色彩背景", photography: "光影与摄影", subject: "人物一致性", garment: "服装一致性", typography: "文字排版", facts: "真实性" }[key] || key}：${value}`,
-      )
-      .join("\n")}`,
-    composition: [
-      CORE_IMAGE_RULES[item.module_id] || "",
-      module.subject === "text"
-        ? "纯文字与装饰元素的章节过渡卡；允许无服装、无人物，不要求全身或露脸。"
-        : "",
-      item.delivery_slot ? photographyPrompt(camera, v.preset_id) : "",
-      item.delivery_slot === "side_right" ? "展示服装另一侧（右侧）。" : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    copy:
-      item.module_id === "main" || isNoTextLanguage(input.language)
-        ? "不叠加任何新增文字、标签或宣传文案；保留商品原有标识。"
-        : [
-            standard.typography
-              ? `文字系统规范：${standard.typography}`
-              : "本图不叠加成段文字；如需少量标签，简洁清晰，不遮挡服装。",
-            `新增文字使用${input.language}。管理标题不是图内文字。`,
-            `本图文案：${item.copy || spec.text || "不添加未经确认的文字"}`,
-            ...Object.entries(input.facts).map(
-              ([key, value]) =>
-                `${{ brand: "品牌资料", sizes: "尺码资料", colors: "真实颜色", promotion: "价格优惠", specs: "规格参数", care: "洗护资料", service: "售后政策", faq: "常见问题" }[key]}：${value}`,
-            ),
-            "商品原有logo、标识及技术单位保持原样。",
-          ].join("\n"),
-    limits: [
-      ...(worn
-        ? [GLOBAL_MODULE_RULES.mandatory]
-        : [
-            module.subject === "text"
-              ? "本模块为纯文字过渡卡，不出现模特与商品。"
-              : module.id === "selling"
-                ? "本模块为商品结构说明页，可使用人台、商品本体或已核对的模特主图，不强制露脸。"
-                : "本模块为展示型画面，不出现模特；服装完整、轮廓清楚。",
-          ]),
-      CORE_IMAGE_RULES[item.module_id] || "",
-      GLOBAL_MODULE_RULES.antiCopy,
-      item.module_id === "main" || isNoTextLanguage(input.language)
-        ? "用户选择无文字，禁止新增标题、标签和宣传文字。"
-        : "",
-      standard.facts,
-      ["buyer", "blogger"].includes(item.module_id)
-        ? "AI模拟穿搭，不代表真实买家评价或人物背书。"
-        : "",
-      input.op === "white" ? "纯白商品背景，不添加促销文字或图形。" : "",
-      worn ? "完整单品图不得裁断服装；局部图仅按明确部位取景。" : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    ...(renderer === "composition"
-      ? {
-          composition: `使用原图裁切与真实字体合成。页面标题：${item.layout?.headline || ""}。卖点：${(item.layout?.details || []).map((d) => d.title + "：" + d.body).join("；")}。请在卖点排版中编辑图片裁切与逐字文案。`,
-        }
-      : {}),
-    output: `尺寸：${item.size || input.size || "待选择"}；质量：${item.quality || input.quality || "模型默认"}。`,
-  };
-  const parts = { ...base, ...item.prompt_overrides };
-  // Immutable source/reference/output constraints remain visible in the final prompt.
-  const layers = imagePromptLayers(parts);
-  const assembled = layers.map((layer) => layer.text).filter(Boolean).join("\n\n");
-  // A user-edited full prompt (提示词模块) wins over the assembled parts.
-  const prompt = item.prompt_override?.trim()
-    ? item.prompt_override +
-      (isProductTask(input, item)
-        ? `\n\n【商品展示执行边界】\n${FIDELITY_RULES}\n${CORE_IMAGE_RULES[item.module_id] || ""}`
-        : "")
-    : assembled;
+  // Legacy long prompts must be reanalyzed; never silently send a different prompt.
+  const description = item.description_prompt || "";
+  const attributes = item.attributes_prompt || "";
+  shortPrompt(description);
+  shortPrompt(attributes);
+  const assembled = assembleModulePrompt(description, attributes);
+  const prompt = assembleExecutionPrompt(assembled, standard);
+  const parts = { description, attributes };
+  const base = parts;
   return {
     render_mode: renderer,
+    request_mode:
+      renderer === "composition"
+        ? "source_composition"
+        : refs.length
+          ? "image_edit"
+          : "text_to_image",
     policy_issues: policyIssues,
     quality_warnings: warnings,
-    risk_signature: riskSignature,
-    conflict_signature: conflictSignature,
     parts,
     automatic_parts: base,
-    prompt_layers: layers,
     automatic_prompt: assembled,
     automatic_signature: hash(assembled),
-    prompt_stale: !!(
-      item.prompt_override &&
-      item.prompt_override_basis &&
-      item.prompt_override_basis !== hash(assembled)
-    ),
+    prompt_stale: false,
+    module_prompt: assembled,
     prompt,
     missing,
     status: policyIssues.length
       ? "needs_info"
       : missing.length
         ? "needs_info"
-        : !item.analyzed && !item.manual_confirmed
+        : (renderer !== "composition" && !description) || (!item.analyzed && !item.manual_confirmed)
           ? "needs_analysis"
           : "ready",
   };

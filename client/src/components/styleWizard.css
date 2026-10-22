@@ -810,6 +810,8 @@
 .wizard-plan-content figure, .wizard-result-card figure { width: 120px; margin: 0; }
 .wizard-plan-content figure img, .wizard-result-card figure img { width: 100%; height: auto; }
 
+.wizard-analysis-sources figure { width: 120px; margin: 0; }
+.wizard-analysis-sources img { width: 100%; height: auto; }
 /* Keep global decisions above per-image instructions and make missing facts actionable. */
 .wizard-plan-counts { display: flex; flex-wrap: wrap; gap: 10px 20px; font-size: 14px; }
 .wizard-card-blocker { margin: 0 16px 16px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-panel); }
@@ -817,3 +819,6 @@
 .wizard-design-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .wizard-execution-layers pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.7; padding: 12px; background: var(--surface-panel); border-radius: 9px; }
 @media (max-width: 700px) { .wizard-design-grid { grid-template-columns: minmax(0, 1fr); } }
+
+.wizard-design-grid dt { font-size: 13px; color: var(--text-secondary); }
+.wizard-design-grid dd { margin: 6px 0 14px; line-height: 1.6; overflow-wrap: anywhere; }

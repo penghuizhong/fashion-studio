@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import {
+  assembleModulePrompt,
+  assembleExecutionPrompt,
+  promptLength,
   describeStyleVersion,
   stylePresetPrompt,
   modulePromptTemplate,
@@ -7,9 +10,6 @@ import {
   parseStandardText,
   assembleStandardText,
   applyAnalysisContent,
-  imageSystemPrompt,
-  moduleDesignText,
-  imagePromptLayers,
 } from "../../shared/stylePrompt.js";
 import { DETAIL_MODULES, DEFAULT_STANDARD } from "../../shared/stylePlan.js";
 
@@ -31,6 +31,17 @@ for (const module of DETAIL_MODULES) {
   assert.ok(modulePromptTemplate(module.id).includes(module.guide));
 }
 assert.notEqual(modulePromptTemplate("main"), modulePromptTemplate("brand"));
+assert.doesNotMatch(
+  modulePromptTemplate("main"),
+  /同模块多图|品牌介绍|款式卖点/,
+);
+assert.match(modulePromptTemplate("main"), /仅输出1张/);
+assert.match(
+  modulePromptTemplate("main", { phase: "analysis", count: 2, index: 1 }),
+  /第2\/2张/,
+);
+assert.doesNotMatch(modulePromptTemplate("brand"), /主图展示|款式卖点/);
+
 const blank = parseStandardText("");
 assert.ok(Object.values(blank).every((value) => value === ""));
 assert.equal(parseStandardText("暖光、灰色背景。").tone, "暖光、灰色背景。");
@@ -94,16 +105,12 @@ console.log(
   "Style prompt contracts passed: natural language, 19 templates, serialization, standard deletion and manual-edit preservation.",
 );
 
-// Module exceptions and six-layer ordering must survive compilation without
-// leaking arbitrary table cells into extra rows or inventing source identities.
-assert.match(imageSystemPrompt(), /平铺、挂架和纯文字模块/);
-assert.match(imageSystemPrompt({ creative: true }), /新设计建议/);
-const design = moduleDesignText({ module_id: "fabric", spec: { lighting: "左前45°柔光|5500K\n阴影柔和" } }, { index: 2, total: 3 });
-assert.match(design, /当前张数：2\/3/);
-assert.match(design, /左前45°柔光／5500K；阴影柔和/);
-assert.equal(design.split("\n").filter((line) => /^\| (主体识别|服装识别|试穿策略|构图方案|光影方案|背景描述|配色方案|文字内容|视觉氛围关键词) \|/.test(line)).length, 9);
-const layers = imagePromptLayers({ system: "执行边界", standard: "米白背景", goal: design, description: "自然站立", requirements: "全身", output: "1024x1024" });
-assert.deepEqual(layers.map((layer) => layer.id), ["system", "standard", "module", "description", "requirements", "output"]);
-assert.match(layers[3].text, /自然站立/);
-assert.doesNotMatch(layers[4].text, /自然站立/);
-console.log("Six-layer prompt contracts passed: module exceptions, nine dimensions and source boundaries.");
+assert.equal(promptLength("裙".repeat(200)), 200);
+assert.equal(promptLength("👗".repeat(200)), 200);
+const concise = assembleModulePrompt("一位模特完整展示商品，无新增文字。", "冰蓝色挂脖长裙，保留原图褶皱。");
+assert.equal(assembleExecutionPrompt(concise, {}), concise);
+assert.equal(assembleExecutionPrompt(concise, { tone: "米白背景" }), concise + "\n\n核心视觉基调：米白背景");
+const conciseContent = cleanPlanContent({ standard: {}, items: [{ id: "concise", description_prompt: "主要描述", attributes_prompt: "基本属性" }] });
+assert.equal(conciseContent.items[0].description_prompt, "主要描述");
+assert.equal(conciseContent.items[0].attributes_prompt, "基本属性");
+console.log("Concise prompts: Unicode counts, two-field persistence and exact backend concatenation passed.");

@@ -35,6 +35,8 @@ export function reconcileItems(input, old = []) {
               requirement: m.description,
               render_mode: renderMode(input, { module_id: m.id }),
               copy: "",
+              description_prompt: "",
+              attributes_prompt: "",
               prompt_override: "",
               spec: {},
               camera: defaultPlanCamera(m.id, n, input.op),

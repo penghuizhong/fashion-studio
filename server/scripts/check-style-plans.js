@@ -1,3 +1,4 @@
+import { assembleExecutionPrompt } from "../../shared/stylePrompt.js";
 import { cleanPlanContent } from "../../shared/stylePrompt.js";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -30,6 +31,7 @@ const db = getDb(),
   })
     .png()
     .toBuffer();
+let analysisMutator = null;
 let calls = [],
   broken = false,
   usageMissing = false,
@@ -54,6 +56,8 @@ global.fetch = async (url, opts = {}) => {
         id: i.id,
         title: `规划${n + 1}`,
         requirement: `${i.requirement} 展示本款第${n + 1}个设计重点`,
+        description_prompt: `${i.module || i.module_id}：${i.guide}独立单幅，展示重点${n + 1}。`,
+        attributes_prompt: "黑色服装，版型为常规，可见贴兜；保留商品图可见结构与颜色。",
         copy: "",
         spec: {
           lighting: "柔光",
@@ -63,6 +67,7 @@ global.fetch = async (url, opts = {}) => {
         observation: "图片可见纹理，实际成分未知",
       })),
     ];
+    if (analysisMutator) analysisMutator(lines, details);
     return new Response(
       JSON.stringify({
         choices: [
@@ -83,6 +88,23 @@ global.fetch = async (url, opts = {}) => {
       { headers: { "Content-Type": "application/json" } },
     );
   }
+  if (String(url).includes("/multimodal-generation/generation"))
+    return new Response(
+      JSON.stringify({
+        output: {
+          choices: [
+            {
+              message: {
+                content: [
+                  { image: "data:image/png;base64," + png.toString("base64") },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
   return new Response(
     JSON.stringify({ data: [{ b64_json: png.toString("base64") }] }),
     { headers: { "Content-Type": "application/json" } },
@@ -233,8 +255,7 @@ try {
     );
     assert.equal(calls.length, before);
   });
-  await test("empty design parameters do not turn an unanalyzed plan into manual work", async () => {
-    // Browser save can expand an empty spec into nine empty strings.
+  await test("empty nine-field specs are not mistaken for manual edits", async () => {
     const content = cleanPlanContent(plan.content);
     content.items[0].spec = Object.fromEntries(
       ["subject", "garment", "strategy", "composition", "lighting", "background", "palette", "text", "mood"].map((key) => [key, ""]),
@@ -270,13 +291,13 @@ try {
   await test("global standards, hand overrides and targeted reanalysis preserve other work", async () => {
     const content = structuredClone(plan.content);
     content.standard.photography = "统一柔光背景";
-    content.items[1].prompt_overrides.goal = "人工设定的专属目标";
+    content.items[1].description_prompt = "人工设定的专属目标";
     plan = await save({ content });
     const other = plan.content.items[1];
     await analyze([plan.content.items[0].id]);
     assert.equal(
-      plan.content.items[1].prompt_overrides.goal,
-      other.prompt_overrides.goal,
+      plan.content.items[1].description_prompt,
+      other.description_prompt,
     );
     assert.ok(plan.content.items[1].prompt.includes("人工设定"));
     assert.ok(plan.content.items[0].prompt.includes("统一柔光背景"));
@@ -301,7 +322,7 @@ try {
       409,
     );
   });
-  await test("per-item size quality, snapshot identity and duplicate submission are exact", async () => {
+  await test("second-step size and quality override legacy item metadata; snapshot and duplicate submission are exact", async () => {
     const content = structuredClone(plan.content);
     content.items[1].size = "1024x1024";
     content.items[1].quality = "high";
@@ -311,7 +332,7 @@ try {
         expected_revision: plan.revision,
       })
     ).quote;
-    assert.equal(quote.total, 14);
+    assert.equal(quote.total, 10);
     const body = {
       quote_id: quote.id,
       request_key: crypto.randomUUID(),
@@ -344,7 +365,7 @@ try {
         (r) =>
           JSON.parse(r.settings_json).plan_item_id === plan.content.items[1].id,
       );
-    assert.equal(second.size, "1024x1024");
+    assert.equal(second.size, "512x512");
     assert.ok(first);
     assert.equal(first.prompt_snapshot, plan.content.items[0].prompt);
   });
@@ -549,7 +570,7 @@ try {
       .get(plan.id).content_json;
     const content = structuredClone(plan.content);
     content.items[0].manual_confirmed = true;
-    content.items[0].requirement = "人工确认完整正面图";
+    content.items[0].description_prompt = "人工确认完整正面图";
     plan = await save({ content });
     assert.equal(plan.content.items[0].status, "ready");
     assert.equal(
@@ -649,17 +670,11 @@ try {
     const item = plan.content.items[0];
     assert.match(item.prompt, /版型为常规/);
     assert.doesNotMatch(item.prompt, /confidence|"value"|dna_json/);
-    assert.match(item.prompt, /专用画面规则/);
-    assert.match(item.prompt, /refined materials/);
-    assert.match(item.prompt, /用户生成需求：完整展示服装/);
-    assert.match(item.prompt, /## 整体设计规范/);
-    assert.match(item.prompt, /品牌资料：樱紫/);
+    assert.ok(Array.from(item.description_prompt).length <= 200);
+    assert.ok(Array.from(item.attributes_prompt).length <= 200);
+    assert.doesNotMatch(item.module_prompt, /尺寸|quality|1024|##|专用画面规则/);
+    assert.equal(item.prompt, assembleExecutionPrompt(item.module_prompt, plan.content.standard));
     assert.ok(!item.prompt.includes(item.id));
-    assert.equal(item.prompt_layers.length, 6);
-    assert.match(item.prompt_layers[0].text, /系统执行规则/);
-    assert.match(item.prompt_layers[2].text, /当前张数：1\/1/);
-    assert.match(item.prompt_layers[2].text, /\| 光影方案 \| 柔光 \|/);
-    assert.equal(item.automatic_prompt, item.prompt_layers.map((layer) => layer.text).filter(Boolean).join("\n\n"));
     const call = calls
       .filter((c) => c.url.endsWith("/chat/completions"))
       .at(-1);
@@ -670,53 +685,41 @@ try {
     assert.ok(details.items[0].prompt_template.includes("主图展示"));
     assert.match(details.style_prompt, /refined materials/);
   });
-  await test("spec-only edits are preserved on reanalysis and update the quoted prompt", async () => {
+  await test("manual analysis parameters survive reanalysis without expanding image prompts", async () => {
     const content = cleanPlanContent(plan.content);
+    const originalPrompt = plan.content.items[0].prompt;
     content.items[0].spec.lighting = "左前45度自然光，5500K";
     content.items[0].edited = false;
     plan = await save({ content });
     assert.equal(plan.content.items[0].edited, true);
-    assert.match(plan.content.items[0].prompt, /左前45度自然光，5500K/);
+    assert.equal(plan.content.items[0].prompt, originalPrompt);
     const { analysis } = await analyze();
     assert.equal(analysis.progress.review_required, true);
     assert.equal(plan.content.items[0].spec.lighting, "左前45度自然光，5500K");
+    const trace = calls.filter((call) => call.url.endsWith("/chat/completions")).at(-1);
+    const details = JSON.parse(JSON.parse(trace.body).messages[1].content[0].text);
+    assert.equal(details.items[0].design_reference.lighting, "左前45度自然光，5500K");
   });
-  await test("browser save payload retains full prompts and analyzed specs; upstream changes require synchronization", async () => {
-    const originalSpec = plan.content.items[0].spec;
+  await test("concise manual fields survive saves and global standards concatenate without confirmation", async () => {
     const content = cleanPlanContent(plan.content);
-    content.items[0].prompt_override = "人工最终提示词：展示黑色西装";
+    content.items[0].description_prompt = "人工最终提示词：展示黑色西装";
     plan = await save({ content });
-    assert.equal(
-      plan.content.items[0].prompt,
-      content.items[0].prompt_override,
-    );
-    assert.deepEqual(plan.content.items[0].spec, originalSpec);
-    assert.equal(plan.content.items[0].prompt_stale, false);
-    const legacy = cleanPlanContent(plan.content);
-    delete legacy.items[0].spec;
-    plan = await save({ content: legacy });
-    assert.deepEqual(plan.content.items[0].spec, originalSpec);
+    assert.equal(plan.content.items[0].description_prompt, content.items[0].description_prompt);
     const next = cleanPlanContent(plan.content);
     next.standard.photography = "修改为侧逆光";
     plan = await save({ content: next });
-    assert.equal(plan.content.items[0].prompt_stale, true);
-    await req(
-      "POST",
-      plans(plan.id) + "/quote",
-      { expected_revision: plan.revision },
-      422,
-    );
-    const confirmed = cleanPlanContent(plan.content);
-    confirmed.items[0].prompt_override_basis =
-      plan.content.items[0].automatic_signature;
-    plan = await save({ content: confirmed });
     assert.equal(plan.content.items[0].prompt_stale, false);
-    const quote = (
-      await req("POST", plans(plan.id) + "/quote", {
-        expected_revision: plan.revision,
-      })
-    ).quote;
-    assert.deepEqual(quote.prompts, ["人工最终提示词：展示黑色西装"]);
+    const quote = (await req("POST", plans(plan.id) + "/quote", {
+      expected_revision: plan.revision,
+    })).quote;
+    assert.deepEqual(quote.prompts, [assembleExecutionPrompt(plan.content.items[0].module_prompt, next.standard)]);
+    assert.match(quote.prompts[0], /人工最终提示词：展示黑色西装/);
+    assert.match(quote.prompts[0], /修改为侧逆光/);
+    for (const invalid of ["字".repeat(201), "输出1024x1024图片"]) {
+      const bad = cleanPlanContent(plan.content);
+      bad.items[0].description_prompt = invalid;
+      await req("PUT", plans(plan.id), { expected_revision: plan.revision, content: bad }, 400);
+    }
   });
   await test("reanalysis leaves manual drafts untouched until an explicit adoption", async () => {
     const before = structuredClone(plan);
@@ -735,7 +738,7 @@ try {
     assert.match(plan.content.items[0].prompt, /侧逆光/);
     assert.equal(plan.content.items[0].prompt_stale, false);
     const next = cleanPlanContent(plan.content);
-    next.items[0].prompt_override = "另一次手工修改";
+    next.items[0].description_prompt = "另一次手工修改";
     plan = await save({ content: next });
     const review = await analyze();
     plan = (
@@ -745,7 +748,7 @@ try {
         replace_manual: false,
       })
     ).plan;
-    assert.equal(plan.content.items[0].prompt, "另一次手工修改");
+    assert.equal(plan.content.items[0].description_prompt, "另一次手工修改");
   });
   await test("product mode blocks text-only analysis and generation, while creative tasks stay separate", async () => {
     plan = await newPlan(
@@ -807,68 +810,53 @@ try {
     assert.equal(finished.renders[0].review.status, "pending");
     productMainGeneration = finished.renders[0].generation_id;
   });
-  await test("fact conflicts and risky directions require acknowledgement tied to the current source revision", async () => {
+  await test("fact and model-reference notices remain informative without acknowledgement gates", async () => {
     const row = db
       .prepare("SELECT content_json FROM style_plans WHERE id=?")
       .get(plan.id);
     const content = JSON.parse(row.content_json);
     content.reference_conflicts = "已保存颜色与原图不一致，请核对";
+    content.conflict_ack = "legacy-unused-ack";
+    content.items[0].risk_ack = "legacy-unused-ack";
+    content.items[0].spec.subject = "虚拟模特 model_audit_001";
     db.prepare("UPDATE style_plans SET content_json=? WHERE id=?").run(
       JSON.stringify(content),
       plan.id,
     );
     plan = (await req("GET", plans(plan.id))).plan;
+    assert.ok(plan.content.reference_conflicts);
     assert.ok(
-      plan.content.items[0].policy_issues.some((v) => v.includes("冲突")),
+      plan.content.items[0].quality_warnings.some((w) =>
+        w.includes("模特编号不是图片"),
+      ),
     );
-    await req(
-      "POST",
-      plans(plan.id) + "/quote",
-      { expected_revision: plan.revision },
-      422,
+    assert.deepEqual(plan.content.items[0].policy_issues, []);
+    assert.equal(plan.content.items[0].status, "ready");
+    const clean = cleanPlanContent(plan.content);
+    assert.ok(!Object.hasOwn(clean, "conflict_ack"));
+    assert.ok(!Object.hasOwn(clean.items[0], "risk_ack"));
+    plan = await save({ content: clean });
+    assert.ok(!Object.hasOwn(plan.content, "conflict_ack"));
+    assert.ok(!Object.hasOwn(plan.content.items[0], "risk_ack"));
+    const quote = (
+      await req("POST", plans(plan.id) + "/quote", {
+        expected_revision: plan.revision,
+      })
+    ).quote;
+    const job = (
+      await req(
+        "POST",
+        `/api/studio/templates/${template.id}/jobs`,
+        { quote_id: quote.id, request_key: crypto.randomUUID(), confirm: true },
+        202,
+      )
+    ).job;
+    const finished = await waitJob(job.id);
+    assert.equal(finished.status, "succeeded");
+    assert.equal(
+      finished.renders[0].request_trace.prompt,
+      plan.content.items[0].prompt,
     );
-    const fixed = cleanPlanContent(plan.content);
-    fixed.conflict_ack = plan.content.items[0].conflict_signature;
-    plan = await save({ content: fixed });
-    await req("POST", plans(plan.id) + "/quote", {
-      expected_revision: plan.revision,
-    });
-    const stale = cleanPlanContent(plan.content);
-    stale.conflict_ack = "old-revision";
-    plan = await save({ content: stale });
-    await req(
-      "POST",
-      plans(plan.id) + "/quote",
-      { expected_revision: plan.revision },
-      422,
-    );
-    const restored = cleanPlanContent(plan.content);
-    restored.conflict_ack = plan.content.items[0].conflict_signature;
-    plan = await save({ content: restored });
-    const originalRequirements = plan.input.requirements;
-    plan = await save({
-      input: { ...plan.input, requirements: "裙摆飞扬，增加动态模糊" },
-    });
-    assert.ok(plan.content.items[0].quality_warnings.length > 0);
-    await req(
-      "POST",
-      plans(plan.id) + "/quote",
-      { expected_revision: plan.revision },
-      422,
-    );
-    const risk = cleanPlanContent(plan.content);
-    risk.items[0].manual_confirmed = true;
-    risk.items[0].risk_ack = plan.content.items[0].risk_signature;
-    plan = await save({ content: risk });
-    await req("POST", plans(plan.id) + "/quote", {
-      expected_revision: plan.revision,
-    });
-    plan = await save({
-      input: { ...plan.input, requirements: originalRequirements },
-    });
-    const confirmed = cleanPlanContent(plan.content);
-    confirmed.items[0].manual_confirmed = true;
-    plan = await save({ content: confirmed });
   });
   await test("changed source bytes invalidate a quote before billing or provider calls", async () => {
     const quote = (
@@ -1130,6 +1118,337 @@ try {
     assert.ok(
       !fs.readFileSync(reportFile, "utf8").includes("soulchat_session"),
     );
+  });
+  await test("main and brand reach separate provider requests with exact matching prompts, including reversed sparse selection and manual overrides", async () => {
+    for (const scenario of [
+      "automatic",
+      "reversed-sparse",
+      "manual-override",
+    ]) {
+      plan = await newPlan(
+        { main: scenario === "reversed-sparse" ? 2 : 1, brand: 1 },
+        {
+          generation_mode: "product",
+          facts: { brand: "AUDIT_CONFIRMED_BRAND" },
+        },
+      );
+      const content = cleanPlanContent(plan.content);
+      for (const [index, item] of content.items.entries()) {
+        item.manual_confirmed = true;
+        item.requirement = `仅用于本图的核对标记 AUDIT_${scenario}_${item.module_id}_${index}`;
+        item.description_prompt = item.requirement;
+        item.attributes_prompt = "保持商品图颜色与结构";
+        if (scenario === "manual-override")
+          item.description_prompt = `独立手工终稿 AUDIT_${item.module_id}_OVERRIDE`;
+      }
+      plan = await save({ content });
+      const main = plan.content.items.find((i) => i.module_id === "main"),
+        brand = plan.content.items.find((i) => i.module_id === "brand");
+      const quote = (
+        await req("POST", plans(plan.id) + "/quote", {
+          expected_revision: plan.revision,
+          item_ids: [brand.id, main.id],
+        })
+      ).quote;
+      assert.deepEqual(
+        quote.indexes,
+        scenario === "reversed-sparse" ? [0, 2] : [0, 1],
+      );
+      assert.deepEqual(quote.prompts, [main.prompt, brand.prompt]);
+      const before = calls.length;
+      const job = (
+        await req(
+          "POST",
+          `/api/studio/templates/${template.id}/jobs`,
+          {
+            quote_id: quote.id,
+            request_key: crypto.randomUUID(),
+            confirm: true,
+          },
+          202,
+        )
+      ).job;
+      const finished = await waitJob(job.id);
+      assert.equal(finished.status, "succeeded");
+      const requests = calls
+        .slice(before)
+        .filter((c) => c.url.endsWith("/images/edits"));
+      assert.equal(requests.length, 2);
+      for (const item of [main, brand]) {
+        const expected = item.prompt;
+        assert.equal(
+          requests.filter((c) => c.body.get("prompt") === expected).length,
+          1,
+        );
+        const render = finished.renders.find(
+          (r) =>
+            finished.snapshot.style.item_contexts[r.proposal_idx]
+              .plan_item_id === item.id,
+        );
+        assert.ok(render);
+        assert.equal(render.prompt_snapshot, expected);
+        assert.equal(render.request_trace.prompt, expected);
+        const module =
+          finished.snapshot.style.item_contexts[render.proposal_idx].module_id;
+        assert.equal(module, item.module_id);
+        const other = item === main ? brand : main;
+        assert.ok(expected.includes(item.description_prompt));
+        assert.ok(!expected.includes(other.description_prompt));
+        assert.equal(expected, assembleExecutionPrompt(item.module_prompt, plan.content.standard));
+      }
+      console.log(
+        "PROMPT_ROUTE_AUDIT " +
+          JSON.stringify({
+            scenario,
+            indexes: quote.indexes,
+            requests: requests.length,
+            modules: ["main", "brand"],
+            exact_snapshot_match: true,
+          }),
+      );
+    }
+  });
+  await test("single main analysis attaches real garment/model images and executes exactly one isolated image edit", async () => {
+    const modelPng = await sharp({
+      create: { width: 240, height: 360, channels: 3, background: "#CC7744" },
+    })
+      .png()
+      .toBuffer();
+    const modelRef = await req("POST", "/api/studio/references", {
+      image_base64: modelPng.toString("base64"),
+    });
+    const references = [
+      { id: "audit-garment", source: "original", role: "garment" },
+      { id: "audit-model-image", source: `ref:${modelRef.id}`, role: "model" },
+    ];
+    for (const protocol of ["openai_images", "dashscope_multimodal"]) {
+      const model =
+        protocol === "openai_images"
+          ? image
+          : createModel({
+              provider_id: p.id,
+              kind: "image",
+              model_id: "test-native-image",
+              pricing: { per_call: 5 },
+              extra: {
+                sizes: ["512x512"],
+                image_config: {
+                  protocol,
+                  text: true,
+                  edit: true,
+                  max_images: 4,
+                },
+              },
+            });
+      plan = await newPlan(
+        { main: 1 },
+        {
+          generation_mode: "product",
+          model_id: model.id,
+          facts: { brand: "BRAND_DATA_MUST_NOT_LEAK" },
+          requirements:
+            "主图完整展示服装；仅品牌介绍使用GLOBAL_BRAND_REQUIREMENT",
+          references,
+        },
+      );
+      analysisMutator = (lines) => {
+        lines.find((l) => l.type === "standard").standard.subject =
+          "基于ID model_fake_001 生成的虚拟女性形象";
+        lines.find((l) => l.type === "item").spec.subject =
+          "模特 model_fake_001 自然站立";
+      };
+      const { analysis } = await analyze();
+      analysisMutator = null;
+      assert.equal(analysis.status, "succeeded");
+      const analysisCall = calls
+          .filter((c) => c.url.endsWith("/chat/completions"))
+          .at(-1),
+        body = JSON.parse(analysisCall.body),
+        data = JSON.parse(body.messages[1].content[0].text);
+      const attachments = body.messages[1].content.filter(
+        (c) => c.type === "image_url",
+      );
+      assert.equal(attachments.length, 2);
+      assert.deepEqual(
+        data.items.map((i) => i.module_id),
+        ["main"],
+      );
+      assert.deepEqual(data.items[0].reference_numbers, [1, 2]);
+      assert.doesNotMatch(
+        body.messages[0].content,
+        /款式卖点|品牌介绍|render_mode=composition/,
+      );
+      assert.doesNotMatch(JSON.stringify(data), /BRAND_DATA_MUST_NOT_LEAK/);
+      assert.equal(analysis.request_trace.image_count, 2);
+      for (const [n, bytes] of [png, modelPng].entries()) {
+        const actual = Buffer.from(
+          attachments[n].image_url.url.split(",")[1],
+          "base64",
+        );
+        assert.ok((await sharp(actual).metadata()).width > 0);
+        assert.equal(
+          analysis.request_trace.source_manifest[n].sha256,
+          crypto.createHash("sha256").update(bytes).digest("hex"),
+        );
+        assert.equal(
+          analysis.request_trace.source_manifest[n].payload_sha256,
+          crypto.createHash("sha256").update(actual).digest("hex"),
+        );
+      }
+      assert.doesNotMatch(
+        plan.content.items[0].prompt,
+        /同模块多图|款式卖点|品牌介绍|model_|BRAND_DATA_MUST_NOT_LEAK|GLOBAL_BRAND_REQUIREMENT|整套图片共同遵循/,
+      );
+      assert.match(plan.content.items[0].prompt, /独立单幅/);
+      assert.equal(plan.content.items[0].request_mode, "image_edit");
+      const quote = (
+          await req("POST", plans(plan.id) + "/quote", {
+            expected_revision: plan.revision,
+          })
+        ).quote,
+        before = calls.length;
+      const job = (
+        await req(
+          "POST",
+          `/api/studio/templates/${template.id}/jobs`,
+          {
+            quote_id: quote.id,
+            request_key: crypto.randomUUID(),
+            confirm: true,
+          },
+          202,
+        )
+      ).job;
+      const finished = await waitJob(job.id);
+      assert.equal(finished.status, "succeeded");
+      const imageCalls = calls.slice(before);
+      assert.equal(imageCalls.length, 1);
+      if (protocol === "openai_images") {
+        assert.ok(imageCalls[0].url.endsWith("/images/edits"));
+        assert.equal(imageCalls[0].body.get("n"), "1");
+        const files = imageCalls[0].body.getAll("image[]");
+        assert.equal(files.length, 2);
+        assert.deepEqual(Buffer.from(await files[0].arrayBuffer()), png);
+        assert.deepEqual(Buffer.from(await files[1].arrayBuffer()), modelPng);
+        assert.equal(
+          imageCalls[0].body.get("prompt"),
+          plan.content.items[0].prompt,
+        );
+      } else {
+        const sent = JSON.parse(imageCalls[0].body),
+          content = sent.input.messages[0].content;
+        assert.equal(sent.parameters.n, 1);
+        assert.equal(content.filter((c) => c.image).length, 2);
+        assert.deepEqual(
+          Buffer.from(content[0].image.split(",")[1], "base64"),
+          png,
+        );
+        assert.deepEqual(
+          Buffer.from(content[1].image.split(",")[1], "base64"),
+          modelPng,
+        );
+        assert.equal(
+          content.find((c) => c.text).text,
+          plan.content.items[0].prompt,
+        );
+      }
+      const trace = finished.renders[0].request_trace;
+      assert.equal(trace.operation, "image_edit");
+      assert.equal(trace.image_count, 2);
+      assert.equal(trace.output_count, 1);
+      assert.equal(trace.module_id, "main");
+      assert.equal(trace.protocol, protocol);
+    }
+  });
+  await test("targeted module analysis excludes other module templates and rebases global image numbers to each item's actual attachments", async () => {
+    const extra = await req("POST", "/api/studio/references", {
+      image_base64: (await sharp(png).negate().png().toBuffer()).toString(
+        "base64",
+      ),
+    });
+    const face = await req("POST", "/api/studio/references", {
+      image_base64: (
+        await sharp(png).modulate({ brightness: 0.4 }).png().toBuffer()
+      ).toString("base64"),
+    });
+    plan = await newPlan(
+      { main: 1, brand: 1 },
+      {
+        generation_mode: "product",
+        facts: { brand: "CONFIRMED_BRAND_ONLY" },
+        references: [
+          { id: "global-garment", source: "original", role: "garment" },
+          { id: "global-detail", source: `ref:${extra.id}`, role: "fabric" },
+          { id: "global-model", source: `ref:${face.id}`, role: "model" },
+        ],
+      },
+    );
+    const content = cleanPlanContent(plan.content);
+    content.items.find((i) => i.module_id === "main").reference_ids = [
+      "global-garment",
+      "global-model",
+    ];
+    plan = await save({ content });
+    analysisMutator = (lines, details) => {
+      const main = lines.find(
+        (l) =>
+          l.type === "item" &&
+          details.items.find((i) => i.id === l.id)?.module_id === "main",
+      );
+      if (main) {
+        main.spec.subject = "采用图3的人物身份";
+        main.description_prompt = "主图展示：图1约束商品，图3约束人物，完整展示服装，无新增文字。";
+      }
+    };
+    await analyze();
+    analysisMutator = null;
+    const main = plan.content.items.find((i) => i.module_id === "main");
+    assert.match(main.spec.subject, /图2/);
+    assert.doesNotMatch(main.spec.subject, /图3/);
+    assert.match(main.description_prompt, /图1约束商品，图2约束人物/);
+    assert.doesNotMatch(main.module_prompt, /图3/);
+    const mainPrompt = main.prompt;
+    const brand = plan.content.items.find((i) => i.module_id === "brand");
+    await analyze([brand.id]);
+    const request = JSON.parse(
+        calls.filter((c) => c.url.endsWith("/chat/completions")).at(-1).body,
+      ),
+      data = JSON.parse(request.messages[1].content[0].text);
+    assert.deepEqual(
+      data.items.map((i) => i.module_id),
+      ["brand"],
+    );
+    assert.doesNotMatch(
+      request.messages[0].content,
+      /主图规则|款式卖点|品牌介绍：编辑式/,
+    );
+    assert.equal(data.items[0].facts.brand, "CONFIRMED_BRAND_ONLY");
+    assert.equal(
+      plan.content.items.find((i) => i.id === main.id).prompt,
+      mainPrompt,
+    );
+  });
+  await test("analysis accepts 200 Unicode characters and rejects oversized or parameter-filled descriptions without replacing valid prompts", async () => {
+    plan = await newPlan({ main: 1 });
+    analysisMutator = (lines) => {
+      const item = lines.find((line) => line.type === "item");
+      item.description_prompt = "👗".repeat(200);
+      item.attributes_prompt = "字".repeat(200);
+    };
+    const valid = await analyze();
+    assert.equal(valid.analysis.status, "succeeded");
+    assert.equal(Array.from(plan.content.items[0].description_prompt).length, 200);
+    assert.equal(Array.from(plan.content.items[0].attributes_prompt).length, 200);
+    const before = plan.content.items[0].prompt;
+    for (const bad of ["字".repeat(201), "输出1024x1024图片", ""]) {
+      analysisMutator = (lines) => {
+        lines.find((line) => line.type === "item").description_prompt = bad;
+      };
+      const invalid = await analyze();
+      assert.equal(invalid.analysis.status, "failed");
+      assert.equal(plan.content.items[0].prompt, before);
+    }
+    analysisMutator = null;
   });
   await test("migration is repeatable and leaves original and historical files intact", async () => {
     const file = getDb()
