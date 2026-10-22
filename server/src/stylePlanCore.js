@@ -11,7 +11,9 @@ import { normalizeLayout } from "./productLayoutSchema.js";
 import {
   describeStyleVersion,
   stylePresetPrompt,
-  modulePromptTemplate,
+  moduleDesignText,
+  imageSystemPrompt,
+  imagePromptLayers,
 } from "../../shared/stylePrompt.js";
 import crypto from "node:crypto";
 import {
@@ -23,7 +25,6 @@ import {
   SPEC_FIELDS,
   REFERENCE_ROLES,
   EDITABLE_PROMPT_PARTS,
-  PROMPT_PARTS,
   defaultPlanCamera,
   isNoTextLanguage,
   moduleCounts,
@@ -299,7 +300,11 @@ export function normalizeContent(raw, input, old) {
           prior &&
           ((i.title !== undefined && i.title !== prior.title) ||
             (i.requirement !== undefined &&
-              i.requirement !== prior.requirement))
+              i.requirement !== prior.requirement) ||
+            (i.spec !== undefined && canonical(spec) !== canonical(
+              Object.fromEntries(SPEC_FIELDS.map(([key]) => [key, prior.spec?.[key] || ""]))
+            )) ||
+            (i.copy !== undefined && i.copy !== prior.copy))
         ),
       render_mode: i.render_mode || prior?.render_mode || renderMode(input, i),
       layout:
@@ -381,7 +386,6 @@ export function compilePlanItem(plan, item, t) {
     item.reference_ids.includes(r.id),
   );
   const spec = item.spec || {};
-  const specLine = (key, label) => (spec[key] ? `${label}：${spec[key]}` : "");
   const worn = module.subject === "worn";
   const renderer = renderMode(input, item);
   const policyIssues = imagePolicyIssues(input, item);
@@ -418,8 +422,23 @@ export function compilePlanItem(plan, item, t) {
   });
   if (warnings.length && item.risk_ack !== riskSignature)
     policyIssues.push("请核对并确认可能改变商品的要求");
+  const siblings = plan.content.items.filter((i) => i.module_id === item.module_id);
+  const moduleDesign = moduleDesignText(
+    {
+      ...item,
+      spec: {
+        ...spec,
+        text: item.module_id === "main" || isNoTextLanguage(input.language)
+          ? "不新增文字"
+          : item.copy || spec.text || "",
+      },
+    },
+    { index: siblings.findIndex((i) => i.id === item.id) + 1, total: siblings.length },
+  );
   const base = {
-    goal: `${isProductTask(input, item) ? FIDELITY_RULES + "\n" : ""}${modulePromptTemplate(module.id)}\n图片目标：${item.requirement}\n任务：${input.op}。`,
+    system: imageSystemPrompt({ creative: generationMode(input) === "creative" }),
+    description: item.requirement,
+    goal: `${isProductTask(input, item) ? FIDELITY_RULES + "\n" : ""}${moduleDesign}\n任务：${input.op}。`,
     design: [
       `服装基础描述：${describeStyleVersion(v)}`,
       `已保存设计说明：${v.design_note || "无"}`,
@@ -427,8 +446,6 @@ export function compilePlanItem(plan, item, t) {
         ([key, value]) =>
           `${FACT_FIELDS[key]}：${value}（用于事实约束，不自动作为图内文案）`,
       ),
-      specLine("garment", "本图服装识别"),
-      specLine("subject", "本图主体识别"),
       `必须保留：${input.keep || "保存版本的设计特征"}`,
       "保持服装本身配色和结构；展示风格不能改写设计。",
     ]
@@ -442,10 +459,13 @@ export function compilePlanItem(plan, item, t) {
           )
           .join("\n")
       : "无参考图片，使用已保存属性。",
-    requirements: `用户生成需求：${input.requirements || "按所选模块展示本款服装"}\n本图画面描述：${item.requirement}\n图片识别依据：${item.observation || "尚未识图，不推测参考图内容"}`,
+    requirements: `用户生成需求：${input.requirements || "按所选模块展示本款服装"}\n图片识别依据：${item.observation || "尚未识图，不推测参考图内容"}`,
     style: stylePresetPrompt(input.style),
     standard: `整套图片共同遵循：\n${Object.entries(standard)
-      .filter(([key]) => key !== "typography" || item.module_id !== "main")
+      .filter(([key]) =>
+        (key !== "typography" || (item.module_id !== "main" && !isNoTextLanguage(input.language))) &&
+        (key !== "subject" || worn),
+      )
       .map(
         ([key, value]) =>
           `${{ tone: "视觉基调与色彩背景", photography: "光影与摄影", subject: "人物一致性", garment: "服装一致性", typography: "文字排版", facts: "真实性" }[key] || key}：${value}`,
@@ -453,12 +473,6 @@ export function compilePlanItem(plan, item, t) {
       .join("\n")}`,
     composition: [
       CORE_IMAGE_RULES[item.module_id] || "",
-      specLine("strategy", "试穿策略"),
-      specLine("composition", "构图方案"),
-      specLine("lighting", "光影方案"),
-      specLine("background", "背景描述"),
-      specLine("palette", "配色方案"),
-      specLine("mood", "视觉氛围关键词"),
       module.subject === "text"
         ? "纯文字与装饰元素的章节过渡卡；允许无服装、无人物，不要求全身或露脸。"
         : "",
@@ -488,7 +502,9 @@ export function compilePlanItem(plan, item, t) {
         : [
             module.subject === "text"
               ? "本模块为纯文字过渡卡，不出现模特与商品。"
-              : "本模块为展示型画面，不出现模特；服装完整、轮廓清楚。",
+              : module.id === "selling"
+                ? "本模块为商品结构说明页，可使用人台、商品本体或已核对的模特主图，不强制露脸。"
+                : "本模块为展示型画面，不出现模特；服装完整、轮廓清楚。",
           ]),
       CORE_IMAGE_RULES[item.module_id] || "",
       GLOBAL_MODULE_RULES.antiCopy,
@@ -513,9 +529,8 @@ export function compilePlanItem(plan, item, t) {
   };
   const parts = { ...base, ...item.prompt_overrides };
   // Immutable source/reference/output constraints remain visible in the final prompt.
-  const assembled = Object.entries(parts)
-    .map(([k, value]) => `## ${PROMPT_PARTS[k]}\n${value}`)
-    .join("\n\n");
+  const layers = imagePromptLayers(parts);
+  const assembled = layers.map((layer) => layer.text).filter(Boolean).join("\n\n");
   // A user-edited full prompt (提示词模块) wins over the assembled parts.
   const prompt = item.prompt_override?.trim()
     ? item.prompt_override +
@@ -531,6 +546,7 @@ export function compilePlanItem(plan, item, t) {
     conflict_signature: conflictSignature,
     parts,
     automatic_parts: base,
+    prompt_layers: layers,
     automatic_prompt: assembled,
     automatic_signature: hash(assembled),
     prompt_stale: !!(

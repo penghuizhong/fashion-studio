@@ -5,7 +5,7 @@ import {
   parseStandardText,
 } from "../../../shared/stylePrompt.js";
 import { useEffect, useState } from "react";
-import { DETAIL_MODULES, FACT_FIELDS } from "../../../shared/stylePlan.js";
+import { DETAIL_MODULES, FACT_FIELDS, SPEC_FIELDS, isNoTextLanguage } from "../../../shared/stylePlan.js";
 import StudioImage from "./StudioImage.jsx";
 const STATUS_TEXT = {
   ready: "可生成",
@@ -67,7 +67,7 @@ function StandardText({ content, setContent, disabled, onEditing }) {
     />
   );
 }
-export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
+export default function StylePlanEditor({ w, choices, disabled, onPreview, onAdjust }) {
   const { content, setContent, input } = w;
   const [view, setView] = useState("plan"),
     [focused, setFocused] = useState(null),
@@ -83,7 +83,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
               ...i,
               ...updates,
               ...(updates.title !== undefined ||
-              updates.requirement !== undefined
+              updates.requirement !== undefined || updates.spec !== undefined || updates.copy !== undefined
                 ? { edited: true }
                 : {}),
             }
@@ -106,16 +106,32 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
     );
   const quote = w.quote,
     generateCount = quote?.indexes.length ?? w.selected?.length ?? 0,
-    generateDisabled =
-      disabled ||
-      !quote ||
-      w.quoteBusy ||
-      w.changed ||
-      w.busy ||
-      w.editingPrompt ||
-      !!w.readiness;
+    blocked = content.items.filter((item) => item.status !== "ready");
   return (
     <div className="wizard-plan-editor">
+      <section className="wizard-section wizard-plan-overview" aria-label="方案核对">
+        <h3>核对本次图片方案</h3>
+        <p className="dim small">先统一整套视觉，再逐张核对描述、设计内容与参考图。仅勾选且可生成的图片计入本次费用。</p>
+        <div className="wizard-plan-counts">
+          <span>共 {content.items.length} 张</span>
+          <span>本次生成 {generateCount} 张</span>
+          <span>待完善 {blocked.length} 张</span>
+        </div>
+      </section>
+      <details className="wizard-section wizard-standard wizard-module-card">
+        <summary>
+          <strong>整体设计规范</strong>
+          <span className="dim small">所有图片遵循的统一视觉标准</span>
+        </summary>
+        <fieldset disabled={disabled}>
+          <StandardText
+            content={content}
+            setContent={setContent}
+            disabled={disabled}
+            onEditing={w.setEditingPrompt}
+          />
+        </fieldset>
+      </details>
       {content.reference_conflicts && (
         <section className="wizard-section">
           <p role="alert">商品事实冲突：{content.reference_conflicts}</p>
@@ -258,6 +274,16 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                   <span aria-hidden="true">{open ? "⌃" : "⌄"}</span>
                 </button>
               </div>
+              {status !== "ready" && (
+                <div className="wizard-card-blocker" role="status">
+                  <p>{item.missing?.length
+                    ? `待补充：${item.missing.map((key) => FACT_FIELDS[key] || key).join("、")}`
+                    : item.error || item.policy_issues?.[0] || "本图尚未分析，请先分析或核对后确认。"}；本次不会生成此图。</p>
+                  <button className="btn secondary small" disabled={disabled} onClick={onAdjust}>
+                    {item.missing?.length ? "补充资料" : "调整需求"}
+                  </button>
+                </div>
+              )}
               {open && (
                 <div className="wizard-plan-content">
                   <fieldset disabled={disabled}>
@@ -287,6 +313,26 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                         }
                       />
                     </label>
+                    <section className="wizard-image-design" aria-label={`图片${index + 1}设计内容`}>
+                      <h4>本图设计内容</h4>
+                      <p className="dim small">模块规则与整体规范自动应用；以下参数决定这张图的具体画面。</p>
+                      <div className="wizard-design-grid">
+                        {SPEC_FIELDS.map(([key, label]) => (
+                          <label className="style-field" key={key}>
+                            {label}
+                            <textarea
+                              aria-label={`图片${index + 1}${label}`}
+                              rows={2}
+                              maxLength={2000}
+                              disabled={disabled || (key === "text" && (item.module_id === "main" || isNoTextLanguage(input.language)))}
+                              placeholder={key === "text" && (item.module_id === "main" || isNoTextLanguage(input.language)) ? "本图不新增文字" : "待补充具体设计参数"}
+                              value={key === "text" && (item.module_id === "main" || isNoTextLanguage(input.language)) ? "" : (key === "text" ? item.copy || item.spec?.[key] : item.spec?.[key]) || ""}
+                              onChange={(e) => patch(item.id, { spec: { ...item.spec, [key]: e.target.value }, ...(key === "text" ? { copy: e.target.value } : {}) })}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </section>
                     {renderMode(input, item) === "composition" ? (
                       <ProductLayoutEditor
                         w={w}
@@ -297,6 +343,16 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                       />
                     ) : (
                       <>
+                        <details className="wizard-execution-layers">
+                          <summary>查看自动编排的六层提示词</summary>
+                          {(item.prompt_layers || []).map((layer, layerIndex) => (
+                            <section key={layer.id}>
+                              <h4>{layerIndex + 1}. {layer.label}</h4>
+                              <pre>{layer.text}</pre>
+                            </section>
+                          ))}
+                          {item.prompt_override && <p className="dim small">当前采用手工提示词。自动编排内容供核对，重新编排后生效。</p>}
+                        </details>
                         <PromptText
                           item={item}
                           index={index}
@@ -418,45 +474,19 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
           );
         })
       )}
-      <details className="wizard-section wizard-standard wizard-module-card">
-        <summary>
-          <strong>整体设计规范</strong>
-          <span className="dim small">所有图片遵循的统一视觉标准</span>
-        </summary>
-        <fieldset disabled={disabled}>
-          <StandardText
-            content={content}
-            setContent={setContent}
-            disabled={disabled}
-            onEditing={w.setEditingPrompt}
-          />
-        </fieldset>
-      </details>
       {w.readiness && (
         <p role="status" className="dim small">
           {w.readiness}
         </p>
       )}
-      <section className="wizard-section wizard-module-card wizard-gen-card">
-        <div>
-          <h3>生成图片</h3>
-          <p className="dim small">
-            {quote
-              ? `继续生成 ${generateCount} 张图需消耗 ${quote.total} 积分`
-              : w.quoteBusy
-                ? "正在计算生成费用…"
-                : generateCount
-                  ? `已选 ${generateCount} 张图，费用待重新报价`
-                  : "先在上方选择可生成的图片"}
-          </p>
-        </div>
-        <button
-          className="btn primary wizard-gen-button"
-          disabled={generateDisabled}
-          onClick={() => w.startGeneration()}
-        >
-          生成图片
-        </button>
+      <section className="wizard-section wizard-module-card" aria-label="本次生成费用">
+        <h3>本次生成</h3>
+        <p className="dim small">
+          {quote ? `${generateCount} 张 · ${quote.total} 积分，核对后在底部确认费用并生成。`
+            : w.quoteBusy ? "正在计算生成费用…"
+              : generateCount ? `已选 ${generateCount} 张图，费用待重新报价` : "先选择可生成的图片"}
+        </p>
+        {blocked.length > 0 && <p className="dim small">另有 {blocked.length} 张待完善，可补充资料后再生成；不计入本次费用。</p>}
       </section>
     </div>
   );

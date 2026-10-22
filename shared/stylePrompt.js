@@ -2,6 +2,8 @@ import {
   DETAIL_MODULES,
   STANDARD_SECTIONS,
   normalizeStandard,
+  SPEC_FIELDS,
+  PROMPT_PARTS as PROMPT_LABELS,
 } from "./stylePlan.js";
 import { PRESENTATION_STYLES } from "./presentationStyles.js";
 
@@ -83,6 +85,50 @@ export function modulePromptTemplate(moduleId) {
       : "优先用画面表达卖点；没有明确文案要求时不叠加宣传文字。",
     "同模块多图分别展示不同重点、姿态或构图，避免重复。不得照抄参考图水印与平台界面。",
   ].join("\n");
+}
+// This is our application contract, not the unavailable third-party system prompt.
+export function imageSystemPrompt({ creative = false } = {}) {
+  return [
+    "你是一位服装电商视觉设计师，负责制作可核对、风格一致的商品图片。",
+    creative
+      ? "创意任务按用户明确确认的设计变化执行，区分原商品事实与新设计建议。"
+      : "商品任务保留已核对的服装颜色、结构、图案与面料外观，不因风格要求擅自改款。",
+    "优先级：已确认事实与任务边界 > 模块专用规则 > 全局视觉规范 > 每图设计与描述 > 展示风格。",
+    "参考图按分工使用；未提供模特图时不得声称识别了人物身份，生成的人物不得冒充参考人物。",
+    "穿着模块保持自然穿着与人物一致；平铺、挂架和纯文字模块按自身规则执行，不套用露脸要求。",
+    "不编造品牌历史、面料成分、实测尺码、价格、售后承诺或真实用户评价。",
+    "禁止复制参考图水印、社交平台界面、二维码及无关文字；保留商品本身标识。",
+  ].join("\n");
+}
+export function moduleDesignText(item, { index = 1, total = 1 } = {}) {
+  const module = DETAIL_MODULES.find((m) => m.id === item.module_id);
+  if (!module) return "";
+  const cell = (value) => String(value || "未补充").replace(/\|/g, "／").replace(/\r?\n/g, "；");
+  return [
+    `模块：${module.name}（${module.id}）`,
+    `模块定位：${module.description}`,
+    `当前张数：${index}/${total}`,
+    modulePromptTemplate(module.id),
+    "| 设计维度 | 本图参数 |",
+    "| --- | --- |",
+    ...SPEC_FIELDS.map(([key, label]) => `| ${label} | ${cell(item.spec?.[key])} |`),
+  ].join("\n");
+}
+export function imagePromptLayers(parts) {
+  const definitions = [
+    ["system", "执行规则", ["system"]],
+    ["standard", "整体设计规范", ["standard", "style"]],
+    ["module", "本图设计内容", ["goal", "design", "references", "composition", "copy", "limits"]],
+    ["description", "本图画面描述", ["description"]],
+    ["requirements", "用户生成要求", ["requirements"]],
+    ["output", "生成参数", ["output"]],
+  ];
+  return definitions.map(([id, label, keys]) => ({
+    id, label,
+    text: keys.filter((key) => parts[key]).map((key) =>
+      `## ${{ system: "系统执行规则", description: "本图画面描述", ...PROMPT_LABELS }[key] || key}\n${parts[key]}`
+    ).join("\n\n"),
+  }));
 }
 export function assembleStandardText(standard = {}) {
   return STANDARD_SECTIONS.map(

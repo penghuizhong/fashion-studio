@@ -728,6 +728,7 @@ export default function StyleDerivationWizard(props) {
                   choices={choices}
                   disabled={locked || !!w.pending}
                   onPreview={setLarge}
+                  onAdjust={() => { setMobile("settings"); goto(2); }}
                 />
               ) : (
                 <StylePlanResults

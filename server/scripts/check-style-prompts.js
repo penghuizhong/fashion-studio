@@ -7,6 +7,9 @@ import {
   parseStandardText,
   assembleStandardText,
   applyAnalysisContent,
+  imageSystemPrompt,
+  moduleDesignText,
+  imagePromptLayers,
 } from "../../shared/stylePrompt.js";
 import { DETAIL_MODULES, DEFAULT_STANDARD } from "../../shared/stylePlan.js";
 
@@ -90,3 +93,17 @@ assert.equal(
 console.log(
   "Style prompt contracts passed: natural language, 19 templates, serialization, standard deletion and manual-edit preservation.",
 );
+
+// Module exceptions and six-layer ordering must survive compilation without
+// leaking arbitrary table cells into extra rows or inventing source identities.
+assert.match(imageSystemPrompt(), /平铺、挂架和纯文字模块/);
+assert.match(imageSystemPrompt({ creative: true }), /新设计建议/);
+const design = moduleDesignText({ module_id: "fabric", spec: { lighting: "左前45°柔光|5500K\n阴影柔和" } }, { index: 2, total: 3 });
+assert.match(design, /当前张数：2\/3/);
+assert.match(design, /左前45°柔光／5500K；阴影柔和/);
+assert.equal(design.split("\n").filter((line) => /^\| (主体识别|服装识别|试穿策略|构图方案|光影方案|背景描述|配色方案|文字内容|视觉氛围关键词) \|/.test(line)).length, 9);
+const layers = imagePromptLayers({ system: "执行边界", standard: "米白背景", goal: design, description: "自然站立", requirements: "全身", output: "1024x1024" });
+assert.deepEqual(layers.map((layer) => layer.id), ["system", "standard", "module", "description", "requirements", "output"]);
+assert.match(layers[3].text, /自然站立/);
+assert.doesNotMatch(layers[4].text, /自然站立/);
+console.log("Six-layer prompt contracts passed: module exceptions, nine dimensions and source boundaries.");

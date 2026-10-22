@@ -233,6 +233,15 @@ try {
     );
     assert.equal(calls.length, before);
   });
+  await test("empty design parameters do not turn an unanalyzed plan into manual work", async () => {
+    // Browser save can expand an empty spec into nine empty strings.
+    const content = cleanPlanContent(plan.content);
+    content.items[0].spec = Object.fromEntries(
+      ["subject", "garment", "strategy", "composition", "lighting", "background", "palette", "text", "mood"].map((key) => [key, ""]),
+    );
+    plan = await save({ content });
+    assert.ok(plan.content.items.every((item) => !item.edited));
+  });
   await test("ownership and stale revisions are rejected", async () => {
     await req("GET", plans(plan.id), undefined, 404, "bob");
     await req("PUT", plans(plan.id), { expected_revision: 0 }, 409);
@@ -646,6 +655,11 @@ try {
     assert.match(item.prompt, /## 整体设计规范/);
     assert.match(item.prompt, /品牌资料：樱紫/);
     assert.ok(!item.prompt.includes(item.id));
+    assert.equal(item.prompt_layers.length, 6);
+    assert.match(item.prompt_layers[0].text, /系统执行规则/);
+    assert.match(item.prompt_layers[2].text, /当前张数：1\/1/);
+    assert.match(item.prompt_layers[2].text, /\| 光影方案 \| 柔光 \|/);
+    assert.equal(item.automatic_prompt, item.prompt_layers.map((layer) => layer.text).filter(Boolean).join("\n\n"));
     const call = calls
       .filter((c) => c.url.endsWith("/chat/completions"))
       .at(-1);
@@ -655,6 +669,17 @@ try {
     assert.match(details.version.garment_description, /版型为常规/);
     assert.ok(details.items[0].prompt_template.includes("主图展示"));
     assert.match(details.style_prompt, /refined materials/);
+  });
+  await test("spec-only edits are preserved on reanalysis and update the quoted prompt", async () => {
+    const content = cleanPlanContent(plan.content);
+    content.items[0].spec.lighting = "左前45度自然光，5500K";
+    content.items[0].edited = false;
+    plan = await save({ content });
+    assert.equal(plan.content.items[0].edited, true);
+    assert.match(plan.content.items[0].prompt, /左前45度自然光，5500K/);
+    const { analysis } = await analyze();
+    assert.equal(analysis.progress.review_required, true);
+    assert.equal(plan.content.items[0].spec.lighting, "左前45度自然光，5500K");
   });
   await test("browser save payload retains full prompts and analyzed specs; upstream changes require synchronization", async () => {
     const originalSpec = plan.content.items[0].spec;
