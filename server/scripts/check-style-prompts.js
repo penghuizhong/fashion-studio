@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import {
+  assembleModulePrompt,
+  assembleExecutionPrompt,
+  promptLength,
   describeStyleVersion,
   stylePresetPrompt,
   modulePromptTemplate,
@@ -101,3 +104,13 @@ assert.equal(
 console.log(
   "Style prompt contracts passed: natural language, 19 templates, serialization, standard deletion and manual-edit preservation.",
 );
+
+assert.equal(promptLength("裙".repeat(200)), 200);
+assert.equal(promptLength("👗".repeat(200)), 200);
+const concise = assembleModulePrompt("一位模特完整展示商品，无新增文字。", "冰蓝色挂脖长裙，保留原图褶皱。");
+assert.equal(assembleExecutionPrompt(concise, {}), concise);
+assert.equal(assembleExecutionPrompt(concise, { tone: "米白背景" }), concise + "\n\n核心视觉基调：米白背景");
+const conciseContent = cleanPlanContent({ standard: {}, items: [{ id: "concise", description_prompt: "主要描述", attributes_prompt: "基本属性" }] });
+assert.equal(conciseContent.items[0].description_prompt, "主要描述");
+assert.equal(conciseContent.items[0].attributes_prompt, "基本属性");
+console.log("Concise prompts: Unicode counts, two-field persistence and exact backend concatenation passed.");

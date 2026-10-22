@@ -1,6 +1,7 @@
 import ProductLayoutEditor from "./ProductLayoutEditor.jsx";
 import { renderMode } from "../../../shared/productImagePolicy.js";
 import {
+  promptLength,
   assembleStandardText,
   parseStandardText,
 } from "../../../shared/stylePrompt.js";
@@ -11,30 +12,37 @@ const STATUS_TEXT = {
   ready: "可生成",
   needs_info: "待补充资料",
   invalid: "需要调整",
-  needs_analysis: "待分析或确认",
+  needs_analysis: "待分析",
 };
 function PromptText({ item, index, disabled, onCommit, onEditing }) {
   return (
-    <label className="style-field">
-      提示词模块
-      <textarea
-        aria-label={`图片${index + 1}提示词`}
-        rows={10}
-        maxLength={12000}
-        disabled={disabled}
-        placeholder="正在编排，保存后显示"
-        value={
-          item.prompt_override || item.automatic_prompt || item.prompt || ""
-        }
-        onChange={(e) => {
-          onEditing(true);
-          onCommit(e.target.value);
-        }}
-        onBlur={() => onEditing(false)}
-      />
-    </label>
+    <div className="style-field">
+      <span>提示词模块</span>
+      {[
+        ["description_prompt", "主要描述"],
+        ["attributes_prompt", "基本属性"],
+      ].map(([key, label]) => (
+        <label className="style-field" key={key}>
+          {label}（{promptLength(item[key] || "")}/200字）
+          <textarea
+            aria-label={`图片${index + 1}${label}`}
+            rows={4}
+            disabled={disabled}
+            value={item[key] || ""}
+            placeholder="分析商品后生成"
+            onChange={(e) => {
+              if (promptLength(e.target.value) > 200) return;
+              onEditing(true);
+              onCommit({ [key]: e.target.value, edited: true });
+            }}
+            onBlur={() => onEditing(false)}
+          />
+        </label>
+      ))}
+    </div>
   );
 }
+
 function StandardText({ content, setContent, disabled, onEditing }) {
   const [draft, setDraft] = useState(() =>
     assembleStandardText(content.standard),
@@ -177,7 +185,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
             />
             <div>
               <strong>{current.title}</strong>
-              <p>{current.requirement}</p>
+              <p>{current.description_prompt || current.requirement}</p>
               <span>
                 图内文案：{current.copy || current.spec?.text || "未添加"}
               </span>
@@ -185,7 +193,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
           </div>
           <p>
             {current.spec?.strategy || current.spec?.composition || "待分析"} ·{" "}
-            {current.size || input.size}
+            {input.size}
           </p>
           <button
             className="btn secondary"
@@ -232,7 +240,7 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                   <span>
                     <strong>{item.title || name}</strong>
                     <small>
-                      {name} · {item.size || input.size} ·{" "}
+                      {name} · {input.size} ·{" "}
                       {STATUS_TEXT[status] || STATUS_TEXT.needs_analysis}
                     </small>
                     <small>{item.requirement.slice(0, 110)}</small>
@@ -279,42 +287,12 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                         }
                       />
                     </label>
-                    <label className="style-field">
-                      画面描述（识别依据与本图任务）
-                      <textarea
-                        aria-label={`图片${index + 1}画面要求`}
-                        rows={4}
-                        maxLength={3000}
-                        value={item.requirement}
-                        onChange={(e) =>
-                          patch(item.id, { requirement: e.target.value })
-                        }
-                      />
-                    </label>
-                    {renderMode(input, item) === "composition" ? (
-                      <ProductLayoutEditor
-                        w={w}
-                        item={item}
-                        choices={choices}
-                        disabled={disabled}
-                        patch={(updates) => patch(item.id, updates)}
-                      />
-                    ) : (
-                      <>
-                        <PromptText
-                          item={item}
-                          index={index}
-                          disabled={disabled}
-                          onEditing={w.setEditingPrompt}
-                          onCommit={(prompt_override) =>
-                            patch(item.id, {
-                              prompt_override,
-                              prompt_override_basis:
-                                item.automatic_signature || "",
-                            })
-                          }
-                        />
-                      </>
+                    <PromptText item={item} index={index} disabled={disabled}
+                      onEditing={w.setEditingPrompt}
+                      onCommit={(updates) => patch(item.id, updates)} />
+                    {renderMode(input, item) === "composition" && (
+                      <ProductLayoutEditor w={w} item={item} choices={choices}
+                        disabled={disabled} patch={(updates) => patch(item.id, updates)} />
                     )}
                     <div className="wizard-inline">
                       {input.references
@@ -349,48 +327,6 @@ export default function StylePlanEditor({ w, choices, disabled, onPreview }) {
                       <p className="dim small">
                         {item.quality_warnings.join("；")}
                       </p>
-                    )}
-                    {item.prompt_override && (
-                      <details>
-                        <summary>完整执行提示词（含商品展示边界）</summary>
-                        <textarea readOnly rows={5} value={item.prompt || ""} />
-                      </details>
-                    )}
-                    {item.prompt_override && (
-                      <div className="wizard-inline">
-                        <span className="dim small">
-                          已手动编辑
-                          {item.prompt_stale
-                            ? " · 上游内容已变化，需要同步"
-                            : ""}
-                        </span>
-                        <button
-                          className="btn secondary small"
-                          disabled={disabled}
-                          onClick={() =>
-                            patch(item.id, {
-                              prompt_override: "",
-                              prompt_override_basis: "",
-                              prompt_overrides: {},
-                            })
-                          }
-                        >
-                          重新编排提示词
-                        </button>
-                        {item.prompt_stale && (
-                          <button
-                            className="btn secondary small"
-                            disabled={disabled}
-                            onClick={() =>
-                              patch(item.id, {
-                                prompt_override_basis: item.automatic_signature,
-                              })
-                            }
-                          >
-                            确认保留手工提示词
-                          </button>
-                        )}
-                      </div>
                     )}
                     {item.missing?.length > 0 && (
                       <p className="wizard-pending">
