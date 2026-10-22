@@ -3,7 +3,7 @@ import { getDb } from './db.js';
 import { ah } from './asyncHandler.js';
 import { problem } from './exploreErrors.js';
 import { styleTemplate, styleVersion, parse } from './styleVersions.js';
-import { imageAvailability, templateAvailability } from './imageLifecycle.js';
+import { imageAvailability, templateAvailability, studioFileExists } from './imageLifecycle.js';
 import { recoverExploreJobs } from './exploreJobs.js';
 
 export function progressJob(id) {
@@ -21,6 +21,19 @@ export function progressJob(id) {
   result.revision = crypto.createHash('sha256').update(JSON.stringify(result)).digest('hex').slice(0,16);
   return result;
 }
+export function versionPrimaryReference(t, versionId) {
+  const version = styleVersion(t, versionId);
+  const candidates = getDb().prepare(`SELECT id,image_path,thumb_path,design_version_id FROM dna_generations WHERE template_id=?
+    AND design_version_id=? AND lifecycle='active' AND COALESCE(user_rating,'')!='deleted'
+    ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,id DESC`).iterate(t.id, version.id, t.cover_generation_id || 0);
+  for (const image of candidates) if (studioFileExists(image.image_path))
+    return { ...imageAvailability(image), source: String(image.id), version_id: version.id, origin: 'version' };
+  if (studioFileExists(t.source_image_path)) return {
+    source: 'original', version_id: version.id, origin: 'original', image_path: t.source_image_path,
+    thumb_path: t.source_thumb_path, image_available: true,
+  };
+  return null;
+}
 export function workspaceSummary(t, query) {
   const db = getDb();
   const selected = styleVersion(t, Number(query.version_id) || t.work_version_id);
@@ -35,7 +48,7 @@ export function workspaceSummary(t, query) {
   }
   recoverExploreJobs();
   const jobs = t.style_batch_id ? db.prepare("SELECT id FROM explore_jobs WHERE batch_id=? AND (status IN ('running','queued') OR id=(SELECT id FROM explore_jobs WHERE batch_id=? ORDER BY rowid DESC LIMIT 1)) ORDER BY rowid DESC").all(t.style_batch_id,t.style_batch_id).map(j=>progressJob(j.id)) : [];
-  return {template:templateAvailability(t),versions:versions.sort((a,b)=>b.number-a.number),images,jobs,
+  return {template:templateAvailability(t),primary_reference:versionPrimaryReference(t,selected.id),versions:versions.sort((a,b)=>b.number-a.number),images,jobs,
     totals:{versions:db.prepare('SELECT COUNT(*) n FROM style_versions WHERE template_id=?').get(t.id).n,
       images:db.prepare("SELECT COUNT(*) n FROM dna_generations WHERE template_id=? AND lifecycle!='deleted'").get(t.id).n,
       jobs:t.style_batch_id?db.prepare('SELECT COUNT(*) n FROM explore_jobs WHERE batch_id=?').get(t.style_batch_id).n:0}};

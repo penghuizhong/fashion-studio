@@ -192,5 +192,46 @@ try{
   await req('PUT','/api/admin/models/ux',{pricing:{per_call:5,image_rates:[{size:'*',quality:'*',per_call:6}]}});
   await req('POST',`/api/studio/templates/${t.id}/jobs`,{quote_id:q.id,request_key:crypto.randomUUID(),confirm:true},409);assert.equal(calls,before);assert.equal(balance(),money);
  });
+ await test('model library persists named files, supports search and enforces account ownership',async()=>{
+  const ref=await req('POST','/api/studio/references',{image_base64:png.toString('base64'),kind:'model',name:'试衣模特A'});
+  assert.equal(ref.kind,'model');assert.equal(ref.name,'试衣模特A');assert.equal(ref.image_available,true);
+  const renamed=await req('PUT',`/api/studio/references/${ref.id}`,{name:'长发模特B'});assert.equal(renamed.name,'长发模特B');
+  const list=await req('GET','/api/studio/references?kind=model&search='+encodeURIComponent('长发模特'));
+  assert.equal(list.total,1);assert.equal(list.references[0].id,ref.id);
+  assert.equal((await req('GET','/api/studio/references?kind=model',undefined,200,'bob')).total,0);
+  await req('PUT',`/api/studio/references/${ref.id}`,{name:'越权'},404,'bob');
+  await req('PUT',`/api/studio/references/${ref.id}`,{kind:'invalid'},400);
+  assert.deepEqual(fs.readFileSync(path.join(process.env.DATA_DIR,ref.image_path)),png);
+  closeDb();const reopened=getDb().prepare('SELECT name,kind,image_path FROM style_references WHERE id=?').get(ref.id);
+  assert.equal(reopened.name,'长发模特B');assert.equal(reopened.kind,'model');assert.equal(reopened.image_path,ref.image_path);
+ });
+ await test('primary reference uses this version, skips missing files and never selects another version',async()=>{
+  const db=getDb();
+  const version=db.prepare('SELECT id FROM style_versions WHERE template_id=? ORDER BY number DESC').get(t.id).id;
+  const selected=Number(db.prepare("INSERT INTO dna_generations(template_id,user_id,image_path,thumb_path,design_version_id,created_at) VALUES(?,'alice',?,?,?,?)").run(t.id,file,thumb,version,now).lastInsertRowid);
+  db.prepare("INSERT INTO dna_generations(template_id,user_id,image_path,thumb_path,design_version_id,created_at) VALUES(?,'alice','uploads/studio/missing.jpg','',?,?)").run(t.id,version,now);
+  const summary=await req('GET',`/api/studio/templates/${t.id}/workspace?view=summary&version_id=${version}`);
+  assert.equal(summary.primary_reference.source,String(selected));assert.equal(summary.primary_reference.origin,'version');
+  assert.equal(summary.primary_reference.design_version_id,version);assert.ok(!Object.hasOwn(summary.primary_reference,'settings_json'));
+  const paths=[...new Set([file,...db.prepare('SELECT image_path FROM dna_generations WHERE template_id=? AND design_version_id=?').all(t.id,version).map(row=>row.image_path)])]
+    .map(value=>path.join(process.env.DATA_DIR,value)).filter(value=>fs.existsSync(value));
+  for(const absolute of paths)fs.renameSync(absolute,absolute+'.held');
+  try { assert.equal((await req('GET',`/api/studio/templates/${t.id}/workspace?view=summary&version_id=${version}`)).primary_reference,null); }
+  finally { for(const absolute of paths)fs.renameSync(absolute+'.held',absolute); }
+ });
+ await test('reference library migration classifies legacy models once without changing files or leaking owners',async()=>{
+  const {default:Database}=await import('better-sqlite3');const {migrateReferenceLibrary}=await import('../src/referenceLibrarySchema.js');
+  const legacy=new Database(':memory:');
+  try {
+   legacy.exec("CREATE TABLE style_references(id INTEGER PRIMARY KEY,user_id TEXT,image_path TEXT,thumb_path TEXT,created_at TEXT);CREATE TABLE style_plans(user_id TEXT,input_json TEXT);");
+   legacy.prepare('INSERT INTO style_references VALUES(?,?,?,?,?)').run(1,'alice','unchanged.png','thumb.png',now);
+   legacy.prepare('INSERT INTO style_references VALUES(?,?,?,?,?)').run(2,'bob','private.png','thumb.png',now);
+   legacy.prepare('INSERT INTO style_plans VALUES(?,?)').run('alice',JSON.stringify({references:[{role:'model',source:'ref:1'},{role:'model',source:'ref:2'},'invalid']}));
+   migrateReferenceLibrary(legacy);migrateReferenceLibrary(legacy);
+   assert.equal(legacy.prepare('SELECT kind FROM style_references WHERE id=1').get().kind,'model');
+   assert.equal(legacy.prepare('SELECT kind FROM style_references WHERE id=2').get().kind,'reference');
+   assert.equal(legacy.prepare('SELECT image_path FROM style_references WHERE id=1').get().image_path,'unchanged.png');
+  } finally {legacy.close();}
+ });
  console.log(`Studio UX/performance/pricing: ${n}/${n} passed`);
 }finally{global.fetch=originalFetch;server.closeAllConnections();await new Promise(r=>server.close(r));closeDb();fs.rmSync(process.env.DATA_DIR,{recursive:true,force:true});}

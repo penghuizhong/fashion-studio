@@ -121,7 +121,7 @@ export default function StylePlanInputs({
       (r) => r.role === "garment" || r.role === "fabric",
     ),
     modelRefs = input.references.filter((r) => r.role === "model");
-  const setBoardRefs = (board, keys) => {
+  const setBoardRefs = (board, keys, { repair = false } = {}) => {
     // Upload callbacks can finish after the other board has changed.
     const current = latestInput.current;
     const isGarment = board === "garment",
@@ -138,7 +138,7 @@ export default function StylePlanInputs({
         ? [...keys, ...others.map((r) => r.source)]
         : [...others.map((r) => r.source), ...keys];
     if (
-      previous.length &&
+      !repair && previous.length &&
       previous.some((s, i) => nextSources[i] !== s) &&
       /图\s*\d/.test(input.requirements) &&
       !window.confirm("参考图顺序或数量已改变，请重新核对要求中的图号。继续？")
@@ -216,11 +216,12 @@ export default function StylePlanInputs({
         </p>
         <h3>商品图</h3>
         <p className="dim small">
-          服装本体依据：第一张为款式主体，其余可标注为面料细节。
+          服装本体依据：图1默认关联当前设计版本的可用款式图，也可上传或从图库替换；其余图片可标注为面料细节。
         </p>
         <ReferenceImages
           strictLimit
           uploadLabel="上传商品图"
+          allowPrimaryReplace
           templateId={w.data.template.id}
           items={garmentRefs.map((r) => r.source)}
           choices={choices}
@@ -229,8 +230,11 @@ export default function StylePlanInputs({
           onUploaded={onUploaded}
           onResolved={onResolved}
           disabled={disabled}
-          onChange={(keys) => setBoardRefs("garment", keys)}
+          onChange={(keys, options) => setBoardRefs("garment", keys, options)}
         />
+        {w.data.primary_reference?.origin === 'original' && w.data.versions.find((v) => v.id === w.versionId)?.number > 1 && (
+          <p className="dim small">当前版本尚无可用成图，暂用款式原图参考；可上传当前版本图片替换。</p>
+        )}
         {garmentRefs.map((r, n) => (
           <label className="style-field" key={r.id}>
             商品图{n + 1}用途
@@ -252,11 +256,13 @@ export default function StylePlanInputs({
       <section className="wizard-section">
         <h3>模特图</h3>
         <p className="dim small">
-          主体依据：模特的身份、肤色、体型与发型以这里为准，整体规范的主体识别摘要来自模特图。
+          主体依据：模特的身份、肤色、体型与发型以这里为准。上传后自动存入“我的模特”，之后可直接选择复用。
         </p>
         <ReferenceImages
           strictLimit
           uploadLabel="上传模特图"
+          referenceKind="model"
+          numberOffset={garmentRefs.filter((r) => { const choice = choices.find((c) => c.key === r.source); return !choice || (choice.available !== false && choice.image_available !== false); }).length}
           templateId={w.data.template.id}
           items={modelRefs.map((r) => r.source)}
           choices={choices}
@@ -265,7 +271,7 @@ export default function StylePlanInputs({
           onUploaded={onUploaded}
           onResolved={onResolved}
           disabled={disabled}
-          onChange={(keys) => setBoardRefs("model", keys)}
+          onChange={(keys, options) => setBoardRefs("model", keys, options)}
         />
       </section>
       <section className="wizard-section">

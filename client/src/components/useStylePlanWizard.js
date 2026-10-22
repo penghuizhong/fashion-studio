@@ -143,19 +143,29 @@ export default function useStylePlanWizard({
         if (cache.pendingAnalysis) setPendingAnalysis(cache.pendingAnalysis);
         const list = await api.studio.plans(templateId);
         if (!live.current) return;
+        const requestedVersion = refs.current.versionId || initialVersionId || cache.versionId || r.template.work_version_id;
         const remembered =
-          cache.planId && list.plans.find((p) => p.id === cache.planId);
+          cache.planId && list.plans.find((p) => p.id === cache.planId && p.version_id === Number(requestedVersion));
         const last =
           remembered ||
           list.plans.find(
             (p) =>
-              p.version_id === (initialVersionId || r.template.work_version_id),
+              p.version_id === Number(requestedVersion),
           );
         if (last) {
           const p = await loadPlan(last.id);
           if (cache.local && cache.baseRevision === p.revision) {
             setInput(cache.local.input);
             setContent(cache.local.content);
+          }
+          const restoredInput = cache.local && cache.baseRevision === p.revision ? cache.local.input : p.input;
+          if (r.primary_reference && restoredInput.references[0]?.source === 'original' &&
+              (!r.template.source_available || r.primary_reference.origin === 'version')) {
+            const seen = new Set();
+            const references = restoredInput.references.map((ref, index) => index === 0
+              ? { ...ref, source: r.primary_reference.source, role: 'garment' } : ref)
+              .filter((ref) => !seen.has(ref.source) && seen.add(ref.source));
+            setInput({ ...restoredInput, references });
           }
           if (cache.jobId) {
             const j = await api.studio.styleJob(templateId, cache.jobId);
@@ -196,13 +206,8 @@ export default function useStylePlanWizard({
               ) || "null",
             );
           } catch {}
-          const source =
-            legacy?.form?.source ||
-            (initialImage?.id
-              ? String(initialImage.id)
-              : r.template.source_available
-                ? "original"
-                : "");
+          const source = r.primary_reference?.source ||
+            (r.template.source_available ? "original" : "");
           const old = legacy?.form;
           setInput((f) => ({
             ...f,
@@ -717,7 +722,11 @@ export default function useStylePlanWizard({
     saved.current = "";
     createKey.current = crypto.randomUUID();
     setStep(1);
-    await refresh(Number(id));
+    const selected = await refresh(Number(id));
+    setInput((current) => ({ ...current, references: [
+      ...(selected.primary_reference ? [{ id: crypto.randomUUID(), source: selected.primary_reference.source, role: 'garment' }] : []),
+      ...current.references.filter((ref) => ref.role === 'model'),
+    ] }));
   };
   const newRound = () => {
     setRetryJobId(null);

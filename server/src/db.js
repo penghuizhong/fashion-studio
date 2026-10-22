@@ -1,3 +1,4 @@
+import { migrateReferenceLibrary } from './referenceLibrarySchema.js';
 import Database from 'better-sqlite3';
 import { migrateStylePlans } from './stylePlanSchema.js';
 import { migrateProducts } from './productSchema.js';
@@ -795,6 +796,7 @@ export function getDb() {
   })();
   migrateProducts(_db, dataDir);
   migrateStylePlans(_db);
+  migrateReferenceLibrary(_db);
   return _db;
 }
 

@@ -73,7 +73,7 @@ export default function StyleDerivationWizard(props) {
       )
       .then((r) => {
         if (c.signal.aborted) return;
-        setImages(r.items);
+        setImages((old) => mergeRecords(old, r.items));
         const exact = r.items.filter(
           (i) => i.design_version_id === w.versionId,
         );
@@ -100,15 +100,31 @@ export default function StyleDerivationWizard(props) {
     const c = new AbortController();
     api.studio
       .references({ ids: ids.join(","), limit: 16 }, { signal: c.signal })
-      .then((r) => setReferences((old) => mergeRecords(old, r.references)))
+      .then((r) => setReferences((old) => mergeRecords(old, [
+        ...ids.filter((id) => !r.references.some((ref) => String(ref.id) === id)).map((id) => ({ id: Number(id), image_available: false })),
+        ...r.references,
+      ])))
       .catch((e) => {
         if (!c.signal.aborted) w.setError(e.message);
       });
     return () => c.abort();
   }, [w.input.references.map((r) => r.source).join(",")]);
+  useEffect(() => {
+    const ids = w.input.references.map((r) => r.source).filter((source) => /^\d+$/.test(source));
+    if (!ids.length || !w.data) return;
+    const controller = new AbortController();
+    api.studio.workspaceItems(templateId, 'images', { ids: ids.join(','), limit: 20 }, { signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        const missing = ids.filter((id) => !result.items.some((item) => String(item.id) === id))
+          .map((id) => ({ id: Number(id), image_available: false }));
+        setImages((old) => mergeRecords(old, [...missing, ...result.items]));
+      }).catch((error) => { if (!controller.signal.aborted) w.setError(error.message); });
+    return () => controller.abort();
+  }, [templateId, !!w.data, w.input.references.map((r) => r.source).join(',')]);
   const choices = w.data
     ? [
-        ...(w.data.template.source_image_path
+        ...(w.data.template.source_image_path || w.input.references.some((r) => r.source === "original")
           ? [
               {
                 key: "original",
@@ -119,6 +135,8 @@ export default function StyleDerivationWizard(props) {
               },
             ]
           : []),
+        ...(w.data.primary_reference ? [{ ...w.data.primary_reference, key: w.data.primary_reference.source,
+          name: w.data.primary_reference.origin === 'version' ? '当前版本款式图' : '款式原图参考' }] : []),
         ...[...images, ...w.data.images].map((i) => ({
           key: String(i.id),
           ...i,

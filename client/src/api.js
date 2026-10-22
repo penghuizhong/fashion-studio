@@ -442,6 +442,7 @@ export const api = {
     permanentDelete: (id,confirm) => post(`/api/studio/generations/${id}/permanent-delete`,{confirm}),
     archiveImage: (id,archived) => post(`/api/studio/generations/${id}/archive`,{archived}),
     references: (params={},options) => get(`/api/studio/references?${new URLSearchParams(params)}`,options),
+    updateReference: (id, body) => put(`/api/studio/references/${id}`, body),
     uploadReference: body => post('/api/studio/references',body),
     extractDna: (data) => post('/api/studio/dna/extract', data),
     // P6: 带上传进度的识图（onProgress 0-100）

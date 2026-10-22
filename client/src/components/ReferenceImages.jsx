@@ -2,11 +2,17 @@ import { imageReferenceLimit, imageTaskAllowed } from '../../../shared/imageOpti
 import { useEffect, useRef, useState } from 'react';
 import StudioImage from './StudioImage.jsx';
 import { api } from '../api.js';
-export default function ReferenceImages({items,onChange,choices,model,availableLimit=0,onUploaded,onResolved,disabled,templateId,strictLimit=false,uploadLabel="上传参考图"}){
- const [uploading,setUploading]=useState(false),[picker,setPicker]=useState(false),[tab,setTab]=useState('current');
+export default function ReferenceImages({items:selectedItems,onChange,choices,model,availableLimit=0,onUploaded,onResolved,disabled,templateId,strictLimit=false,uploadLabel="上传参考图",referenceKind="reference",numberOffset=0,allowPrimaryReplace=false}){
+ const items=selectedItems.filter(key=>{const choice=choices.find(c=>c.key===key);return !choice||(choice.available!==false&&choice.image_available!==false);});
+ const [repairNotice,setRepairNotice]=useState('');
+ const [uploading,setUploading]=useState(false),[picker,setPicker]=useState(false),[tab,setTab]=useState(referenceKind==='model'?'models':'current');
  const [search,setSearch]=useState(''),[page,setPage]=useState(1),[result,setResult]=useState({rows:[],total:0}),[selected,setSelected]=useState([]);
  const [loading,setLoading]=useState(false),[error,setError]=useState(''),[retry,setRetry]=useState(0);
  const live=useRef(true);useEffect(()=>{live.current=true;return()=>{live.current=false;};},[]);
+ // If a replacement already exists, heal the saved list as well as its numbering.
+ useEffect(()=>{
+  if(!disabled&&!uploading&&selectedItems.length!==items.length&&(items.length||referenceKind==='model')){setRepairNotice('已移除失效参考图并重新编号，请核对要求中的图号。');onChange(items,{repair:true});}
+ },[selectedItems.join(','),items.join(','),disabled,uploading]);
  const cap=model?.capabilities,limit=strictLimit&&model?imageReferenceLimit(cap):Math.max(imageReferenceLimit(cap),availableLimit);
  const identity=c=>c?.image_path||c?.key;
  const identities=new Set(items.map(key=>identity(choices.find(c=>c.key===key)||{key})));
@@ -20,9 +26,9 @@ export default function ReferenceImages({items,onChange,choices,model,availableL
     if(tab==='assets'){
      const r=await api.studio.assets({page,limit:24,search},{signal:controller.signal});
      rows=r.assets.map(i=>({key:`asset:${i.id}`,generation_id:i.id,name:`${i.template_name||'款式'} · 图片 #${i.id}`,...i}));total=r.total;
-    }else if(tab==='uploaded'){
-     const r=await api.studio.references({page,limit:24,search},{signal:controller.signal});
-     rows=r.references.map(i=>({key:`ref:${i.id}`,name:`已上传参考 #${i.id}`,...i}));total=r.total;
+    }else if(tab==='uploaded'||tab==='models'){
+     const r=await api.studio.references({page,limit:24,search,...(tab==='models'?{kind:'model'}:{})},{signal:controller.signal});
+     rows=r.references.map(i=>({key:`ref:${i.id}`,name:i.name||(i.kind==='model'?`模特 #${i.id}`:`已上传参考 #${i.id}`),...i}));total=r.total;
     }else{
      const r=await api.studio.workspaceItems(templateId,'images',{page,limit:24,search,state:'active'},{signal:controller.signal});
      const origin=currentOriginal&&(!search||/原图|原始|参考/.test(search))?[currentOriginal]:[];
@@ -42,42 +48,47 @@ export default function ReferenceImages({items,onChange,choices,model,availableL
     if(known.has(identity(c)))continue;
     if(next.length>=limit)throw new Error(`兼容模型最多支持 ${limit} 张参考图`);
     let key=c.key;
-    if(c.generation_id){const r=await api.studio.uploadReference({generation_id:c.generation_id});if(!live.current)return;onUploaded(r);key=`ref:${r.id}`;}
-    else if(c.key.startsWith('ref:'))onUploaded(c);
+    if(c.generation_id){const r=await api.studio.uploadReference({generation_id:c.generation_id,kind:referenceKind,name:c.name?.slice(0,100)||""});if(!live.current)return;onUploaded(r);key=`ref:${r.id}`;}
+    else if(c.key.startsWith('ref:')){const ref=referenceKind==='model'?await api.studio.updateReference(c.key.slice(4),{kind:'model'}):c;if(!live.current)return;onUploaded(ref);}
     known.add(identity(c));next.push(key);
    }
    if(live.current){onResolved?.(candidates.filter(c=>!c.generation_id));onChange(next);setPicker(false);setSelected([]);}
   }catch(e){if(live.current){if(next.length!==items.length)onChange(next);setError(e.message);}}
   finally{if(live.current)setUploading(false);}
  };
- const upload=async e=>{
+ const upload=async (e,replaceFirst=false)=>{
   const files=[...e.target.files];e.target.value='';
-  if(items.length+files.length>limit){setError(`兼容模型最多支持 ${limit} 张参考图，请减少图片`);return;}
+  if(!files.length)return;
+  const kept=replaceFirst?items.slice(1):items;
+  if(replaceFirst&&files.length!==1){setError('请选择一张图片替换图1');return;}
+  if(kept.length+files.length>limit){setError(`兼容模型最多支持 ${limit} 张参考图，请减少图片`);return;}
   if(files.some(f=>f.size>15*1024*1024||!/^image\//.test(f.type))){setError('请选择不超过15MB的图片');return;}
   setUploading(true);setError('');const added=[];
   try{
    for(const f of files){
     const image_base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(new Error('图片读取失败'));reader.readAsDataURL(f);});
-    const r=await api.studio.uploadReference({image_base64});if(!live.current)return;
+    const r=await api.studio.uploadReference({image_base64,kind:referenceKind,name:f.name.slice(0,100)});if(!live.current)return;
     onUploaded(r);added.push(`ref:${r.id}`);
    }
   }catch(e){if(live.current)setError(e.message);}
-  finally{if(live.current){if(added.length)onChange([...items,...added]);setUploading(false);}}
+  finally{if(live.current){if(added.length)onChange(replaceFirst?[...added,...kept]:[...kept,...added],{repair:replaceFirst});setUploading(false);}}
  };
- return <section className="unified-references"><h3>参考图 <small>已选 {items.length} 张{imageReferenceLimit(cap)?` · 当前模型最多 ${imageReferenceLimit(cap)} 张`:''}</small></h3>
-  <div className="reference-strip">{items.map((key,i)=>{const c=choices.find(c=>c.key===key);return <article key={key}><StudioImage thumbnail={c?.thumb_path} original={c?.image_path} alt={`参考图${i+1}`}/><strong>图{i+1}{i===0?' · 款式主体':''}</strong><div><button className="btn secondary small" type="button" aria-label={`前移参考图${i+1}`} disabled={disabled||uploading||i===0} onClick={()=>{const next=[...items];[next[i],next[i-1]]=[next[i-1],next[i]];onChange(next);}}>前移</button><button className="btn secondary small" type="button" aria-label={`移除参考图${i+1}`} disabled={disabled||uploading} onClick={()=>onChange(items.filter((_,j)=>j!==i))}>移除</button></div></article>;})}</div>
+ return <section className="unified-references">{repairNotice&&<p role="status" className="dim small">{repairNotice}</p>}{selectedItems.length>items.length&&<p role="status" className="dim small">旧图片文件已失效，不占参考图编号；请上传或选择可用图片替换。</p>}<h3>参考图 <small>已选 {items.length} 张{imageReferenceLimit(cap)?` · 当前模型最多 ${imageReferenceLimit(cap)} 张`:''}</small></h3>
+  <div className="reference-strip">{items.map((key,i)=>{const c=choices.find(c=>c.key===key);return <article key={key}><StudioImage thumbnail={c?.thumb_path} original={c?.image_path} alt={`参考图${i+1+numberOffset}`}/><strong>图{i+1+numberOffset}{referenceKind==='model'?' · 模特参考':i===0?' · 款式主体':''}</strong>{referenceKind==='model'&&key.startsWith('ref:')&&<input aria-label={`模特${i+1}名称`} maxLength={100} disabled={disabled||uploading} defaultValue={c?.name||''} placeholder="给模特命名" key={`${key}:${c?.name||''}`} onBlur={async e=>{const name=e.target.value.trim();if(name===(c?.name||''))return;try{const updated=await api.studio.updateReference(key.slice(4),{name});if(live.current)onUploaded(updated);}catch(err){if(live.current)setError(err.message);}}}/>}<div><button className="btn secondary small" type="button" aria-label={`前移参考图${i+1+numberOffset}`} disabled={disabled||uploading||i===0} onClick={()=>{const next=[...items];[next[i],next[i-1]]=[next[i-1],next[i]];onChange(next);}}>前移</button><button className="btn secondary small" type="button" aria-label={`移除参考图${i+1+numberOffset}`} disabled={disabled||uploading} onClick={()=>onChange(items.filter((_,j)=>j!==i))}>移除</button></div></article>;})}</div>
   <div className="reference-entry-actions">
+   {allowPrimaryReplace&&items.length>0&&<label className={`btn secondary reference-file-button${disabled||uploading||!limit?' disabled':''}`}>替换图1<input aria-label="替换图1" type="file" accept="image/*" onChange={e=>upload(e,true)} disabled={disabled||uploading||!limit}/></label>}
+
    <label className={`btn secondary reference-file-button${disabled||uploading||!limit?' disabled':''}`}>
     {uploading?'正在添加…':'上传图片'}<input aria-label={uploadLabel} type="file" accept="image/*" multiple onChange={upload} disabled={disabled||uploading||!limit||items.length>=limit}/>
    </label>
-   <button className="btn secondary" disabled={disabled||uploading||!limit} aria-expanded={picker} onClick={()=>{setPicker(v=>!v);setSelected([]);}}>从图库选择</button>
+   <button className="btn secondary" disabled={disabled||uploading||!limit} aria-expanded={picker} onClick={()=>{setPicker(v=>!v);setSelected([]);}}>{referenceKind==='model'?'从模特库选择':'从图库选择'}</button>
   </div>
   {error&&!picker&&<p role="alert" className="style-error">{error}<button className="btn secondary small" onClick={()=>setError('')}>知道了</button></p>}
   {items.length>0&&!imageTaskAllowed(cap,items.length)&&<p className="dim small">当前模型不能处理所选参考图，请选择兼容模型或减少图片。</p>}
   <p className="dim small">图1为主体，其余图片可在要求中按图号说明用途。{!items.length?'不添加参考图时，按已保存属性生成。':''}</p>
   {picker&&<section className="reference-picker" aria-label="参考图库">
-   <div role="tablist" aria-label="参考图来源">{[['current','当前款式'],['assets','资产库'],['uploaded','已上传']].map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} className="btn secondary small" onClick={()=>{setTab(key);setPage(1);setSearch('');}}>{label}</button>)}</div>
-   <label className="style-field">搜索图片<input aria-label="搜索参考图" placeholder={tab==='assets'?'款式名称或图片编号':'图片编号'} maxLength={100} value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/></label>
+   <div role="tablist" aria-label="参考图来源">{(referenceKind==='model'?[['models','我的模特'],['uploaded','已上传'],['assets','资产库']]:[['current','当前款式'],['assets','资产库'],['uploaded','已上传']]).map(([key,label])=><button key={key} role="tab" aria-selected={tab===key} className="btn secondary small" onClick={()=>{setTab(key);setPage(1);setSearch('');}}>{label}</button>)}</div>
+   <label className="style-field">搜索图片<input aria-label="搜索参考图" placeholder={tab==='assets'?'款式名称或图片编号':'名称或图片编号'} maxLength={100} value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/></label>
    {loading?<p role="status">正在加载图库…</p>:error?<p role="alert">{error}<button className="btn secondary small" onClick={()=>setRetry(n=>n+1)}>重试</button></p>:<>
     <div className="reference-picker-grid">{result.rows.map(c=>{
      const included=identities.has(identity(c)),checked=selected.some(x=>identity(x)===identity(c));

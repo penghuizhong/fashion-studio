@@ -1,5 +1,5 @@
 import { previewFile } from './studioPreview.js';
-import { mountWorkspaceReads, workspaceSummary } from './styleWorkspaceReads.js';
+import { mountWorkspaceReads, workspaceSummary, versionPrimaryReference } from './styleWorkspaceReads.js';
 import { changeLifecycle } from './studioLifecycle.js';
 import { imageAvailability,templateAvailability } from './imageLifecycle.js';
 import { PRESENTATION_STYLES } from '../../shared/presentationStyles.js';
@@ -116,6 +116,7 @@ export function mountStyleWorkspace(app) {
       if (req.query.view === "summary") return res.json(workspaceSummary(t, req.query));
       res.json({
         template: templateAvailability(t),
+        primary_reference: versionPrimaryReference(t, Number(req.query.version_id) || t.work_version_id),
         versions: db
           .prepare(
             "SELECT * FROM style_versions WHERE template_id=? ORDER BY number DESC",
@@ -503,10 +504,11 @@ export function mountStyleWorkspace(app) {
     ah(async (req, res) => {
       const page=Math.max(1,parseInt(req.query.page)||1),limit=Math.min(50,Math.max(1,parseInt(req.query.limit)||24));
       const uid=req.userId||'local',search=String(req.query.search||'').slice(0,100);
-      let where='user_id=? AND CAST(id AS TEXT) LIKE ?';
-      const args=[uid,'%'+search+'%'];
+      let where='user_id=? AND (CAST(id AS TEXT) LIKE ? OR name LIKE ?)';
+      const args=[uid,'%'+search+'%','%'+search+'%'];
+      if(req.query.kind){if(!['model','reference'].includes(req.query.kind))throw problem('INVALID_QUERY','图库分类无效');where+=' AND kind=?';args.push(req.query.kind);}
       if(req.query.ids){const ids=String(req.query.ids).split(',').map(Number);if(ids.length>16||ids.some(n=>!Number.isSafeInteger(n)||n<1))throw problem('INVALID_QUERY','参考图选择无效');where+=` AND id IN (${ids.map(()=>'?').join(',')})`;args.push(...ids);}
-      const rows=db.prepare(`SELECT id,image_path,thumb_path,created_at FROM style_references WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...args,limit,(page-1)*limit);
+      const rows=db.prepare(`SELECT id,name,kind,image_path,thumb_path,created_at FROM style_references WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...args,limit,(page-1)*limit);
       res.json({references:rows.map(imageAvailability),total:db.prepare(`SELECT COUNT(*) n FROM style_references WHERE ${where}`).get(...args).n,page,limit});
     }),
   );
@@ -514,6 +516,9 @@ export function mountStyleWorkspace(app) {
     "/api/studio/references",
     ah(async (req, res) => {
       let files;
+      const name = req.body?.name === undefined ? '' : req.body.name;
+      const kind = req.body?.kind || 'reference';
+      if(typeof name!=='string'||name.length>100||!['model','reference'].includes(kind))throw problem('INVALID_REFERENCE','参考图名称或分类无效');
       const assetId = req.body?.generation_id;
       if (assetId) {
         const g = db
@@ -539,12 +544,20 @@ export function mountStyleWorkspace(app) {
         if(assetId){const g=db.prepare("SELECT * FROM dna_generations WHERE id=? AND user_id=?").get(assetId,req.userId||'local');if(!g||['trash','deleted'].includes(g.lifecycle)||g.user_rating==='deleted')throw problem('SOURCE_NOT_OWNED','参考资产已失效',404);}
         localImage(files.image_path);
         const existing=db.prepare('SELECT id FROM style_references WHERE user_id=? AND image_path=?').get(req.userId||'local',files.image_path);
-        if(existing)return {lastInsertRowid:existing.id};
-        return db.prepare("INSERT INTO style_references(user_id,image_path,thumb_path,created_at) VALUES(?,?,?,?)").run(req.userId||'local',files.image_path,files.thumb_path,stamp());
+        if(existing){if(kind==='model')db.prepare("UPDATE style_references SET kind='model' WHERE id=?").run(existing.id);return {lastInsertRowid:existing.id};}
+        return db.prepare("INSERT INTO style_references(user_id,image_path,thumb_path,created_at,name,kind) VALUES(?,?,?,?,?,?)").run(req.userId||'local',files.image_path,files.thumb_path,stamp(),name.trim(),kind);
       }).immediate();
-      res.json({ id: Number(r.lastInsertRowid), ...files });
+      res.json(imageAvailability(db.prepare("SELECT * FROM style_references WHERE id=?").get(Number(r.lastInsertRowid))));
     }),
   );
+  app.put('/api/studio/references/:referenceId', ah(async (req, res) => {
+    const record = db.prepare('SELECT * FROM style_references WHERE id=? AND user_id=?').get(req.params.referenceId, req.userId || 'local');
+    if (!record) throw problem('SOURCE_NOT_OWNED', '参考图不存在', 404);
+    const name = req.body?.name ?? record.name, kind = req.body?.kind ?? record.kind;
+    if (typeof name !== 'string' || name.length > 100 || !['model','reference'].includes(kind)) throw problem('INVALID_REFERENCE', '参考图名称或分类无效');
+    db.prepare('UPDATE style_references SET name=?,kind=? WHERE id=? AND user_id=?').run(name.trim(),kind,record.id,req.userId || 'local');
+    res.json(imageAvailability({ ...record, name:name.trim(), kind }));
+  }));
   app.post(
     "/api/studio/generations/:id/permanent-delete",
     ah(async (req, res) => {
