@@ -10,6 +10,8 @@ import {
   stylePresetPrompt,
   modulePromptTemplate,
   cleanImageDescription,
+  standardForReferences,
+  descriptionForReferences,
   moduleFacts,
   hasManualPlanEdits,
   applyAnalysisContent,
@@ -390,9 +392,7 @@ async function executeAnalysis(t, req, plan, ctx) {
           )
         )
           next.typography = LIGHT_TEXT_TYPOGRAPHY;
-        if (!refs.some((r) => r.role === "model"))
-          next.subject =
-            "未提供独立模特参考图；需要人物的图片创建新模特，不假称已绑定人物。";
+        next.subject = standardForReferences(next, refs).subject;
         standard = next;
         progress.standard = next;
         progress.stage = "planning";
@@ -426,7 +426,8 @@ async function executeAnalysis(t, req, plan, ctx) {
             ? description(value.spec[k], 2000)
             : "";
       if (isNoTextLanguage(plan.input.language) || item.module_id === "main") spec.text = "";
-      const primary = shortPrompt(description(value.description_prompt, 400));
+      if (spec.subject) spec.subject = descriptionForReferences(spec.subject, boundRefs);
+      const primary = shortPrompt(descriptionForReferences(description(value.description_prompt, 400), boundRefs));
       const attributes = shortPrompt(description(value.attributes_prompt, 400));
       if (!primary || !attributes)
         throw problem("INVALID_ANALYSIS", "分析必须返回主要描述和基本属性两段提示词");
@@ -495,7 +496,7 @@ description_prompt只写当前模块的一张图的具体任务、主体、构�
 ${productAnalysis ? FIDELITY_RULES : "当前是创意设计，根据用户明确的设计变化规划，并区分原图观察与新设计建议。"}
 真实图片以user消息中的image_url图片数据提供，references.number与图片附件顺序逐一对应。source_path用于来源追溯，不需要访问本地路径；不得把内部编号当作图片。
 严格依次输出recognition、standard、item。recognition只记录已提供图片的可见观察、需求和属性冲突，不推测面料成分、背面、内里、微观织纹与未知人物。
-standard只写可供各项采用的色彩、摄影和人物/商品一致性，不包含任何模块的专用任务、构图、宣传文案或拼图要求。文字样式仅在本图明确要求文字时适用，不要求无文字模块添加文字；人物一致性仅在本图实际绑定模特图时适用。无模特参考时明确创建新人物，不输出人物编号，也不声称识别到某个虚拟模特。
+是否提供模特图只由每项model_reference_numbers决定：非空时必须采用这些实际图片中的人物，不得写未提供模特图或创建新模特；为空时不能借用其他项的人物。既有描述不能覆盖当前附件的角色绑定。\nstandard只写可供各项采用的色彩、摄影和人物/商品一致性，不包含任何模块的专用任务、构图、宣传文案或拼图要求。文字样式仅在本图明确要求文字时适用，不要求无文字模块添加文字；人物一致性仅在本图实际绑定模特图时适用。无模特参考时明确创建新人物，不输出人物编号，也不声称识别到某个虚拟模特。
 每个item仅服从其自身module_id、prompt_template、本项任务和reference_numbers。只规划一张独立成图；不能把不同ID的任务、文字或版式互相复制。若同模块有多个规划项，分别规划每个ID，不能合为一张图。
 全局requirements可能包含多个模块的要求，须提取与本项相关的内容写入description_prompt，不能整段复制到每项。description_prompt写本图具体任务与可执行画面；attributes_prompt写商品基本属性。不要输出内部ID或附件路径；引用图号来自references.number且必须属于本项reference_numbers，后台会转换为本项实际附件顺序。人物特征必须来自该项绑定的模特图片；未绑定模特图片时按新人物规划。商品可见结构、褶皱方向与裙摆形态依据原图，不为了对称、展开或氛围重新设计。
 本图文字仅来自该项facts和用户明确文案。标题只是管理名称，不自动上图。无文字模块不添加新增文案，不把其他模块的品牌、价格或尺码资料混入。
@@ -515,7 +516,7 @@ standard只写可供各项采用的色彩、摄影和人物/商品一致性，�
         generation_mode: plan.input.generation_mode,
       },
       standard: Object.fromEntries(
-        Object.entries(plan.content.standard).map(([k, v]) => [
+        Object.entries(standardForReferences(plan.content.standard, refs)).map(([k, v]) => [
           k,
           cleanImageDescription(v),
         ]),
@@ -527,6 +528,9 @@ standard只写可供各项采用的色彩、摄影和人物/商品一致性，�
           module: m?.name,
           module_id: i.module_id,
           facts: moduleFacts(i.module_id, plan.input.facts),
+          model_reference_numbers: refs.flatMap((r, n) =>
+            r.role === "model" && i.reference_ids.includes(r.id) ? [n + 1] : [],
+          ),
           reference_numbers: refs.flatMap((r, n) =>
             i.reference_ids.includes(r.id) ? [n + 1] : [],
           ),

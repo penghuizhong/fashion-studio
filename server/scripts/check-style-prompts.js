@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {
   assembleModulePrompt,
+  standardForReferences,
+  descriptionForReferences,
   assembleExecutionPrompt,
   promptLength,
   describeStyleVersion,
@@ -114,3 +116,15 @@ const conciseContent = cleanPlanContent({ standard: {}, items: [{ id: "concise",
 assert.equal(conciseContent.items[0].description_prompt, "主要描述");
 assert.equal(conciseContent.items[0].attributes_prompt, "基本属性");
 console.log("Concise prompts: Unicode counts, two-field persistence and exact backend concatenation passed.");
+
+const boundRefs = [{ role: "garment" }, { role: "model" }];
+const oldStandard = { tone: "米白背景", subject: "未提供独立模特参考图，创建新模特。" };
+assert.match(standardForReferences(oldStandard, boundRefs).subject, /已提供图2模特参考图/);
+assert.equal(standardForReferences(oldStandard, boundRefs).tone, oldStandard.tone);
+assert.match(standardForReferences(oldStandard, boundRefs.slice(0, 1)).subject, /未提供/);
+assert.equal(descriptionForReferences("新模特穿着商品，无新增文字。", boundRefs), "该模特穿着商品，无新增文字。");
+assert.equal(descriptionForReferences("不要生成新模特，保持图2人物一致。", boundRefs), "不要生成新模特，保持图2人物一致。");
+assert.equal(descriptionForReferences("创建新模特", []), "创建新模特");
+console.log("Reference binding: actual model attachments override stale absence notices without reversing negative constraints.");
+assert.equal(promptLength(descriptionForReferences("新模特" + "裙".repeat(197), boundRefs)), 200);
+assert.equal(descriptionForReferences(null, boundRefs), null);

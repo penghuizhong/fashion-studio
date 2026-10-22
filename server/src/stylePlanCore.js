@@ -9,6 +9,8 @@ import { normalizeLayout } from "./productLayoutSchema.js";
 import {
   assembleModulePrompt,
   assembleExecutionPrompt,
+  standardForReferences,
+  descriptionForReferences,
   promptLength,
 } from "../../shared/stylePrompt.js";
 import crypto from "node:crypto";
@@ -237,7 +239,7 @@ export function normalizeContent(raw, input, old) {
   const rawStandard = {};
   for (const [k, v] of Object.entries(raw.standard))
     if (typeof v === "string") rawStandard[k] = text(v, 4000);
-  const standard = normalizeStandard(rawStandard);
+  const standard = standardForReferences(normalizeStandard(rawStandard), input.references);
   const existing = new Map((old?.items || []).map((i) => [i.id, i]));
   const sourceItems =
     isNoTextLanguage(input.language) &&
@@ -282,13 +284,17 @@ export function normalizeContent(raw, input, old) {
           : i.spec?.[k] === undefined
             ? ""
             : text(i.spec[k], 2000);
+    const boundReferences = input.references.filter((ref) => reference_ids.includes(ref.id));
+    const description = shortPrompt(descriptionForReferences(
+      i.description_prompt ?? prior?.description_prompt ?? "", boundReferences,
+    ));
     const item = {
       id: i.id,
       module_id: i.module_id,
       title: text(i.title || "", 200),
       requirement: text(i.requirement || "", 3000),
       copy: text(i.copy || "", 3000),
-      description_prompt: shortPrompt(i.description_prompt ?? prior?.description_prompt ?? ""),
+      description_prompt: description,
       attributes_prompt: shortPrompt(i.attributes_prompt ?? prior?.attributes_prompt ?? ""),
       prompt_override:
         i.prompt_override === undefined
@@ -303,7 +309,7 @@ export function normalizeContent(raw, input, old) {
         prior?.edited === true ||
         !!(
           prior &&
-          ((i.description_prompt !== undefined && i.description_prompt !== prior.description_prompt) ||
+          ((i.description_prompt !== undefined && description !== descriptionForReferences(prior.description_prompt || "", boundReferences)) ||
             (i.attributes_prompt !== undefined && i.attributes_prompt !== prior.attributes_prompt) ||
             (i.title !== undefined && i.title !== prior.title) ||
             (i.requirement !== undefined && i.requirement !== prior.requirement) ||
@@ -351,7 +357,7 @@ export function normalizeContent(raw, input, old) {
     standard_edited:
       raw.standard_edited === true ||
       canonical(standard) !==
-        canonical(old ? normalizeStandard(old.standard) : DEFAULT_STANDARD),
+        canonical(standardForReferences(old ? normalizeStandard(old.standard) : DEFAULT_STANDARD, input.references)),
     items,
   };
 }
@@ -403,12 +409,12 @@ export function compilePlanItem(plan, item, t) {
       )
     : [];
   // Legacy long prompts must be reanalyzed; never silently send a different prompt.
-  const description = item.description_prompt || "";
+  const description = descriptionForReferences(item.description_prompt || "", refs);
   const attributes = item.attributes_prompt || "";
   shortPrompt(description);
   shortPrompt(attributes);
   const assembled = assembleModulePrompt(description, attributes);
-  const prompt = assembleExecutionPrompt(assembled, standard);
+  const prompt = assembleExecutionPrompt(assembled, standardForReferences(standard, refs));
   const parts = { description, attributes };
   const base = parts;
   return {
@@ -427,6 +433,7 @@ export function compilePlanItem(plan, item, t) {
     automatic_signature: hash(assembled),
     prompt_stale: false,
     module_prompt: assembled,
+    description_prompt: description,
     prompt,
     missing,
     status: policyIssues.length
@@ -455,7 +462,7 @@ export function readPlan(row, t) {
   const issues = [];
   plan.content = {
     ...content,
-    standard: normalizeStandard(content.standard),
+    standard: standardForReferences(normalizeStandard(content.standard), input.references),
   };
   plan.content = {
     ...plan.content,

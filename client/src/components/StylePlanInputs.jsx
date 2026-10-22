@@ -2,7 +2,7 @@ import {
   generationMode,
   renderMode,
 } from "../../../shared/productImagePolicy.js";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   DETAIL_MODULES,
   PLAN_LIMITS,
@@ -64,6 +64,8 @@ export default function StylePlanInputs({
   disabled,
 }) {
   const { input, setInput, content, setContent, models, chatModels } = w;
+  const latestInput = useRef(input);
+  latestInput.current = input;
   const [all, setAll] = useState(false),
     [styles, setStyles] = useState(false);
   const model = models.find((m) => m.id === input.model_id),
@@ -120,14 +122,18 @@ export default function StylePlanInputs({
     ),
     modelRefs = input.references.filter((r) => r.role === "model");
   const setBoardRefs = (board, keys) => {
+    // Upload callbacks can finish after the other board has changed.
+    const current = latestInput.current;
     const isGarment = board === "garment",
-      mine = isGarment ? garmentRefs : modelRefs,
-      others = isGarment ? modelRefs : garmentRefs;
+      currentGarment = current.references.filter((r) => r.role !== "model"),
+      currentModels = current.references.filter((r) => r.role === "model"),
+      mine = isGarment ? currentGarment : currentModels,
+      others = isGarment ? currentModels : currentGarment;
     if (keys.some((k) => others.some((r) => r.source === k))) {
       w.setError("同一图片已在另一组参考图中，不能重复添加");
       return;
     }
-    const previous = input.references.map((r) => r.source),
+    const previous = current.references.map((r) => r.source),
       nextSources = isGarment
         ? [...keys, ...others.map((r) => r.source)]
         : [...others.map((r) => r.source), ...keys];
@@ -149,13 +155,14 @@ export default function StylePlanInputs({
       );
     });
     const refs = isGarment ? [...built, ...others] : [...others, ...built];
+    latestInput.current = { ...current, references: refs };
     update({ references: refs });
     if (content)
       setContent((c) => ({
         ...c,
         items: c.items.map((i) => ({
           ...i,
-          reference_ids: refs.map((r) => r.id),
+          reference_ids: i.module_id === "transition" ? [] : refs.map((r) => r.id),
           manual_confirmed: false,
           status: "needs_analysis",
         })),

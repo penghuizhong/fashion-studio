@@ -1248,18 +1248,30 @@ try {
           facts: { brand: "BRAND_DATA_MUST_NOT_LEAK" },
           requirements:
             "主图完整展示服装；仅品牌介绍使用GLOBAL_BRAND_REQUIREMENT",
-          references,
+          references: references.slice(0, 1),
         },
       );
+      await analyze();
+      assert.match(plan.content.standard.subject, /未提供独立模特参考图/);
+      const staleContent = cleanPlanContent(plan.content);
+      plan = await save({ input: { ...plan.input, references }, content: staleContent });
+      assert.deepEqual(plan.content.items[0].reference_ids, references.map((ref) => ref.id));
+      assert.equal(plan.content.items[0].status, "needs_analysis");
+      assert.match(plan.content.standard.subject, /已提供图2模特参考图/);
+      assert.doesNotMatch(plan.content.items[0].prompt, /未提供独立模特参考图|新模特/);
       analysisMutator = (lines) => {
         lines.find((l) => l.type === "standard").standard.subject =
-          "基于ID model_fake_001 生成的虚拟女性形象";
+          "未提供独立模特参考图；需要人物的图片创建新模特，不假称已绑定人物。";
+        lines.find((l) => l.type === "item").description_prompt = "图1为商品参考，新模特自然站立，独立单幅，无新增文字。";
         lines.find((l) => l.type === "item").spec.subject =
           "模特 model_fake_001 自然站立";
       };
       const { analysis } = await analyze();
       analysisMutator = null;
       assert.equal(analysis.status, "succeeded");
+      assert.match(analysis.progress.standard.subject, /已提供图2模特参考图/);
+      assert.match(plan.content.items[0].description_prompt, /该模特/);
+      assert.doesNotMatch(plan.content.items[0].prompt, /未提供.*模特|创建新模特|新模特/);
       const analysisCall = calls
           .filter((c) => c.url.endsWith("/chat/completions"))
           .at(-1),
@@ -1274,6 +1286,8 @@ try {
         ["main"],
       );
       assert.deepEqual(data.items[0].reference_numbers, [1, 2]);
+      assert.deepEqual(data.items[0].model_reference_numbers, [2]);
+      assert.doesNotMatch(data.standard.subject, /未提供|新模特/);
       assert.doesNotMatch(
         body.messages[0].content,
         /款式卖点|品牌介绍|render_mode=composition/,
@@ -1359,6 +1373,20 @@ try {
       assert.equal(trace.module_id, "main");
       assert.equal(trace.protocol, protocol);
     }
+  });
+  await test("existing saved plans repair stale model absence at read and quote time", async () => {
+    const row = db.prepare("SELECT content_json FROM style_plans WHERE id=?").get(plan.id);
+    const legacy = JSON.parse(row.content_json);
+    legacy.standard.subject = "未提供独立模特参考图；需要人物的图片创建新模特。";
+    legacy.items[0].description_prompt = "新模特静态站立，完整展示服装，无新增文字。";
+    db.prepare("UPDATE style_plans SET content_json=? WHERE id=?").run(JSON.stringify(legacy), plan.id);
+    plan = (await req("GET", plans(plan.id))).plan;
+    assert.match(plan.content.standard.subject, /已提供图2模特参考图/);
+    assert.match(plan.content.items[0].description_prompt, /该模特静态站立/);
+    assert.doesNotMatch(plan.content.items[0].prompt, /未提供独立模特参考图|新模特/);
+    const quote = (await req("POST", plans(plan.id) + "/quote", { expected_revision: plan.revision })).quote;
+    assert.equal(quote.style.item_contexts[0].source_manifest.length, 2);
+    assert.equal(quote.prompts[0], plan.content.items[0].prompt);
   });
   await test("targeted module analysis excludes other module templates and rebases global image numbers to each item's actual attachments", async () => {
     const extra = await req("POST", "/api/studio/references", {

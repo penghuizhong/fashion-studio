@@ -191,7 +191,7 @@ export function mountStylePlans(app) {
         content.items = content.items.map((i) => ({
           ...i,
           reference_ids:
-            !b.content &&
+            i.module_id === "transition" ? [] :
             canonical(i.reference_ids) ===
               canonical(oldInput.references.map((r) => r.id))
               ? input.references.map((r) => r.id)

@@ -117,6 +117,26 @@ export function moduleFacts(moduleId, facts = {}) {
     keys.filter((k) => facts[k]).map((k) => [k, facts[k]]),
   );
 }
+// Reference availability is application metadata, not a fact for the LLM to guess.
+export function standardForReferences(standard = {}, references = []) {
+  const modelNumbers = references.flatMap((ref, index) => ref.role === "model" ? [index + 1] : []);
+  return {
+    ...standard,
+    subject: modelNumbers.length
+      ? `已提供${modelNumbers.map((number) => `图${number}`).join("、")}模特参考图；人物身份、面部、发型与体态以这些实际图片为准，保留人物一致性，不采用模特图中的服装。`
+      : "未提供独立模特参考图；需要人物的图片创建新模特，不假称已绑定人物。",
+  };
+}
+export function descriptionForReferences(value = "", references = []) {
+  if (typeof value !== "string" || !references.some((ref) => ref.role === "model")) return value;
+  return value.split(/([。；，,;\n])/).map((clause) => {
+    if (/(?:不(?:要)?|禁止|勿)(?:创建|生成|更换)新(?:模特|人物)/.test(clause)) return clause;
+    return clause
+    .replace(/(?:未提供|未上传|没有(?:提供|上传)?|未绑定|无)(?:独立的?|任何|单独的?)?模特(?:参考)?(?:图像|图片|图)/g, "有模特图")
+    .replace(/(?:创建|生成)(?:新的?)?(?:模特|人物)/g, "采用模特")
+    .replace(/新模特/g, "该模特");
+  }).join("");
+}
 export function assembleStandardText(standard = {}) {
   return STANDARD_SECTIONS.filter(([key]) => standard[key]?.trim())
     .map(([key, label]) => `${label}：${standard[key].trim()}`)
