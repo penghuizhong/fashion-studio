@@ -1,6 +1,6 @@
 // Includes historical references: deleting a source card must never unlink a production baseline.
 export function productFileReferenced(db,file) {
- return !!db.prepare('SELECT 1 FROM product_file_refs WHERE path=? LIMIT 1').get(file);
+ return !!db.prepare('SELECT 1 FROM product_file_refs WHERE path=? UNION ALL SELECT 1 FROM canvas_assets WHERE image_path=? OR thumb_path=? LIMIT 1').get(file,file,file);
 }
 export function productFileOwned(db,file,userId) {
  return !!db.prepare(`SELECT 1 FROM product_files WHERE user_id=? AND (path=? OR thumb_path=?)

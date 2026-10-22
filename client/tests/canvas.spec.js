@@ -1,0 +1,94 @@
+import { test, expect } from '@playwright/test';
+import sharp from '../../server/node_modules/sharp/lib/index.js';
+
+async function open(page) {
+  await page.goto('/');
+  if(page.viewportSize().width<769)await page.getByRole('button',{name:'打开侧边栏',exact:true}).click();
+  await page.getByRole('button',{name:'万能画板',exact:true}).click();
+  await expect(page.locator('.tl-canvas')).toBeVisible();
+}
+for (const width of [1440,390]) test(`canvas upload save restore and library ${width}`,async({page,request})=>{
+  await page.setViewportSize({width,height:1000});
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const seed=await(await request.post('/api/canvas/projects',{data:{title:'测试画板'}})).json();
+  await page.addInitScript(id=>localStorage.setItem('fashion-canvas-last:local',id),seed.project.id);
+  await open(page);
+  const name=`画板验证${width}`;
+  await page.getByRole('textbox',{name:'画板名称',exact:true}).fill(name);
+  const bytes=await sharp({create:{width:320,height:480,channels:3,background:'#cfc1ab'}}).png().toBuffer();
+  await page.getByLabel('上传画板图片',{exact:true}).setInputFiles({name:'模特.png',mimeType:'image/png',buffer:bytes});
+  await expect(page.locator('.canvas-layer')).toHaveCount(1);
+  await expect(page.locator('.canvas-ref-chip')).toHaveCount(1);
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await expect(page.locator('.canvas-status')).toHaveText('已保存');
+  const rows=await(await request.get('/api/canvas/projects')).json();
+  const project=rows.projects.find(p=>p.title===name);
+  expect(project).toBeTruthy();
+  const data=await(await request.get(`/api/canvas/projects/${project.id}`)).json();
+  expect(data.assets).toHaveLength(1);
+  expect(Object.values(data.project.snapshot.document.store).filter(r=>r.typeName==='shape')).toHaveLength(1);
+  await page.reload();await open(page);
+  await expect(page.getByRole('textbox',{name:'画板名称',exact:true})).toHaveValue(name);
+  await expect(page.locator('.canvas-layer')).toHaveCount(1);
+  await page.getByRole('button',{name:'图库',exact:true}).click();
+  await expect(page.getByRole('region',{name:'选择画板图片'})).toBeVisible();
+  await page.getByRole('button',{name:'关闭图库',exact:true}).click();
+  await expect(page.locator('.canvas-library')).toHaveCount(0);
+  await page.screenshot({path:`/tmp/canvas-${width}.png`});
+  expect(errors).toEqual([]);
+});
+
+test('canvas snapshot revision conflict preserves edits',async({page,request})=>{
+  await open(page);
+  const name=`冲突验证${Date.now()}`;
+  await page.getByRole('textbox',{name:'画板名称',exact:true}).fill(name);
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await expect(page.locator('.canvas-status')).toHaveText('已保存');
+  const rows=await(await request.get('/api/canvas/projects')).json(),p=rows.projects.find(p=>p.title===name);
+  const {project}=await(await request.get(`/api/canvas/projects/${p.id}`)).json();
+  expect((await request.put(`/api/canvas/projects/${p.id}`,{data:{title:'远端更新',snapshot:project.snapshot,expectedRevision:project.revision}})).ok()).toBeTruthy();
+  await page.getByRole('textbox',{name:'画板名称',exact:true}).fill('本地修改保留');
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await expect(page.locator('.canvas-status')).toContainText('版本冲突');
+  await expect(page.getByRole('textbox',{name:'画板名称',exact:true})).toHaveValue('本地修改保留');
+  await page.getByRole('button',{name:'另存为新画板',exact:true}).click();
+  await expect(page.getByRole('textbox',{name:'画板名称',exact:true})).toHaveValue('本地修改保留（副本）');
+});
+
+test('canvas double image Agent generation restores one result and reusable workflow',async({page,request})=>{
+  const seed=await(await request.post('/api/canvas/projects',{data:{title:'双图生成验收'}})).json();
+  await page.addInitScript(id=>localStorage.setItem('fashion-canvas-last:local',id),seed.project.id);
+  await open(page);
+  const images=await Promise.all(['#cfc1ab','#aabccc'].map(background=>sharp({create:{width:320,height:480,channels:3,background}}).png().toBuffer()));
+  for(let i=0;i<2;i++)await page.getByLabel('上传画板图片',{exact:true}).setInputFiles({name:`图${i+1}.png`,mimeType:'image/png',buffer:images[i]});
+  await expect(page.locator('.canvas-layer')).toHaveCount(2);
+  const layers=page.locator('.canvas-layer-name');
+  await layers.filter({hasText:'图1.png'}).click();
+  await layers.filter({hasText:'图2.png'}).click({modifiers:['Shift']});
+  await expect(page.locator('.canvas-ref-chip')).toHaveCount(2);
+  await page.getByRole('combobox',{name:'图1角色',exact:true}).selectOption('model');
+  await page.getByRole('combobox',{name:'图2角色',exact:true}).selectOption('garment');
+  await page.getByRole('button',{name:'参数',exact:true}).click();
+  await page.getByRole('combobox',{name:'画板分析模型',exact:true}).selectOption('browser-chat-one');
+  await page.getByRole('textbox',{name:'画板需求',exact:true}).fill('图1模特穿上图2衣服');
+  await page.getByRole('button',{name:'生成方案与报价',exact:true}).click();
+  await expect(page.getByRole('region',{name:'确认生成费用'})).toContainText('引用 2 张图片');
+  await page.getByRole('button',{name:'确认费用并生成 1 张',exact:true}).click();
+  await expect(page.getByAltText('生成结果',{exact:true})).toBeVisible({timeout:15000});
+  await expect(page.locator('.canvas-layer')).toHaveCount(3);
+  await page.getByRole('button',{name:'存为工作流',exact:true}).click();
+  await expect(page.getByRole('button',{name:'✓ 已存为工作流',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'对比改前',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'对比改前'})).toBeVisible();
+  await page.getByRole('button',{name:'关闭对比',exact:true}).click();
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await expect(page.locator('.canvas-status')).toHaveText('已保存');
+  await page.reload();await open(page);
+  await expect(page.locator('.canvas-layer')).toHaveCount(3);
+  await expect(page.getByAltText('生成结果',{exact:true})).toBeVisible();
+  const rows=await(await request.get(`/api/canvas/projects/${seed.project.id}/runs`)).json();
+  expect(rows.runs).toHaveLength(1);
+  expect(rows.runs[0].result.trace.image_count).toBe(2);
+  expect(rows.runs[0].delivered).toBe(1);
+  await page.screenshot({path:'/tmp/canvas-generated.png'});
+});

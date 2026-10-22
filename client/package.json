@@ -1,13 +1,15 @@
 {
   "dependencies": {
+    "@tldraw/assets": "3.15.6",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tldraw": "3.15.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.11",
-    "postcss": "^8.5.28"
+    "postcss": "^8.5.28",
+    "vite": "^5.4.11"
   },
   "name": "fashion-studio-client",
   "private": true,

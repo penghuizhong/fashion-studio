@@ -1,5 +1,6 @@
 // 线性 SVG 图标库（ChatGPT 式描边图标）：stroke=currentColor，24 网格
 const PATHS = {
+  canvas: <><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 9h18M9 9v12" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   users: (
     <>

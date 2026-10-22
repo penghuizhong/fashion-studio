@@ -1,3 +1,5 @@
+import { mountCanvasJobRoutes } from './canvasJobs.js';
+import { mountCanvasRoutes } from './canvas.js';
 import { chooseOutput } from './imageCapabilities.js';
 import { imageOptions } from '../../shared/imageOptions.js';
 import { inspectImageRates, imageRateMatch } from '../../shared/imagePricing.js';
@@ -98,7 +100,10 @@ export function createApp() {
   // 本地 http 开发时去掉 upgrade-insecure-requests 和 HSTS——前者会让浏览器
   // 把 http 子资源升级成 https 请求，本地没有 TLS 会直接卡死导致白屏（Safari 必现）。
   if (String(process.env.BEHIND_HTTPS || '').toLowerCase() === 'true') {
-    app.use(helmet());
+    app.use(helmet({ contentSecurityPolicy: { directives: {
+      'img-src': ["'self'", 'data:', 'blob:'],
+      'connect-src': ["'self'", 'blob:'],
+    } } }));
   } else {
     app.use(
       helmet({
@@ -106,6 +111,8 @@ export function createApp() {
           directives: {
             ...helmet.contentSecurityPolicy.getDefaultDirectives(),
             'upgrade-insecure-requests': null,
+            'img-src': ["'self'", 'data:', 'blob:'],
+            'connect-src': ["'self'", 'blob:'],
           },
         },
         strictTransportSecurity: false,
@@ -176,7 +183,7 @@ export function createApp() {
     // 预设角色卡 / 广场列表公开（未登录可浏览，用于拉新）；领养/生成/发布仍需登录
     // v1.17.7: /prompt-templates 公开（生效中的扮演模板，不敏感；一键填入/恢复默认用）
     // v1.20.0: /providers 公开（API 提供商预设，无密钥，纯静态配置）
-    if (p.startsWith('/auth/') || p === '/config' || p === '/health' || p === '/character-cards/presets' || p === '/character-cards/shared' || p === '/prompt-templates' || p === '/providers') return next();
+    if (p.startsWith('/canvas/shared/') || p.startsWith('/auth/') || p === '/config' || p === '/health' || p === '/character-cards/presets' || p === '/character-cards/shared' || p === '/prompt-templates' || p === '/providers') return next();
     if (!req.userId) return res.status(401).json({ error: '未登录，请先登录' });
     next();
   });
@@ -184,6 +191,8 @@ export function createApp() {
   mountAuthRoutes(app, authLimiter);
   mountStudioRoutes(app);
   mountExploreRoutes(app);
+  mountCanvasRoutes(app);
+  mountCanvasJobRoutes(app);
   // v0.2.0: 记忆遗忘——启动归档一次，之后每天一次
   try { runArchive(); runExploreArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); }
   setInterval(() => { try { runArchive(); runExploreArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); } }, 24 * 3600 * 1000).unref();

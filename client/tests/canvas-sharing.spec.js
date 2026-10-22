@@ -1,0 +1,32 @@
+import { test, expect } from '@playwright/test';
+import sharp from '../../server/node_modules/sharp/lib/index.js';
+
+test('uploaded canvas models are reused without uploading bytes and shares are read only and revocable',async({page,request,context})=>{
+  const {project}=await(await request.post('/api/canvas/projects',{data:{title:'模特复用与分享'}})).json();
+  await page.addInitScript(id=>localStorage.setItem('fashion-canvas-last:local',id),project.id);
+  await page.goto('/');await page.getByRole('button',{name:'万能画板',exact:true}).click();
+  await expect(page.locator('.tl-canvas')).toBeVisible();
+  const name=`跨画板模特${Date.now()}.png`,bytes=await sharp({create:{width:320,height:480,channels:3,background:'#cfc1ab'}}).png().toBuffer();
+  await page.getByLabel('上传画板图片',{exact:true}).setInputFiles({name,mimeType:'image/png',buffer:bytes});
+  await expect(page.locator('.canvas-layer')).toHaveCount(1);
+  await page.getByRole('button',{name:'存为模特',exact:true}).click();
+  await expect(page.getByRole('button',{name:'已存为模特',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'新建画板',exact:true}).click();
+  await expect(page.locator('.canvas-layer')).toHaveCount(0);
+  await page.getByRole('button',{name:'图库',exact:true}).click();
+  const reuse=[];page.on('request',r=>{if(r.method()==='POST'&&/\/api\/canvas\/projects\/[^/]+\/assets$/.test(r.url()))reuse.push(r.postDataJSON());});
+  await page.locator('.canvas-library-grid button').filter({hasText:name}).click();
+  await expect(page.locator('.canvas-layer')).toHaveCount(1);
+  expect(reuse).toHaveLength(1);expect(reuse[0].path).toMatch(/^uploads\/studio\//);expect(reuse[0].imageBase64).toBeUndefined();
+  await page.getByRole('button',{name:'分享只读链接',exact:true}).click();
+  const link=await page.getByRole('textbox',{name:'只读分享链接',exact:true}).inputValue();
+  const shared=await context.newPage();await shared.goto(link);
+  await expect(shared.getByText('只读画板',{exact:true})).toBeVisible();
+  await expect(shared.locator('.tl-canvas')).toBeVisible();
+  await expect(shared.locator('.canvas-toolbar')).toHaveCount(0);
+  await expect(shared.locator('.tl-shape')).toHaveCount(1);
+  await shared.keyboard.press('Delete');await expect(shared.locator('.tl-shape')).toHaveCount(1);
+  await page.getByRole('button',{name:'撤销分享',exact:true}).click();
+  await shared.reload();await expect(shared.getByRole('heading',{name:'分享画板不可用'})).toBeVisible();
+  await shared.close();
+});

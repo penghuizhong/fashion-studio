@@ -1,5 +1,9 @@
 /* UI colors belong here. Components use semantic tokens; image/garment colors are content. */
 :root {
+  --canvas-loading-start: #c7c0ff;
+  --canvas-loading-end: #9b887d;
+  --canvas-highlight: #8060ff;
+  --canvas-highlight-soft: #f0ebff;
   color-scheme: light;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -86,6 +90,10 @@
 }
 
 [data-theme="black"] {
+  --canvas-loading-start: #55467d;
+  --canvas-loading-end: #615449;
+  --canvas-highlight: #b29bff;
+  --canvas-highlight-soft: #31264c;
   color-scheme: dark;
   --surface-page: #000000;
   --surface-panel: #101010;

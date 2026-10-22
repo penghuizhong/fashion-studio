@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import ChatView from './components/ChatView.jsx';
 import DiscoverView from './components/DiscoverView.jsx';
@@ -13,7 +13,10 @@ import AuthPage from './components/AuthPage.jsx';
 import { useAuth } from './auth.jsx';
 import { api } from './api.js';
 
-// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'discover' } | { type: 'studio' } | { type: 'assets' } | { type: 'sample' } | { type: 'pattern' }
+const SharedCanvasView = lazy(() => import('./components/CanvasView.jsx').then(module=>({default:module.SharedCanvasView})));
+const CanvasView = lazy(() => import('./components/CanvasView.jsx'));
+
+// view = { type: 'empty' } | { type: 'chat', characterId, conversationId } | { type: 'discover' } | { type: 'studio' } | { type: 'assets' } | { type: 'sample' } | { type: 'pattern' } | { type: 'canvas' }
 
 export default function App() {
   const { multiUser, user, authReady, logout } = useAuth();
@@ -254,6 +257,9 @@ export default function App() {
     setForceAuth(true);
   }, []);
 
+  const shareToken = new URLSearchParams(window.location.search).get('canvasShare');
+  if(shareToken) return <Suspense fallback={<p role="status">正在打开分享画板…</p>}><SharedCanvasView token={shareToken}/></Suspense>;
+
   // 多用户模式：启动检查完成前显示中性加载页；未登录且未点登录则进游客发现页。
   // 单用户模式直接渲染主界面（一个字都不变）。
   if (!authReady && multiUser) {
@@ -337,6 +343,10 @@ export default function App() {
         onConversationDeleted={handleConversationDeleted}
         onConversationsChanged={bumpConversations}
         onOpenDiscover={handleOpenDiscover}
+        onOpenCanvas={() => {
+          setView({ type: 'canvas' });
+          setSidebarOpen(false);
+        }}
         onOpenStudio={handleOpenStudio}
         onOpenAssets={handleOpenAssets}
         onOpenSample={handleOpenSample}
@@ -387,6 +397,11 @@ export default function App() {
             onOpenSidebar={() => setSidebarOpen(true)}
             showToast={showToast}
           />
+        )}
+        {view.type === 'canvas' && (
+          <Suspense fallback={<div role="status">正在加载万能画板…</div>}>
+            <CanvasView theme={theme} onOpenSidebar={() => setSidebarOpen(true)} />
+          </Suspense>
         )}
         {view.type === 'studio' && (
           <StudioView

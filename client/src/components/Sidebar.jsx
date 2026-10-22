@@ -24,6 +24,7 @@ export default function Sidebar({
   onOpenSettingsModal,
   onOpenDiscover,
   onOpenStudio,
+  onOpenCanvas,
   onOpenAssets,
   onOpenSample,
   onOpenPattern,
@@ -237,6 +238,12 @@ export default function Sidebar({
         onClick={onOpenStudio}
       >
         <Icon name="sparkles" size={18} /> 设计台
+      </button>
+      <button
+        className={`nav-row${view.type === 'canvas' ? ' active' : ''}`}
+        onClick={guest ? onLogin : onOpenCanvas}
+      >
+        <Icon name="canvas" size={18} /> 万能画板
       </button>
       <button
         className={`nav-row${view.type === 'assets' ? ' active' : ''}`}

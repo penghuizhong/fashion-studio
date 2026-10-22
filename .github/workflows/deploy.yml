@@ -42,6 +42,9 @@ jobs:
       - name: Design delivery, pattern standards and sample production regression
         working-directory: server
         run: npm run check:products
+      - name: Canvas assets, jobs, billing and recovery regression
+        working-directory: server
+        run: npm run check:canvas
       - name: Build client
         working-directory: client
         run: |

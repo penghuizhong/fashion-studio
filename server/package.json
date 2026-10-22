@@ -24,7 +24,8 @@
     "check:models": "node scripts/check-model-management.js",
     "check:plans": "node scripts/check-style-plans.js",
     "check:prompts": "node scripts/check-style-prompts.js",
-    "benchmark:products": "node scripts/benchmark-product-images.js"
+    "benchmark:products": "node scripts/benchmark-product-images.js",
+    "check:canvas": "node scripts/check-canvas.js"
   },
   "type": "module",
   "version": "0.17.3"
