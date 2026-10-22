@@ -24,7 +24,6 @@ import {
   DEFAULT_STANDARD,
 } from "../../shared/stylePlan.js";
 import {
-  compilePlanItem,
   normalizePlanInput,
   normalizeContent,
   seedItems,
@@ -208,21 +207,6 @@ export function mountStylePlans(app) {
           manual_confirmed: false,
         }));
       const checked = normalizeContent(content, input, content);
-      for (const item of checked.items) {
-        const prior = oldContent.items.find((i) => i.id === item.id);
-        if (
-          item.prompt_override &&
-          (!item.prompt_override_basis ||
-            item.prompt_override !== prior?.prompt_override)
-        ) {
-          item.prompt_override_basis = compilePlanItem(
-            { input, content: checked, version_id: row.version_id },
-            item,
-            t,
-          ).automatic_signature;
-        }
-        if (!item.prompt_override) item.prompt_override_basis = "";
-      }
       if (
         canonical(oldInput) === canonical(input) &&
         canonical(oldContent) === canonical(checked)
@@ -353,7 +337,7 @@ export function mountStylePlans(app) {
       const result = await composeProduct({
         layout: item.layout,
         references: await freezeImageSources(refs),
-        size: item.size || plan.input.size,
+        size: plan.input.size,
         noText: /^(无|none|no text)$/i.test(plan.input.language),
       });
       res.json({
@@ -401,7 +385,7 @@ export function mountStylePlans(app) {
         );
       if (
         selected.some(
-          ({ item }) => item.status !== "ready" || item.prompt_stale,
+          ({ item }) => item.status !== "ready",
         )
       )
         throw problem(
@@ -462,7 +446,7 @@ export function mountStylePlans(app) {
           await composeProduct({
             layout: item.layout,
             references: manifest,
-            size: item.size || plan.input.size,
+            size: plan.input.size,
             noText: /^(无|none|no text)$/i.test(plan.input.language),
           });
           composition = {
@@ -497,8 +481,8 @@ export function mountStylePlans(app) {
           ...(item.delivery_slot ? { delivery_slot: item.delivery_slot } : {}),
         };
         outputs[index] = {
-          size: item.size || plan.input.size,
-          quality: item.quality || plan.input.quality,
+          size: plan.input.size,
+          quality: plan.input.quality,
         };
         prompts.push(item.prompt);
       }

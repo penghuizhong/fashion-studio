@@ -517,13 +517,11 @@ export default function useStylePlanWizard({
   const selectedModel = models.find((m) => m.id === input.model_id);
   let readiness = "";
   if (editingPrompt) readiness = "请先完成提示词编辑";
-  else if (content?.items.some((i) => i.selected && i.prompt_stale))
-    readiness = "手工提示词的上游内容已变化，请同步或确认保留";
   else if (content?.items.some(i=>i.selected&&imagePolicyIssues(input,i).length)) readiness = content.items.flatMap(i=>i.selected?imagePolicyIssues(input,i):[])[0];
   else if (!selectedModel) readiness = "请选择有效图片模型";
   else if (
     selected.some(
-      (i) => !sizeAllowed(selectedModel.capabilities, i.size || input.size),
+      (i) => !sizeAllowed(selectedModel.capabilities, input.size),
     )
   )
     readiness = "请调整尺寸以符合当前模型限制";
@@ -537,9 +535,9 @@ export default function useStylePlanWizard({
   else if (
     selected.some(
       (i) =>
-        (i.quality || input.quality) &&
+        (input.quality) &&
         !selectedModel.capabilities.qualities?.some(
-          (q) => q.value === (i.quality || input.quality),
+          (q) => q.value === (input.quality),
         ),
     )
   )

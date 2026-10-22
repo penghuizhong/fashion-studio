@@ -118,9 +118,9 @@ export function moduleFacts(moduleId, facts = {}) {
   );
 }
 export function assembleStandardText(standard = {}) {
-  return STANDARD_SECTIONS.map(
-    ([key, label]) => `${label}：${standard[key] || ""}`,
-  ).join("\n");
+  return STANDARD_SECTIONS.filter(([key]) => standard[key]?.trim())
+    .map(([key, label]) => `${label}：${standard[key].trim()}`)
+    .join("\n");
 }
 export function parseStandardText(value) {
   const out = Object.fromEntries(STANDARD_SECTIONS.map(([key]) => [key, ""]));
@@ -150,6 +150,8 @@ export function cleanPlanContent(content) {
           module_id: i.module_id,
           title: i.title,
           requirement: i.requirement,
+          description_prompt: i.description_prompt,
+          attributes_prompt: i.attributes_prompt,
           copy: i.copy || "",
           camera: i.camera,
           reference_ids: i.reference_ids,
@@ -216,4 +218,22 @@ export function applyAnalysisContent(
       };
     }),
   };
+}
+
+// Character limits apply to Unicode characters, not UTF-16 code units.
+export const MODULE_PROMPT_LIMIT = 200;
+export const promptLength = (value = "") => Array.from(value).length;
+export function assembleModulePrompt(description = "", attributes = "") {
+  return [
+    ["主要描述", description],
+    ["基本属性", attributes],
+  ]
+    .filter(([, value]) => value.trim())
+    .map(([label, value]) => `${label}：${value.trim()}`)
+    .join("\n");
+}
+export function assembleExecutionPrompt(modulePrompt, standard = {}) {
+  return [modulePrompt, assembleStandardText(standard)]
+    .filter(Boolean)
+    .join("\n\n");
 }

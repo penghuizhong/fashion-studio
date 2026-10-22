@@ -100,15 +100,16 @@ for (const width of [1440, 390])
       await page.getByRole("button", { name: "预览", exact: true }).click();
     await expect(page.locator(".wizard-plan-card")).toHaveCount(2);
     await page.locator(".wizard-plan-title").first().click();
-    await page.getByLabel("图片1画面要求").fill("正面完整展示，突出肩部轮廓");
+    await page.getByLabel("图片1主要描述").fill("正面完整展示，突出肩部轮廓");
+    await page.getByLabel("图片1主要描述").blur();
     await page.getByText("整体设计规范", { exact: true }).click();
     const standardBox = page.getByLabel("整体设计规范", { exact: true });
     await standardBox.fill(
       "核心视觉基调：高级简约\n全局摄影参数：统一柔光与中性背景\n主体识别摘要：保持参考模特一致\n服装基础特征：保持已保存设计\n文字系统规范：简体中文，清晰易读\n资料真实性：只使用已确认资料",
     );
     await standardBox.blur();
-    await expect(page.getByLabel("图片1提示词")).toHaveValue(/统一柔光/);
-    const promptBox = page.getByLabel("图片1提示词");
+    await expect(page.getByLabel("图片1主要描述")).toHaveValue("正面完整展示，突出肩部轮廓");
+    const promptBox = page.getByLabel("图片1主要描述");
     await promptBox.fill("人工编辑：服装完整，主体居中");
     await promptBox.blur();
     await expect(promptBox).toHaveValue("人工编辑：服装完整，主体居中");
@@ -336,7 +337,7 @@ test("concurrent planning edits merge local changes with unrelated remote change
   });
   expect(result.ok()).toBe(true);
   await page.locator(".wizard-plan-title").first().click();
-  await page.getByLabel("图片1画面要求").fill("本机调整的完整正面展示");
+  await page.getByLabel("图片1主要描述").fill("本机调整的完整正面展示");
   await expect(page.locator(".wizard-footer [role=alert]")).toContainText(
     "规划已更新",
   );
@@ -354,7 +355,7 @@ test("concurrent planning edits merge local changes with unrelated remote change
   await expect(dialog).toHaveCount(0);
   const merged = (await (await request.get(url)).json()).plan;
   expect(merged.content.standard.photography).toBe("远端确认的柔光摄影");
-  expect(merged.content.items[0].requirement).toBe("本机调整的完整正面展示");
+  expect(merged.content.items[0].description_prompt).toBe("本机调整的完整正面展示");
 });
 
 test("bulk download stores original image bytes in a ZIP file", async ({

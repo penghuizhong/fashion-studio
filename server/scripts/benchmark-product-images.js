@@ -111,6 +111,10 @@ for (const [f, fixture] of manifest.fixtures.entries())
         )
       ).plan;
       plan.content.items[0].manual_confirmed = true;
+      plan.content.items[0].description_prompt = manifest.instruction ||
+        "主图展示：一位模特自然站立，完整展示商品，保持原图裙摆形态，简洁背景，无新增文字或拼图。商品图约束服装，模特图仅约束人物。";
+      plan.content.items[0].attributes_prompt =
+        "保留商品参考图可见的结构、颜色、图案、褶皱和面料外观；不根据文字重新设计或补造不可见细节。";
       plan = (
         await api(
           "PUT",
