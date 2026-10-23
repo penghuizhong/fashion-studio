@@ -110,6 +110,7 @@ export function startCanvasRun(req,projectId,body,allowBusy=false) {
   db.transaction(()=>{
     const unresolved=db.prepare("SELECT input_json FROM canvas_runs WHERE user_id=? AND project_id=? AND status='uncertain'").all(owner(req),projectId);
     if(unresolved.some(row=>{const old=JSON.parse(row.input_json);return old.message===q.message&&old.modelId===q.modelId&&JSON.stringify(old.sources.map(s=>[s.assetId,s.assetVersion,s.crop,s.role]))===JSON.stringify(q.sources.map(s=>[s.assetId,s.assetVersion,s.crop,s.role]));}))throw problem('RESULT_UNCERTAIN','相同图片与要求的任务结果待核对，请勿重复生成',409);
+    if(process.env.AGENT_ENABLED==='true'&&!allowBusy&&db.prepare("SELECT 1 FROM canvas_agent_runs WHERE user_id=? AND status IN ('queued','running')").get(owner(req)))throw problem('CANVAS_RUN_BUSY','Agent任务正在执行，请等待完成或停止',409);
     if(!allowBusy&&db.prepare("SELECT 1 FROM canvas_runs WHERE user_id=? AND status IN ('queued','running')").get(owner(req)))throw problem('CANVAS_RUN_BUSY','已有任务执行中，请等待完成或停止后再提交',409);
     if(q.unit>0&&getBalance(owner(req))<q.unit)throw problem('POINTS_INSUFFICIENT','积分不足，请充值或更换模型',422);
     if(q.unit>0)addLedger(owner(req),-q.unit,'canvas_reserve','canvas_run',id,{accountingDelta:0});

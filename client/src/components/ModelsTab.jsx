@@ -29,7 +29,7 @@ const checkSummary = (checks = []) => checks.some(c => c.status === 'stale') ? '
 const emptyPForm = { name: '', preset: 'custom', kind: 'both', base_url: '', api_key: '', is_active: true };
 const emptyMForm = {
   provider_id: '', kind: 'chat', model_id: '', name: '',
-  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true, vision: false, image_edit:false, multi_reference:false,image_config:{protocol:'openai_images',edit:false,max_images:1,text:true},image_rates:[],pricing_mode:'flat',
+  input_per_1m: '', output_per_1m: '', per_call: '', sizes: '1024x1024', prompt_extend: true, vision: false, tool_calling: false, image_edit:false, multi_reference:false,image_config:{protocol:'openai_images',edit:false,max_images:1,text:true},image_rates:[],pricing_mode:'flat',
 };
 
 export default function ModelsTab({ showToast }) {
@@ -193,6 +193,7 @@ export default function ModelsTab({ showToast }) {
       sizes: (m.extra.sizes || []).join(','),
       prompt_extend: m.extra.prompt_extend !== false,
       vision: !!m.extra.vision,
+      tool_calling: m.extra.tool_calling===true,
       image_edit: !!m.extra.image_edit, multi_reference: !!m.extra.multi_reference,
       image_config: m.extra.image_config || {protocol:m.provider_preset==='dashscope'?'dashscope':'openai_images',edit:!!m.extra.image_edit,max_images:m.extra.multi_reference?4:1,text:true},
       image_rates: m.pricing.image_rates || [],
@@ -213,6 +214,7 @@ export default function ModelsTab({ showToast }) {
       if ([mForm.input_per_1m,mForm.output_per_1m].some(v=>String(v).trim()==='') || ![ip,op].every(v=>Number.isSafeInteger(v)&&v>=0&&v<=1000000000)) { showToast('请明确填写输入/输出单价，使用非负整数；免费请填写 0'); return; }
       pricing.input_per_1m = ip; pricing.output_per_1m = op;
       extra.vision = !!mForm.vision;
+      extra.tool_calling = !!mForm.tool_calling;
     } else {
       try { Object.assign(pricing,pricingPayload(mForm));if(mForm.pricing_mode!=='tiered')delete pricing.image_rates; }
       catch(e){showToast(e.message);return;}
@@ -430,6 +432,7 @@ export default function ModelsTab({ showToast }) {
                 <input type="checkbox" checked={!!mForm.vision} onChange={setM('vision')} />
                 支持视觉识图（克隆款式提取 DNA 时可用）
               </label>
+              <label className="key-desc small" style={{display:"block",marginTop:8}}><input type="checkbox" checked={!!mForm.tool_calling} onChange={setM("tool_calling")} />支持原生工具调用（多步 Agent；请确认供应商兼容）</label>
             </>
           ) : (
             <>

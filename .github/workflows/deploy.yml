@@ -45,6 +45,9 @@ jobs:
       - name: Canvas assets, jobs, billing and recovery regression
         working-directory: server
         run: npm run check:canvas
+      - name: Pi agent tools, billing, recovery and native protocol regression
+        working-directory: server
+        run: npm run check:agent
       - name: Build client
         working-directory: client
         run: |

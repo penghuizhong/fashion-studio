@@ -1,3 +1,4 @@
+import { mountAgentRoutes } from './agent/jobs.js';
 import { mountCanvasJobRoutes } from './canvasJobs.js';
 import { mountCanvasRoutes } from './canvas.js';
 import { chooseOutput } from './imageCapabilities.js';
@@ -193,6 +194,7 @@ export function createApp() {
   mountExploreRoutes(app);
   mountCanvasRoutes(app);
   mountCanvasJobRoutes(app);
+  mountAgentRoutes(app);
   // v0.2.0: 记忆遗忘——启动归档一次，之后每天一次
   try { runArchive(); runExploreArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); }
   setInterval(() => { try { runArchive(); runExploreArchive(); } catch (e) { console.error('[studio] 归档失败', e.message); } }, 24 * 3600 * 1000).unref();

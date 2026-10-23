@@ -1,3 +1,4 @@
+import { agentBrowserResponse } from './agent-browser-provider.js';
 // Isolated browser fixture: never touches the developer or production database.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,6 +8,9 @@ process.env.DATA_DIR = fs.mkdtempSync(
 );
 process.env.MULTI_USER = 'false';
 process.env.MOCK_LLM = 'true';
+process.env.AGENT_ENABLED = 'true';
+const originalFetch=global.fetch;
+global.fetch=(url,options)=>String(url).startsWith('https://example.invalid')&&String(url).endsWith('/chat/completions')?Promise.resolve(agentBrowserResponse(JSON.parse(options.body))):originalFetch(url,options);
 // This fixture drives many independent users' flows from one loopback IP.
 process.env.WRITE_LIMIT_MAX = '1000';
 const { getDb, setSetting } = await import('../src/db.js');
@@ -39,7 +43,7 @@ for (const kind of ['chat', 'image'])
           ? { per_call: 5 }
           : { input_per_1m: 100, output_per_1m: 200 }
       ),
-      JSON.stringify({ sizes: ['512x512', '1024x1024'], image_edit:kind==='image',multi_reference:kind==='image',vision:kind==='chat',...(kind==='image'&&suffix==='two'?{image_config:{protocol:'openai_images',text:true,edit:true,max_images:4,qualities:[{value:'low',label:'轻量'},{value:'high',label:'精细'}],custom_size:{enabled:true,min:256,max:2048,step:8,max_pixels:4194304}}}:{}) }),
+      JSON.stringify({ sizes: ['512x512', '1024x1024'], image_edit:kind==='image',multi_reference:kind==='image',vision:kind==='chat',tool_calling:kind==='chat',...(kind==='image'&&suffix==='two'?{image_config:{protocol:'openai_images',text:true,edit:true,max_images:4,qualities:[{value:'low',label:'轻量'},{value:'high',label:'精细'}],custom_size:{enabled:true,min:256,max:2048,step:8,max_pixels:4194304}}}:{}) }),
       1,
       now
     );

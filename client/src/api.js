@@ -403,6 +403,20 @@ export const api = {
   testChatModel: (model_id) => post('/api/admin/models/test', { model_id }),
 
   canvas: {
+    agentResumeQuote: (id,body) => post(`/api/canvas/agent-runs/${encodeURIComponent(id)}/resume-quotes`,body),
+    agentConfirm: (id,body) => post(`/api/canvas/agent-runs/${encodeURIComponent(id)}/confirm`,body),
+    agentWorkflows: () => get('/api/canvas/agent/workflows'),
+    agentSaveWorkflow: id => post(`/api/canvas/agent-runs/${encodeURIComponent(id)}/workflow`,{}),
+    agentDeleteWorkflow: id => del(`/api/canvas/agent/workflows/${encodeURIComponent(id)}`),
+    agentReconcile: (id,body) => post(`/api/canvas/agent-runs/${encodeURIComponent(id)}/reconcile`,body),
+    reconcile: (id,body) => post(`/api/canvas/runs/${encodeURIComponent(id)}/reconcile`,body),
+    agentCapabilities: () => get('/api/canvas/agent/capabilities'),
+    agentQuote: (id,body) => post(`/api/canvas/projects/${encodeURIComponent(id)}/agent-quotes`,body),
+    agentStart: (id,body) => post(`/api/canvas/projects/${encodeURIComponent(id)}/agent-runs`,body),
+    agentRuns: id => get(`/api/canvas/projects/${encodeURIComponent(id)}/agent-runs`),
+    agentStop: id => post(`/api/canvas/agent-runs/${encodeURIComponent(id)}/stop`,{}),
+    agentLayoutDelivered: id => post(`/api/canvas/agent-runs/${encodeURIComponent(id)}/layout-delivered`,{}),
+
     assets: (search='') => get(`/api/canvas/assets?${new URLSearchParams({search})}`),
     saveCanvasModel: id => post(`/api/canvas/assets/${encodeURIComponent(id)}/model`,{}),
     brandKits: () => get('/api/canvas/brand-kits'),

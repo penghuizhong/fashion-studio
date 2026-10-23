@@ -40,3 +40,5 @@ cd client && npm install && npm run dev
 push 到 `main` 即通过 GitHub Actions 自动部署到腾讯云 VPS（`work.oihey.cn`）。详见 `DEPLOY.md`，备份见 `docs/BACKUP.md`。
 
 **铁律：push 前必须用户明确说"推"。**
+
+万能画板多步 Agent（默认关闭）：[启用、预算、恢复与 Skills](docs/CANVAS_AGENT.md)，[实施验收记录](docs/CANVAS_AGENT_TODO.md)。
